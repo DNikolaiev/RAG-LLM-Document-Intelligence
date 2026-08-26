@@ -14,8 +14,15 @@ export async function bootstrap(): Promise<void> {
   const application = await NestFactory.createApplicationContext(WorkerModule, {
     bufferLogs: true,
   });
-  application.enableShutdownHooks();
   Logger.log(`Worker ready with queue provider ${config.QUEUE_PROVIDER}`, 'Bootstrap');
+
+  const keepAlive = setInterval(() => undefined, 60_000);
+  await new Promise<void>((resolve) => {
+    process.once('SIGINT', resolve);
+    process.once('SIGTERM', resolve);
+  });
+  clearInterval(keepAlive);
+  await application.close();
 }
 
 if (process.env.NODE_ENV !== 'test') void bootstrap();
