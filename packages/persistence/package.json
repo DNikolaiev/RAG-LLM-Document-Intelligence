@@ -17,13 +17,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@caselens/contracts": "workspace:*",
+    "@caselens/contracts": "0.1.0",
     "drizzle-orm": "0.45.2",
     "postgres": "^3.4.7"
   },
   "devDependencies": {
     "drizzle-kit": "^0.31.8",
-    "typescript": "^7.0.2",
+    "typescript": "^6.0.0",
     "vitest": "^4.1.11"
   }
 }

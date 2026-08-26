@@ -17,13 +17,13 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.946.0",
-    "@caselens/contracts": "workspace:*",
+    "@caselens/contracts": "0.1.0",
     "bullmq": "^5.66.5",
     "postgres": "^3.4.7",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "typescript": "^7.0.2",
+    "typescript": "^6.0.0",
     "vitest": "^4.1.11"
   }
 }

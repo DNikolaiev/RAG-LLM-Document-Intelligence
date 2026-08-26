@@ -16,14 +16,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@caselens/contracts": "workspace:*",
-    "@caselens/document-pipeline": "workspace:*",
-    "@caselens/domain": "workspace:*",
-    "@caselens/retrieval": "workspace:*",
+    "@caselens/contracts": "0.1.0",
+    "@caselens/document-pipeline": "0.1.0",
+    "@caselens/domain": "0.1.0",
+    "@caselens/retrieval": "0.1.0",
     "@langchain/langgraph": "1.4.12"
   },
   "devDependencies": {
-    "typescript": "^7.0.2",
+    "typescript": "^6.0.0",
     "vitest": "^4.1.11"
   }
 }

@@ -28,18 +28,18 @@ The Docker demo uses deterministic in-memory application adapters, so no AI cred
 
 ## Start for development
 
-Requirements: Node.js 24+ and pnpm 11+.
+Requirements: Node.js 24+ and npm 11+.
 
 ```bash
-pnpm install
-pnpm --filter @caselens/api dev
-pnpm --filter @caselens/web dev
+npm install
+npm run dev --workspace=@caselens/api
+npm run dev --workspace=@caselens/web
 ```
 
 Run those development commands in separate terminals. The worker is optional for the current deterministic demo:
 
 ```bash
-pnpm --filter @caselens/worker dev
+npm run dev --workspace=@caselens/worker
 ```
 
 ## Architecture in brief
@@ -51,15 +51,15 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the system design. Contributor and co
 ## Verify
 
 ```bash
-pnpm verify
+npm run verify
 python scripts/verify-fixtures.py
 ```
 
 With the app running, install Chromium once and run the browser suite:
 
 ```bash
-pnpm exec playwright install chromium
-pnpm test:e2e
+npm exec -- playwright install chromium
+npm run test:e2e
 ```
 
 Playwright uses `http://127.0.0.1:3000` by default. Set `PLAYWRIGHT_BASE_URL` to test another deployment.
@@ -67,7 +67,7 @@ Playwright uses `http://127.0.0.1:3000` by default. Set `PLAYWRIGHT_BASE_URL` to
 To inspect the latest run in a browser:
 
 ```bash
-pnpm exec playwright show-report playwright-report
+npm exec -- playwright show-report playwright-report
 ```
 
 ### Playwright troubleshooting
@@ -76,13 +76,13 @@ Run Playwright from `C:\Projects\Codex\caselens` and use the project-local comma
 
 ```powershell
 Set-Location C:\Projects\Codex\caselens
-pnpm install
-pnpm exec playwright install chromium
+npm install
+npm exec -- playwright install chromium
 docker compose -f infra/docker-compose.yml --profile demo up -d
-pnpm test:e2e
+npm run test:e2e
 ```
 
-- `Cannot find module '@playwright/test'`: run `pnpm install`.
-- `Executable doesn't exist`: run `pnpm exec playwright install chromium`.
+- `Cannot find module '@playwright/test'`: run `npm install`.
+- `Executable doesn't exist`: run `npm exec -- playwright install chromium`.
 - `ECONNREFUSED 127.0.0.1:3000`: start the Docker demo first, or set `PLAYWRIGHT_BASE_URL` to a running deployment.
-- `playwright is not recognized`: use `pnpm exec playwright ...`; a global CLI install is not required.
+- `playwright is not recognized`: use `npm exec -- playwright ...`; a global CLI install is not required.

@@ -12,12 +12,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@caselens/config": "workspace:*",
-    "@caselens/contracts": "workspace:*",
-    "@caselens/document-pipeline": "workspace:*",
-    "@caselens/domain": "workspace:*",
-    "@caselens/persistence": "workspace:*",
-    "@caselens/providers": "workspace:*",
+    "@caselens/config": "0.1.0",
+    "@caselens/contracts": "0.1.0",
+    "@caselens/document-pipeline": "0.1.0",
+    "@caselens/domain": "0.1.0",
+    "@caselens/persistence": "0.1.0",
+    "@caselens/providers": "0.1.0",
     "@nestjs/common": "11.2.3",
     "@nestjs/core": "11.2.3",
     "@nestjs/platform-express": "11.2.3",
@@ -35,7 +35,7 @@
     "@nestjs/testing": "11.2.3",
     "supertest": "^7.1.4",
     "tsx": "^4.20.6",
-    "typescript": "^7.0.2",
+    "typescript": "^6.0.0",
     "vitest": "^4.1.11"
   }
 }

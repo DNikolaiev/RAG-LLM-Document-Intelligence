@@ -1,6 +1,5 @@
 node_modules/
 .npm-cache/
-.pnpm-store/
 .next/
 dist/
 coverage/

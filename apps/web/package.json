@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@caselens/contracts": "workspace:*",
+    "@caselens/contracts": "0.1.0",
     "@fontsource-variable/newsreader": "^5.2.8",
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@fontsource/ibm-plex-sans": "^5.2.7",

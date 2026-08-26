@@ -2,10 +2,8 @@
 dist
 coverage
 node_modules
-.pnpm-store
 .turbo
 *.tsbuildinfo
 output/pdf
 tmp
-pnpm-lock.yaml
 next-env.d.ts

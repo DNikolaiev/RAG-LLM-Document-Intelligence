@@ -26,14 +26,14 @@
 **Files:**
 
 - Modify: `package.json`
-- Modify: `pnpm-lock.yaml`
+- Modify: `package-lock.json`
 - Modify: `.gitignore`
 - Create: `playwright.config.ts`
 
 **Interfaces:**
 
 - Consumes: `PLAYWRIGHT_BASE_URL` with default `http://127.0.0.1:3000`
-- Produces: `pnpm test:e2e`, `pnpm test:e2e:headed`, desktop and mobile Chromium projects
+- Produces: `npm run test:e2e`, `npm run test:e2e:headed`, desktop and mobile Chromium projects
 
 - [x] **Step 1: Add the Playwright test dependency and scripts**
 
@@ -82,7 +82,7 @@ test-results/
 
 - [x] **Step 4: Install Chromium and list tests**
 
-Run: `pnpm exec playwright install chromium` then `pnpm exec playwright test --list`
+Run: `npm exec -- playwright install chromium` then `npm exec -- playwright test --list`
 
 Expected: both projects list the queue and case-workspace specifications.
 
@@ -181,7 +181,7 @@ await expect(page).toHaveURL(/\/$/);
 
 - [x] **Step 3: Open the first review-needed case and run integrity checks**
 
-Run: `pnpm exec playwright test apps/web/e2e/queue.spec.ts`
+Run: `npm exec -- playwright test apps/web/e2e/queue.spec.ts`
 
 Expected: desktop and mobile projects pass without page overflow or runtime failures.
 
@@ -231,7 +231,7 @@ await page.route('**/api/cases/**', async (route) => {
 
 - [x] **Step 4: Exercise findings, correction dialog, decisions, upload, and export**
 
-Run: `pnpm exec playwright test apps/web/e2e/case-workspace.spec.ts`
+Run: `npm exec -- playwright test apps/web/e2e/case-workspace.spec.ts`
 
 Expected: every enabled button produces its intended visible state; approval starts disabled, becomes enabled only after all findings are resolved, and the JSON export downloads successfully.
 
@@ -249,7 +249,7 @@ Expected: every enabled button produces its intended visible state; approval sta
 
 - [x] **Step 1: Run Playwright and repository gates**
 
-Run: `pnpm test:e2e`, `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, and `pnpm test`
+Run: `npm run test:e2e`, `npm run format:check`, `npm run lint`, `npm run typecheck`, and `npm test`
 
 Expected: every command exits zero and Playwright reports both desktop and mobile projects passing.
 
@@ -260,14 +260,14 @@ Use the failing locator, trace, screenshot, or overflow diagnostic to make the s
 - [x] **Step 3: Record evidence and commit**
 
 ```bash
-git add package.json pnpm-lock.yaml .gitignore playwright.config.ts apps/web/e2e docs/superpowers/plans
+git add package.json package-lock.json .gitignore playwright.config.ts apps/web/e2e docs/superpowers/plans
 git commit -m "test: add Playwright UI regression coverage"
 ```
 
 ## Completion evidence
 
-- Chromium v1234 was installed and `pnpm exec playwright test --list` discovered 12 scenarios across the desktop and mobile projects.
+- Chromium v1234 was installed and `npm exec -- playwright test --list` discovered 12 scenarios across the desktop and mobile projects.
 - The first full run found a real client-navigation defect: clearing filters changed the URL but left the uncontrolled status selector showing its prior value. Keying the filter form by its server-derived query state fixed the stale UI and is covered by the queue regression test.
-- The final `pnpm test:e2e` run passed all 12 scenarios in 14.3 seconds. Every integrity checkpoint also passed runtime-error, HTTP 5xx, horizontal-overflow, clipped-control, and visible enabled-button actionability assertions.
-- `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test:e2e:typecheck`, `pnpm test`, and `pnpm build` passed. The repository suite retained 92 passing Vitest tests and the Next.js production build completed successfully.
+- The final `npm run test:e2e` run passed all 12 scenarios in 14.3 seconds. Every integrity checkpoint also passed runtime-error, HTTP 5xx, horizontal-overflow, clipped-control, and visible enabled-button actionability assertions.
+- `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run test:e2e:typecheck`, `npm test`, and `npm run build` passed. The repository suite retained 92 passing Vitest tests and the Next.js production build completed successfully.
 - Five-axis review found no unresolved correctness, readability, architecture, security, or performance issues. A broad role-based button sweep was refined to exclude the intentionally hidden file input while continuing to action-check every user-facing button.
