@@ -63,3 +63,26 @@ pnpm test:e2e
 ```
 
 Playwright uses `http://127.0.0.1:3000` by default. Set `PLAYWRIGHT_BASE_URL` to test another deployment.
+
+To inspect the latest run in a browser:
+
+```bash
+pnpm exec playwright show-report playwright-report
+```
+
+### Playwright troubleshooting
+
+Run Playwright from `C:\Projects\Codex\caselens` and use the project-local command:
+
+```powershell
+Set-Location C:\Projects\Codex\caselens
+pnpm install
+pnpm exec playwright install chromium
+docker compose -f infra/docker-compose.yml --profile demo up -d
+pnpm test:e2e
+```
+
+- `Cannot find module '@playwright/test'`: run `pnpm install`.
+- `Executable doesn't exist`: run `pnpm exec playwright install chromium`.
+- `ECONNREFUSED 127.0.0.1:3000`: start the Docker demo first, or set `PLAYWRIGHT_BASE_URL` to a running deployment.
+- `playwright is not recognized`: use `pnpm exec playwright ...`; a global CLI install is not required.
