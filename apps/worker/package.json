@@ -1,0 +1,30 @@
+{
+  "name": "@caselens/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/main.ts",
+    "lint": "tsc --noEmit",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@caselens/config": "workspace:*",
+    "@caselens/document-pipeline": "workspace:*",
+    "@caselens/providers": "workspace:*",
+    "@caselens/workflow": "workspace:*",
+    "@nestjs/common": "11.2.3",
+    "@nestjs/core": "11.2.3",
+    "bullmq": "^5.66.5",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.6",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

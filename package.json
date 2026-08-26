@@ -1,0 +1,28 @@
+{
+  "name": "caselens",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "fixtures:generate": "python scripts/generate-fixtures.py",
+    "fixtures:verify": "python scripts/verify-fixtures.py"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "prettier": "^3.6.2",
+    "turbo": "^2.6.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

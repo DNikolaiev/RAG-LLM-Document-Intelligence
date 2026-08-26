@@ -1,0 +1,366 @@
+{
+  "schemaVersion": "1.0.0",
+  "fixtureSet": "pharmacy-supplier-onboarding",
+  "seed": "caselens-pharmacy-v1",
+  "generatedOn": "2026-08-26",
+  "synthetic": true,
+  "case": {
+    "id": "case_demo_medisupply",
+    "subject": "MediSupply supplier qualification",
+    "authoritativeRegisteredName": "MediSupply GmbH",
+    "declaredAndContractName": "MediSupply Europe GmbH",
+    "expectedDecision": "request_information"
+  },
+  "documents": [
+    {
+      "filename": "01_supplier_questionnaire.pdf",
+      "classification": "supplier_questionnaire",
+      "sha256": "7b40187ab956ce4c0ec7b3dcf0d63e611834c3350f5053daab353f3e964c1b14",
+      "expectedPages": 2,
+      "expectedPhrases": [
+        "Supplier onboarding questionnaire",
+        "MediSupply Europe GmbH",
+        "GDP certificate: pending"
+      ],
+      "expectedFacts": {
+        "declaredLegalName": "MediSupply Europe GmbH",
+        "temperatureControlled": true,
+        "gdpCertificateStatus": "pending"
+      },
+      "expectedWarnings": [
+        "declared_name_conflicts_with_register",
+        "required_gdp_certificate_not_attached"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "MediSupply Europe GmbH",
+          "field": "declaredLegalName"
+        }
+      ],
+      "source": "synthetic"
+    },
+    {
+      "filename": "02_commercial_register_extract.pdf",
+      "classification": "commercial_register_extract",
+      "sha256": "ad0e38882f5ad92892c67b6c784e0101817a8658b54fc13a87c7188b978347d9",
+      "expectedPages": 2,
+      "expectedPhrases": ["Amtsgericht Duesseldorf", "MediSupply GmbH", "HRB 98421"],
+      "expectedFacts": {
+        "registeredLegalName": "MediSupply GmbH",
+        "registerNumber": "HRB 98421",
+        "registeredOffice": "Duesseldorf"
+      },
+      "expectedWarnings": [],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "MediSupply GmbH",
+          "field": "registeredLegalName"
+        }
+      ],
+      "source": "synthetic"
+    },
+    {
+      "filename": "03_iso_13485_certificate.pdf",
+      "classification": "iso_13485_certificate",
+      "sha256": "b87c61bfdced376de998790c083a3e54e897dd7c62cdafbcd9eb3454abb60461",
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "ISO 13485:2016",
+        "Valid until 31 October 2027",
+        "Certificate QMS-13485-7719"
+      ],
+      "expectedFacts": {
+        "standard": "ISO 13485:2016",
+        "certificateNumber": "QMS-13485-7719",
+        "validUntil": "2027-10-31"
+      },
+      "expectedWarnings": [],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "Valid until 31 October 2027",
+          "field": "validUntil"
+        }
+      ],
+      "source": "synthetic"
+    },
+    {
+      "filename": "04_insurance_certificate.pdf",
+      "classification": "insurance_certificate",
+      "sha256": "d51c748639ab022fd0a46201bc35cf744515726cb2a159a92f04b57fa0602494",
+      "expectedPages": 1,
+      "expectedPhrases": ["Product liability insurance", "EUR 1,000,000", "Policy MS-PL-2026-441"],
+      "expectedFacts": {
+        "policyNumber": "MS-PL-2026-441",
+        "coverageEur": 1000000,
+        "validUntil": "2027-03-31"
+      },
+      "expectedWarnings": ["coverage_below_required_2000000_eur"],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "EUR 1,000,000",
+          "field": "coverageEur"
+        }
+      ],
+      "source": "synthetic"
+    },
+    {
+      "filename": "05_data_processing_agreement.pdf",
+      "classification": "data_processing_agreement",
+      "sha256": "9f9d84d42727f4ac7791c611a4457612cd952e1e412b87122c43218d8ed07c82",
+      "expectedPages": 3,
+      "expectedPhrases": ["Data Processing Agreement", "Article 28 GDPR", "Signed electronically"],
+      "expectedFacts": {
+        "controller": "Northstar Pharmacy SE",
+        "processor": "MediSupply Europe GmbH",
+        "signed": true,
+        "signedAt": "2026-08-18"
+      },
+      "expectedWarnings": ["processor_name_conflicts_with_register"],
+      "evidence": [
+        {
+          "page": 3,
+          "phrase": "Signed electronically",
+          "field": "signed"
+        }
+      ],
+      "source": "synthetic"
+    },
+    {
+      "filename": "06_supply_contract.pdf",
+      "classification": "supply_contract",
+      "sha256": "3ebe7a7bf93ffcb6a721ff73d924b0de0dd8c88857c35ec75a4740e9295bf5d6",
+      "expectedPages": 3,
+      "expectedPhrases": [
+        "Framework Supply Agreement",
+        "MediSupply Europe GmbH",
+        "cold-chain products"
+      ],
+      "expectedFacts": {
+        "supplierParty": "MediSupply Europe GmbH",
+        "customerParty": "Northstar Pharmacy SE",
+        "governingLaw": "Germany"
+      },
+      "expectedWarnings": ["supplier_name_conflicts_with_register"],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "MediSupply Europe GmbH",
+          "field": "supplierParty"
+        }
+      ],
+      "source": "synthetic"
+    },
+    {
+      "filename": "07_supplier_qualification_policy.pdf",
+      "classification": "policy_supplier_qualification",
+      "sha256": "ecf198a198e58eaac36c0cc39dd78e3a529930eaee04e51a161a65001edb2caf",
+      "expectedPages": 2,
+      "expectedPhrases": [
+        "Supplier Qualification Policy",
+        "GDP certificate is mandatory",
+        "Decision matrix"
+      ],
+      "expectedFacts": {
+        "policyId": "POL-SQ-04",
+        "version": "4.2",
+        "effectiveFrom": "2026-01-15"
+      },
+      "expectedWarnings": [],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "GDP certificate is mandatory",
+          "field": "gdpRequirement"
+        }
+      ],
+      "source": "synthetic"
+    },
+    {
+      "filename": "08_pharmaceutical_distribution_policy.pdf",
+      "classification": "policy_pharmaceutical_distribution",
+      "sha256": "5437c172420d1da175e2a5c27d155f8f441e4044cabfe41cd79eff716b0b28aa",
+      "expectedPages": 2,
+      "expectedPhrases": [
+        "Pharmaceutical Distribution Policy",
+        "2 C to 8 C",
+        "temperature excursion"
+      ],
+      "expectedFacts": {
+        "policyId": "POL-GDP-07",
+        "version": "3.1",
+        "temperatureRange": "2 C to 8 C"
+      },
+      "expectedWarnings": [],
+      "evidence": [],
+      "source": "synthetic"
+    },
+    {
+      "filename": "09_insurance_requirements_policy.pdf",
+      "classification": "policy_insurance_requirements",
+      "sha256": "d04c6bac05757453f447a8e0f660b650d01aa0151cdf3d6863858f8bd0f40817",
+      "expectedPages": 2,
+      "expectedPhrases": ["Insurance Requirements", "EUR 2,000,000", "product liability"],
+      "expectedFacts": {
+        "policyId": "POL-RISK-02",
+        "version": "2.0",
+        "minimumCoverageEur": 2000000
+      },
+      "expectedWarnings": [],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "EUR 2,000,000",
+          "field": "minimumCoverageEur"
+        }
+      ],
+      "source": "synthetic"
+    },
+    {
+      "filename": "10_data_protection_policy.pdf",
+      "classification": "policy_data_protection",
+      "sha256": "6dbcbd2c3910860989d6354cb7a1b6cf8e5601f778c15109bdd6980301592ca9",
+      "expectedPages": 2,
+      "expectedPhrases": ["Data Protection and Processor Policy", "Article 28", "72 hours"],
+      "expectedFacts": {
+        "policyId": "POL-DP-09",
+        "version": "5.0",
+        "incidentNoticeHours": 72
+      },
+      "expectedWarnings": [],
+      "evidence": [],
+      "source": "synthetic"
+    },
+    {
+      "filename": "11_multilingual_product_catalog.pdf",
+      "classification": "product_catalog",
+      "sha256": "6c9f684ba769c659292dadfea14a584e073e37c7d32d84ffecc3c341264727dd",
+      "expectedPages": 2,
+      "expectedPhrases": [
+        "Multilingual Product Catalogue",
+        "Kuehlpflichtig",
+        "Зберігати охолодженим"
+      ],
+      "expectedFacts": {
+        "languages": ["de", "en", "uk"],
+        "temperatureRange": "2 C to 8 C",
+        "productCount": 6
+      },
+      "expectedWarnings": ["mixed_language_document"],
+      "evidence": [],
+      "source": "synthetic"
+    },
+    {
+      "filename": "12_rotated_low_contrast_delivery_note.pdf",
+      "classification": "delivery_note",
+      "sha256": "3c73537d90d8547558e759051a6ac39daf420026e149953ad9bab2a677b1bbe8",
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Delivery note DN-2026-0819",
+        "Temperature on receipt: 5.2 C",
+        "MediSupply Europe GmbH"
+      ],
+      "expectedFacts": {
+        "deliveryNoteNumber": "DN-2026-0819",
+        "receiptTemperatureC": 5.2,
+        "supplierName": "MediSupply Europe GmbH"
+      },
+      "expectedWarnings": [
+        "page_rotated_90_degrees",
+        "low_contrast_source",
+        "supplier_name_conflicts_with_register"
+      ],
+      "evidence": [],
+      "source": "synthetic"
+    }
+  ],
+  "quarantine": {
+    "corrupted-pdf.pdf": {
+      "expectedDisposition": "quarantine",
+      "expectedError": "pdf_corrupt_or_truncated"
+    },
+    "wrong-mime.pdf": {
+      "expectedDisposition": "quarantine",
+      "expectedError": "mime_signature_mismatch",
+      "declaredMime": "application/pdf",
+      "detectedMime": "image/png"
+    },
+    "encrypted-insurance.pdf": {
+      "expectedDisposition": "quarantine",
+      "expectedError": "pdf_encrypted",
+      "passwordAvailableToPipeline": false
+    },
+    "empty-input.pdf": {
+      "expectedDisposition": "quarantine",
+      "expectedError": "empty_file"
+    },
+    "unsupported-note.rtf": {
+      "expectedDisposition": "quarantine",
+      "expectedError": "unsupported_format",
+      "declaredMime": "application/rtf"
+    },
+    "duplicate-insurance-certificate.pdf": {
+      "expectedDisposition": "duplicate",
+      "duplicateOf": "04_insurance_certificate.pdf",
+      "sha256": "d51c748639ab022fd0a46201bc35cf744515726cb2a159a92f04b57fa0602494"
+    }
+  },
+  "intentionallyMissing": [
+    {
+      "classification": "gdp_certificate",
+      "requirement": "Current GDP certificate for suppliers distributing medicinal products",
+      "severity": "critical",
+      "expectedFinding": "missing_gdp_certificate"
+    }
+  ],
+  "expectedCaseFindings": [
+    {
+      "code": "missing_gdp_certificate",
+      "severity": "critical",
+      "status": "open"
+    },
+    {
+      "code": "insufficient_liability_coverage",
+      "severity": "major",
+      "actual": 1000000,
+      "required": 2000000,
+      "currency": "EUR"
+    },
+    {
+      "code": "legal_name_mismatch",
+      "severity": "major",
+      "registered": "MediSupply GmbH",
+      "declared": "MediSupply Europe GmbH"
+    },
+    {
+      "code": "iso_13485_valid",
+      "severity": "informational",
+      "validUntil": "2027-10-31"
+    },
+    {
+      "code": "dpa_signed",
+      "severity": "informational",
+      "signedAt": "2026-08-18"
+    }
+  ],
+  "edgeCaseCoverage": {
+    "nativeText": ["01_supplier_questionnaire.pdf", "02_commercial_register_extract.pdf"],
+    "multiPage": ["05_data_processing_agreement.pdf", "06_supply_contract.pdf"],
+    "tables": ["01_supplier_questionnaire.pdf", "11_multilingual_product_catalog.pdf"],
+    "multilingual": ["11_multilingual_product_catalog.pdf"],
+    "rotated": ["12_rotated_low_contrast_delivery_note.pdf"],
+    "lowContrast": ["12_rotated_low_contrast_delivery_note.pdf"],
+    "crossDocumentConflict": ["02_commercial_register_extract.pdf", "06_supply_contract.pdf"],
+    "missingRequiredDocument": ["gdp_certificate"],
+    "belowThreshold": ["04_insurance_certificate.pdf", "09_insurance_requirements_policy.pdf"],
+    "corrupt": ["quarantine/corrupted-pdf.pdf"],
+    "mimeSpoof": ["quarantine/wrong-mime.pdf"],
+    "encrypted": ["quarantine/encrypted-insurance.pdf"],
+    "empty": ["quarantine/empty-input.pdf"],
+    "unsupported": ["quarantine/unsupported-note.rtf"],
+    "byteDuplicate": ["quarantine/duplicate-insurance-certificate.pdf"]
+  }
+}

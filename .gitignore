@@ -1,0 +1,15 @@
+node_modules/
+.npm-cache/
+.pnpm-store/
+.next/
+dist/
+coverage/
+.turbo/
+__pycache__/
+*.pyc
+*.tsbuildinfo
+.env
+.env.local
+tmp/pdfs/rendered/
+data/
+*.log

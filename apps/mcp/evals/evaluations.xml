@@ -1,0 +1,12 @@
+<evaluations>
+  <evaluation><question>Which open findings prevent qualification of MediSupply GmbH, what is each severity, and what evidence or missing document supports it?</question><expected_tools>caselens_list_cases,caselens_get_case,caselens_list_findings</expected_tools></evaluation>
+  <evaluation><question>Compare the registered legal name with the supply-contract party and identify the exact source page for both values.</question><expected_tools>caselens_list_cases,caselens_search_evidence</expected_tools></evaluation>
+  <evaluation><question>What liability limit was extracted, what minimum is stated in the finding, and how much additional coverage is required?</question><expected_tools>caselens_list_cases,caselens_search_evidence,caselens_list_findings</expected_tools></evaluation>
+  <evaluation><question>Find all cases still processing and report their reference, subject, progress, assignee, and due date.</question><expected_tools>caselens_list_cases</expected_tools></evaluation>
+  <evaluation><question>Build a chronological explanation of how the MediSupply recommendation was reached, distinguishing worker, rules-engine, workflow, and human actions.</question><expected_tools>caselens_list_cases,caselens_get_audit</expected_tools></evaluation>
+  <evaluation><question>Which uploaded MediSupply documents need review, why, and which required document is absent?</question><expected_tools>caselens_list_cases,caselens_get_case</expected_tools></evaluation>
+  <evaluation><question>Is the ISO 13485 certificate current, and where is its validity date evidenced?</question><expected_tools>caselens_list_cases,caselens_search_evidence</expected_tools></evaluation>
+  <evaluation><question>Prepare a compact audit-package summary containing the domain-pack version, recommendation, unresolved severity counts, and final-decision state.</question><expected_tools>caselens_list_cases,caselens_export_case</expected_tools></evaluation>
+  <evaluation><question>Search the MediSupply dossier for data-processing evidence and state whether the DPA is signed, with page and quote.</question><expected_tools>caselens_list_cases,caselens_search_evidence</expected_tools></evaluation>
+  <evaluation><question>Determine whether MediSupply can be approved now; cite every critical or major condition and clearly abstain if the record has no final human decision.</question><expected_tools>caselens_list_cases,caselens_get_case,caselens_list_findings</expected_tools></evaluation>
+</evaluations>

@@ -1,0 +1,19 @@
+{
+  "caseReference": "SUP-2026-0042",
+  "subject": "MediSupply GmbH",
+  "facts": {
+    "supplier.legalName": "MediSupply GmbH",
+    "supplier.distributesTemperatureControlled": true,
+    "register.number": "HRB 104277",
+    "contract.partyName": "MediSupply Europe GmbH",
+    "insurance.liabilityLimitEur": 1000000,
+    "certificates.iso13485.validUntil": "2027-12-31",
+    "dpa.signed": true
+  },
+  "findings": [
+    { "ruleId": "required_document:gdp-for-cold-chain", "severity": "critical" },
+    { "ruleId": "insurance-minimum", "severity": "major" },
+    { "ruleId": "legal-name-conflict", "severity": "major" }
+  ],
+  "recommendation": "request_information"
+}

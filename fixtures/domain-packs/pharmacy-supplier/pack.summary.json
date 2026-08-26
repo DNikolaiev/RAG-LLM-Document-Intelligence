@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "pharmacy-supplier",
+  "version": "1.0.0",
+  "name": "Pharmaceutical supplier qualification",
+  "timezone": "Europe/Berlin",
+  "requiredDocumentTypes": ["commercial_register", "insurance_certificate", "gdp_certificate"],
+  "rules": ["insurance-minimum", "legal-name-conflict", "iso-expired", "dpa-unsigned"],
+  "expectedRecommendation": "request_information"
+}

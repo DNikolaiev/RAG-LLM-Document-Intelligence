@@ -1,0 +1,14 @@
+node_modules
+.next
+dist
+coverage
+.turbo
+.pnpm-store
+.git
+.env
+.env.*
+*.log
+*.tsbuildinfo
+tmp
+output
+scripts/__pycache__
