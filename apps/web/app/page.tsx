@@ -62,7 +62,13 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
       </section>
 
       <section className="queue-workbench" aria-label="Case queue">
-        <form className="queue-tools" action="/" method="get" role="search">
+        <form
+          key={`${query}:${status}`}
+          className="queue-tools"
+          action="/"
+          method="get"
+          role="search"
+        >
           <label className="search-field">
             <span>Find a subject or case</span>
             <input

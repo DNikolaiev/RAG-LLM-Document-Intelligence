@@ -44,6 +44,15 @@ pnpm build
 python scripts/verify-fixtures.py
 ```
 
+With the containerized demo running, install the browser once and run the desktop and mobile UI regression suite:
+
+```bash
+pnpm exec playwright install chromium
+pnpm test:e2e
+```
+
+The suite defaults to `http://127.0.0.1:3000`. Set `PLAYWRIGHT_BASE_URL` to exercise another CaseLens deployment. Failure traces, screenshots, and videos are written under `test-results/`, with the HTML report under `playwright-report/`.
+
 ## Structure
 
 - `apps/web`: Next.js review console

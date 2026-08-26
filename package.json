@@ -13,12 +13,16 @@
     "format:check": "prettier --check .",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:typecheck": "tsc --noEmit -p apps/web/e2e/tsconfig.json",
     "typecheck": "turbo run typecheck",
-    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:e2e:typecheck && pnpm test && pnpm build",
     "fixtures:generate": "python scripts/generate-fixtures.py",
     "fixtures:verify": "python scripts/verify-fixtures.py"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@types/node": "^24.10.0",
     "prettier": "^3.6.2",
     "turbo": "^2.6.1",
