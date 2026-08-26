@@ -43,4 +43,5 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose -f infra/docker-compose.yml config --quiet
+      - run: docker compose -f infra/docker-compose.demo.yml config --quiet
+      - run: docker compose --env-file infra/.env.prod-infra.example -f infra/docker-compose.prod-infra.yml config --quiet

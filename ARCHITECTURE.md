@@ -28,6 +28,8 @@ NestJS workflow worker
 
 Production adapters are defined for PostgreSQL/pgvector, Redis/BullMQ, S3-compatible storage, HTTP OCR, and configurable model APIs. Demo mode binds deterministic in-memory adapters so the complete review experience runs without credentials.
 
+The LangGraph runner in `packages/workflow` is implemented and tested, but the current `apps/worker` runtime still uses a deterministic progress simulator. BullMQ consumption, durable checkpoints, and provider composition remain explicit production backlog; see [`docs/architecture/langgraph-workflow.md`](docs/architecture/langgraph-workflow.md).
+
 ## Design boundaries
 
 - `apps/web` contains presentation and interaction logic; the API remains authoritative.
@@ -60,7 +62,14 @@ A domain pack versions its document taxonomy, extraction schemas, thresholds, po
 
 ## Runtime profiles
 
-`APP_MODE=demo` is the implemented portfolio profile. It is deterministic and self-contained. `APP_MODE=production` intentionally refuses startup until durable repositories, verified OIDC, BullMQ consumption, object storage, and production readiness checks are composed. This prevents a demo configuration from being mistaken for a production deployment.
+The repository has two deliberately separate Compose definitions:
+
+- `infra/docker-compose.demo.yml` starts only the API and web application with deterministic, process-local memory providers. It is the implemented portfolio runtime and requires no infrastructure credentials.
+- `infra/docker-compose.prod-infra.yml` starts PostgreSQL/pgvector, password-protected Redis, and MinIO for durable-adapter development. It does not start the application and is not, by itself, a production deployment.
+
+The PostgreSQL bootstrap creates `caselens_runtime` as a `NOLOGIN` least-privilege group role. Deployment-specific login roles and credentials belong in secret-managed provisioning rather than committed initialization SQL.
+
+`APP_MODE=production` intentionally refuses API and worker startup until durable repositories, verified OIDC, BullMQ consumption, object storage, and dependency-backed readiness checks are composed. This prevents an infrastructure topology or demo configuration from being mistaken for an operationally complete production application.
 
 For deeper detail, see:
 

@@ -117,7 +117,7 @@ Run `npm ci`, `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm 
 
 - [ ] **Step 2: Rebuild and test the Docker demo**
 
-Run `docker compose -f infra/docker-compose.yml --profile demo build` and `docker compose -f infra/docker-compose.yml --profile demo up -d`, then verify the web/API health endpoints.
+Run `docker compose -f infra/docker-compose.demo.yml build` and `docker compose -f infra/docker-compose.demo.yml up -d`, then verify the web/API health endpoints.
 
 - [x] **Step 3: Run Playwright and inspect the report**
 

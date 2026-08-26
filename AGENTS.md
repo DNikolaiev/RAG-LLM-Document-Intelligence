@@ -75,12 +75,12 @@ python scripts/verify-fixtures.py
 Run the full containerized demo with:
 
 ```bash
-docker compose -f infra/docker-compose.yml --profile demo up --build -d
+docker compose -f infra/docker-compose.demo.yml up --build -d
 ```
 
 When it is running, execute browser coverage with `npm run test:e2e`. The default Playwright target is `http://127.0.0.1:3000`; override it with `PLAYWRIGHT_BASE_URL`. Tests run serially against desktop Chromium and a Pixel 7 profile. They intentionally mock browser-originated mutations so repeated runs do not alter shared demo state.
 
-The local MinIO console is at `http://localhost:9001` with username `caselens` and password `caselens-minio-local-only`; its S3 endpoint is `http://localhost:9000`. These Compose-only credentials are non-production and must not be reused elsewhere.
+PostgreSQL/pgvector, Redis, and MinIO are isolated in `infra/docker-compose.prod-infra.yml`. Copy `infra/.env.prod-infra.example` to the ignored `infra/.env.prod-infra`, replace every example secret, and use it with `docker compose --env-file infra/.env.prod-infra -f infra/docker-compose.prod-infra.yml up -d`. This infrastructure stack does not prove that production application bindings are complete.
 
 ## Change expectations
 

@@ -2,7 +2,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 DO $$ BEGIN
-  CREATE ROLE caselens_runtime LOGIN PASSWORD 'caselens-runtime-local-only';
+  CREATE ROLE caselens_runtime NOLOGIN;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 

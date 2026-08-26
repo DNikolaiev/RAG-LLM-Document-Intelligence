@@ -1,0 +1,39 @@
+name: caselens-demo
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/node.Dockerfile
+      args: { PACKAGE: '@caselens/api' }
+    environment:
+      APP_MODE: demo
+      API_PORT: 4100
+      PUBLIC_API_URL: http://localhost:4100
+      PERSISTENCE_PROVIDER: memory
+      QUEUE_PROVIDER: memory
+      STORAGE_PROVIDER: memory
+      SEARCH_PROVIDER: memory
+      MODEL_PROVIDER: deterministic
+      OCR_PROVIDER: deterministic
+      SCANNER_PROVIDER: deterministic
+    ports: ['127.0.0.1:4100:4100']
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:4100/v1/health/ready']
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/docker/node.Dockerfile
+      args: { PACKAGE: '@caselens/web' }
+    environment:
+      APP_MODE: demo
+      PUBLIC_API_URL: http://api:4100
+    ports: ['127.0.0.1:3000:3000']
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
