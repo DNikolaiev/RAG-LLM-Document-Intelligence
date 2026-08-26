@@ -1732,6 +1732,10 @@ code {
     padding: 32px 32px 90px;
   }
 
+  .page-anchor {
+    right: -15px;
+  }
+
   .paper-letterhead {
     padding-right: 24px;
     padding-left: 24px;
