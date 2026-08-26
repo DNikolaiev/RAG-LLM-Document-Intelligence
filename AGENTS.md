@@ -78,7 +78,9 @@ Run the full containerized demo with:
 docker compose -f infra/docker-compose.yml --profile demo up --build -d
 ```
 
-When it is running, execute browser coverage with `pnpm test:e2e`. Tests run serially against desktop Chromium and a Pixel 7 profile. They intentionally mock browser-originated mutations so repeated runs do not alter shared demo state.
+When it is running, execute browser coverage with `pnpm test:e2e`. The default Playwright target is `http://127.0.0.1:3000`; override it with `PLAYWRIGHT_BASE_URL`. Tests run serially against desktop Chromium and a Pixel 7 profile. They intentionally mock browser-originated mutations so repeated runs do not alter shared demo state.
+
+The local MinIO console is at `http://localhost:9001` with username `caselens` and password `caselens-minio-local-only`; its S3 endpoint is `http://localhost:9000`. These Compose-only credentials are non-production and must not be reused elsewhere.
 
 ## Change expectations
 

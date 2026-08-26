@@ -14,7 +14,8 @@ Then open:
 
 - App: <http://localhost:3000>
 - API documentation: <http://localhost:4100/docs>
-- MinIO console: <http://localhost:9001>
+- MinIO console: <http://localhost:9001> (`caselens` / `caselens-minio-local-only`)
+- MinIO S3 API: <http://localhost:9000>
 
 Check or stop the stack:
 
@@ -61,4 +62,4 @@ pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
-Set `PLAYWRIGHT_BASE_URL` to test a deployment other than `http://127.0.0.1:3000`.
+Playwright uses `http://127.0.0.1:3000` by default. Set `PLAYWRIGHT_BASE_URL` to test another deployment.
