@@ -82,6 +82,20 @@ test.describe('case review workspace', () => {
     const dossier = page.getByRole('navigation', { name: 'Case dossier' });
     await expect(dossier).toBeVisible();
     expect(await dossier.locator('.document-link').count()).toBeGreaterThanOrEqual(7);
+    const unclippedDocumentTitles = await dossier
+      .locator('.document-label strong')
+      .evaluateAll((titles) =>
+        titles.flatMap((title) => {
+          const style = getComputedStyle(title);
+          return style.overflow === 'hidden' && style.textOverflow === 'ellipsis'
+            ? []
+            : [title.textContent ?? 'untitled document'];
+        }),
+      );
+    expect(
+      unclippedDocumentTitles,
+      'Long dossier labels must truncate inside their document cards.',
+    ).toEqual([]);
 
     await dossier.getByRole('link', { name: /Supplier questionnaire/ }).click();
     await expect(page).toHaveURL(/document=questionnaire/);

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { LayoutDashboard, ScanSearch } from 'lucide-react';
 import { TEST_PROFILES } from '@caselens/contracts';
 import { getSelectedProfile, testProfilesEnabled } from '@/lib/session-profile';
 import { ProfileSwitcher } from './profile-switcher';
@@ -10,14 +11,22 @@ export async function BrandHeader() {
     <header className="brand-header">
       <Link className="brand-lockup" href="/" aria-label="CaseLens case queue">
         <span className="brand-mark" aria-hidden="true">
-          <span>CL</span>
+          <ScanSearch size={20} strokeWidth={1.8} />
           <i />
         </span>
         <span>
           <strong>CaseLens</strong>
-          <small>Evidence review</small>
+          <small>Decision intelligence</small>
         </span>
       </Link>
+
+      <nav className="primary-navigation" aria-label="Primary navigation">
+        <Link href="/">
+          <LayoutDashboard aria-hidden="true" size={16} />
+          Review queue
+          <span>Live</span>
+        </Link>
+      </nav>
 
       <div className="header-context" aria-label="Current workspace">
         <span className="environment-mark">

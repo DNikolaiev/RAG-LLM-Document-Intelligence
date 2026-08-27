@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { ExternalLink, Minus, Plus, ScanText } from 'lucide-react';
 
 import type { CaseDocument, EvidenceAnchor } from '@/lib/demo-data';
 
@@ -90,18 +91,23 @@ export function DocumentSurface({
   return (
     <div className="document-viewer">
       <div className="document-toolbar">
-        <div>
-          <span className="toolbar-kicker">Source document</span>
-          <strong>{document.label}</strong>
-          {sourceFixture ? (
-            <a
-              href={`/demo-documents/${encodeURIComponent(sourceFixture)}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Open verified PDF
-            </a>
-          ) : null}
+        <div className="toolbar-document-title">
+          <span className="toolbar-document-icon" aria-hidden="true">
+            <ScanText size={17} />
+          </span>
+          <div>
+            <span className="toolbar-kicker">Source document</span>
+            <strong>{document.label}</strong>
+            {sourceFixture ? (
+              <a
+                href={`/demo-documents/${encodeURIComponent(sourceFixture)}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open verified PDF <ExternalLink aria-hidden="true" size={11} />
+              </a>
+            ) : null}
+          </div>
         </div>
         <div className="zoom-controls" aria-label="Document zoom">
           <button
@@ -109,7 +115,7 @@ export function DocumentSurface({
             onClick={() => setZoom((value) => Math.max(70, value - 10))}
             type="button"
           >
-            −
+            <Minus aria-hidden="true" size={15} />
           </button>
           <output aria-live="polite">{zoom}%</output>
           <button
@@ -117,7 +123,7 @@ export function DocumentSurface({
             onClick={() => setZoom((value) => Math.min(130, value + 10))}
             type="button"
           >
-            +
+            <Plus aria-hidden="true" size={15} />
           </button>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { AlertTriangle, ArrowLeft, Layers3, UserRound } from 'lucide-react';
 
 import { DossierNav } from '@/components/dossier-nav';
 import { DocumentSurfaceLoader } from '@/components/document-surface-loader';
@@ -51,8 +52,10 @@ export default async function CasePage({ params, searchParams }: CasePageProps) 
     <main id="main-content" className="case-page">
       <header className="case-heading">
         <div className="case-breadcrumb">
-          <Link href="/">Case queue</Link>
-          <span aria-hidden="true">/</span>
+          <Link href="/">
+            <ArrowLeft aria-hidden="true" size={14} /> Case queue
+          </Link>
+          <span aria-hidden="true">•</span>
           <code>{caseDetail.reference}</code>
         </div>
         <div className="case-title-row">
@@ -63,13 +66,18 @@ export default async function CasePage({ params, searchParams }: CasePageProps) 
           </div>
           <div className="case-meta">
             <StatusMark status={caseDetail.status} />
-            <span>Owner · {caseDetail.assignee}</span>
-            <code>{caseDetail.domainPack}</code>
+            <span>
+              <UserRound aria-hidden="true" size={14} /> {caseDetail.assignee}
+            </span>
+            <code>
+              <Layers3 aria-hidden="true" size={13} /> {caseDetail.domainPack}
+            </code>
           </div>
         </div>
         <section className="recommendation-strip" aria-labelledby="recommendation-title">
           <span className="inspection-stamp" aria-hidden="true">
-            HOLD
+            <AlertTriangle size={21} />
+            <small>AI hold</small>
           </span>
           <div>
             <p className="eyebrow">System recommendation</p>

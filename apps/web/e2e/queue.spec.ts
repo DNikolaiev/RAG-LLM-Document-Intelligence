@@ -12,7 +12,10 @@ test.describe('case queue', () => {
     const response = await page.goto('/');
 
     expect(response?.ok()).toBe(true);
-    await expect(page.getByRole('heading', { name: 'Cases that need a human eye' })).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'Every decision, grounded in evidence.' }),
+    ).toBeVisible();
+    await expect(page.getByLabel('Evidence pipeline is active')).toBeAttached();
     await expect(page.locator('[aria-label="Case totals"]')).toBeVisible();
     await expect(page.getByRole('region', { name: 'Case queue' })).toBeVisible();
     await expect(page.getByRole('searchbox', { name: 'Find a subject or case' })).toBeVisible();

@@ -1,5 +1,15 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import {
+  Activity,
+  ArrowUpRight,
+  FileSearch,
+  Layers3,
+  ListFilter,
+  ScanSearch,
+  Search,
+  ShieldAlert,
+} from 'lucide-react';
 
 import { StatusMark } from '@/components/status-mark';
 import {
@@ -33,38 +43,99 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
   const filteredCases = filterCases(allCases, query, status);
   const counts = countByStatus(allCases);
   const materialFindings = allCases.reduce((total, item) => total + item.openFindings, 0);
+  const sourceDocuments = allCases.reduce((total, item) => total + item.documents, 0);
   const showTenant = new Set(allCases.map((item) => item.tenantId)).size > 1;
 
   return (
     <main id="main-content" className="queue-page">
       <section className="queue-intro" aria-labelledby="queue-title">
-        <div>
+        <div className="queue-intro-copy">
           <p className="eyebrow">
-            {showTenant ? 'Cross-tenant review docket' : 'Tenant review docket'} · 27 August 2026
+            <span className="live-pulse" aria-hidden="true" />
+            {showTenant ? 'Cross-tenant intelligence' : 'Tenant intelligence'} · Live workspace
           </p>
-          <h1 id="queue-title">Cases that need a human eye</h1>
+          <h1 id="queue-title">
+            Every decision,
+            <span>grounded in evidence.</span>
+          </h1>
           <p className="intro-copy">
-            Review exceptions, verify their source, and leave every decision with a traceable
-            reason.
+            Move from source document to defensible decision without losing the thread. Every
+            exception stays linked to its exact evidence and policy.
           </p>
+          <div className="intro-actions">
+            <a className="button button-primary" href="#case-queue">
+              Open review queue
+              <ArrowUpRight aria-hidden="true" size={16} />
+            </a>
+            <span>
+              <ShieldAlert aria-hidden="true" size={15} /> Human approval stays in control
+            </span>
+          </div>
         </div>
-        <div className="queue-ledger" aria-label="Case totals">
-          <div>
+        <aside className="evidence-orbit" aria-label="Evidence pipeline is active">
+          <div className="orbit-grid" aria-hidden="true" />
+          <div className="orbit-ring orbit-ring-outer" aria-hidden="true" />
+          <div className="orbit-ring orbit-ring-inner" aria-hidden="true" />
+          <div className="orbit-beam" aria-hidden="true" />
+          <span className="orbit-node orbit-node-source">
+            <FileSearch aria-hidden="true" size={14} /> {sourceDocuments} sources
+          </span>
+          <span className="orbit-node orbit-node-rules">
+            <Layers3 aria-hidden="true" size={14} /> Policy linked
+          </span>
+          <div className="orbit-core">
+            <ScanSearch aria-hidden="true" size={30} strokeWidth={1.6} />
+            <span>Evidence graph</span>
+            <strong>Active</strong>
+          </div>
+          <div className="orbit-caption">
+            <Activity aria-hidden="true" size={14} />
+            Sources → facts → policy → decision
+          </div>
+        </aside>
+      </section>
+
+      <section className="queue-ledger" aria-label="Case totals">
+        <div>
+          <Activity aria-hidden="true" size={18} />
+          <span>
             <strong>{allCases.length}</strong>
-            <span>Open cases</span>
-          </div>
-          <div>
+            <small>Open cases</small>
+          </span>
+        </div>
+        <div>
+          <ShieldAlert aria-hidden="true" size={18} />
+          <span>
             <strong>{counts.review_needed}</strong>
-            <span>Need review</span>
-          </div>
-          <div>
+            <small>Need review</small>
+          </span>
+        </div>
+        <div>
+          <FileSearch aria-hidden="true" size={18} />
+          <span>
+            <strong>{sourceDocuments}</strong>
+            <small>Sources indexed</small>
+          </span>
+        </div>
+        <div>
+          <Layers3 aria-hidden="true" size={18} />
+          <span>
             <strong>{materialFindings}</strong>
-            <span>Material findings</span>
-          </div>
+            <small>Material findings</small>
+          </span>
         </div>
       </section>
 
-      <section className="queue-workbench" aria-label="Case queue">
+      <section className="queue-workbench" id="case-queue" aria-label="Case queue">
+        <header className="workbench-heading">
+          <div>
+            <p className="eyebrow">Operational review</p>
+            <h2>Case queue</h2>
+          </div>
+          <span className="workbench-signal">
+            <span aria-hidden="true" /> {filteredCases.length} visible
+          </span>
+        </header>
         <form
           key={`${query}:${status}`}
           className="queue-tools"
@@ -74,12 +145,15 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
         >
           <label className="search-field">
             <span>Find a subject or case</span>
-            <input
-              type="search"
-              name="query"
-              defaultValue={query}
-              placeholder="Subject name or case reference"
-            />
+            <span className="input-shell">
+              <Search aria-hidden="true" size={16} />
+              <input
+                type="search"
+                name="query"
+                defaultValue={query}
+                placeholder="Subject name or case reference"
+              />
+            </span>
           </label>
           <label className="select-field">
             <span>Status</span>
@@ -93,6 +167,7 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
             </select>
           </label>
           <button className="button button-secondary" type="submit">
+            <ListFilter aria-hidden="true" size={15} />
             Filter cases
           </button>
           {query || status !== 'all' ? (
@@ -119,7 +194,7 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
             </thead>
             <tbody>
               {filteredCases.map((item) => (
-                <tr key={item.id}>
+                <tr className={`queue-row row-${item.status}`} key={item.id}>
                   <td className="case-col">
                     <Link className="case-name" href={`/cases/${item.id}`}>
                       <strong>{item.supplier}</strong>
@@ -155,7 +230,7 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
                   <td className="updated-col">{item.updatedAt}</td>
                   <td className="action-col">
                     <Link className="row-action" href={`/cases/${item.id}`}>
-                      Review <span aria-hidden="true">→</span>
+                      Review <ArrowUpRight aria-hidden="true" size={14} />
                     </Link>
                   </td>
                 </tr>

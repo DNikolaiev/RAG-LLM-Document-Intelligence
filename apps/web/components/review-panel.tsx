@@ -1,6 +1,16 @@
 'use client';
 
 import { useState } from 'react';
+import {
+  CheckCircle2,
+  ClipboardCheck,
+  Download,
+  FileSearch,
+  History,
+  ListChecks,
+  PencilLine,
+  Send,
+} from 'lucide-react';
 
 import type { AuditEvent, Fact, Finding } from '@/lib/demo-data';
 
@@ -32,6 +42,11 @@ export function ReviewPanel({
   const [notice, setNotice] = useState('');
   const [currentCaseVersion, setCurrentCaseVersion] = useState(caseVersion);
   const openFindings = findings.filter((finding) => finding.state === 'open').length;
+  const sectionIcons = {
+    findings: ListChecks,
+    facts: FileSearch,
+    audit: History,
+  } as const;
 
   async function persist<T>(
     path: string,
@@ -177,18 +192,22 @@ export function ReviewPanel({
             ['facts', `Facts ${facts.length}`],
             ['audit', 'Audit'],
           ] as const
-        ).map(([id, label]) => (
-          <button
-            aria-controls={`review-${id}`}
-            aria-selected={section === id}
-            key={id}
-            onClick={() => setSection(id)}
-            role="tab"
-            type="button"
-          >
-            {label}
-          </button>
-        ))}
+        ).map(([id, label]) => {
+          const SectionIcon = sectionIcons[id];
+          return (
+            <button
+              aria-controls={`review-${id}`}
+              aria-selected={section === id}
+              key={id}
+              onClick={() => setSection(id)}
+              role="tab"
+              type="button"
+            >
+              <SectionIcon aria-hidden="true" size={14} />
+              {label}
+            </button>
+          );
+        })}
       </div>
 
       {section === 'findings' ? (
@@ -224,7 +243,7 @@ export function ReviewPanel({
                   <div className="finding-actions">
                     {finding.evidenceIds.map((evidenceId, index) => (
                       <a href={`#evidence-${evidenceId}`} key={evidenceId}>
-                        Open evidence {index + 1}
+                        <FileSearch aria-hidden="true" size={12} /> Open evidence {index + 1}
                       </a>
                     ))}
                     {finding.state === 'open' ? (
@@ -233,13 +252,13 @@ export function ReviewPanel({
                           type="button"
                           onClick={() => setFindingState(finding.id, 'accepted')}
                         >
-                          Accept follow-up
+                          <Send aria-hidden="true" size={12} /> Accept follow-up
                         </button>
                         <button
                           type="button"
                           onClick={() => setFindingState(finding.id, 'resolved')}
                         >
-                          Mark resolved
+                          <CheckCircle2 aria-hidden="true" size={12} /> Mark resolved
                         </button>
                       </>
                     ) : (
@@ -276,7 +295,7 @@ export function ReviewPanel({
                       setCorrection(fact.value);
                     }}
                   >
-                    Correct value
+                    <PencilLine aria-hidden="true" size={12} /> Correct value
                   </button>
                 </div>
               </div>
@@ -326,7 +345,7 @@ export function ReviewPanel({
               });
             }}
           >
-            Request information
+            <Send aria-hidden="true" size={14} /> Request information
           </button>
           <button
             className="button button-secondary"
@@ -349,10 +368,10 @@ export function ReviewPanel({
               });
             }}
           >
-            Record decision
+            <ClipboardCheck aria-hidden="true" size={14} /> Record decision
           </button>
           <button className="icon-button" type="button" onClick={() => void exportCase()}>
-            Export
+            <Download aria-hidden="true" size={14} /> Export
           </button>
         </div>
       </div>
