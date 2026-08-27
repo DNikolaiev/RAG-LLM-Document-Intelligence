@@ -1,0 +1,91 @@
+{
+  "schemaVersion": "1.0.0",
+  "fixtureSet": "caselens-multi-domain-review",
+  "generatedOn": "2026-08-27",
+  "synthetic": true,
+  "documents": [
+    {
+      "tenantId": "tenant_legal",
+      "domain": "commercial_contract_review",
+      "filename": "legal-contract/01_nordstern_distribution_agreement.pdf",
+      "sha256": "21262753a03a379c8de2c864e04cb44cf64c38d74ecbecdcdf3f71623c46f8d8",
+      "expectedPages": 2,
+      "expectedFacts": {
+        "agreementId": "RLS-CDA-2026-041",
+        "customer": "Rheinland Legal Services GmbH",
+        "declaredCounterparty": "Nordstern Trading GmbH",
+        "signatureCounterparty": "Nordstern Handelsgesellschaft mbH",
+        "annualSubscriptionEur": 82000,
+        "governingLaw": "Germany"
+      },
+      "expectedReviewFindings": [
+        "counterparty_identity_mismatch",
+        "missing_annex_b_data_processing_instructions",
+        "customer_signature_missing",
+        "commercial_register_evidence_missing"
+      ],
+      "edgeCases": [
+        "cross_page_conflict",
+        "referenced_attachment_missing",
+        "partially_executed_contract"
+      ]
+    },
+    {
+      "tenantId": "tenant_insurance",
+      "domain": "property_claim_assessment",
+      "filename": "insurance-claim/01_kronenberg_water_damage_claim.pdf",
+      "sha256": "e61599700966576ab974d8e8f07d300f5c3dce5c14d9b719eda0859cd2d63a46",
+      "expectedPages": 2,
+      "expectedFacts": {
+        "claimReference": "HCE-DE-2026-005184",
+        "claimantLossDate": "2026-05-14",
+        "serviceReportLossDate": "2026-05-13",
+        "claimedAmountEur": 18640,
+        "deductibleEur": 1000,
+        "serviceReportLanguage": "de"
+      },
+      "expectedReviewFindings": [
+        "loss_date_conflict",
+        "cause_timing_uncertain",
+        "damage_photos_missing",
+        "paid_invoices_missing",
+        "temporary_accommodation_receipts_missing"
+      ],
+      "edgeCases": [
+        "mixed_native_and_image_only_pages",
+        "multilingual",
+        "low_contrast_scan",
+        "ocr_required"
+      ]
+    },
+    {
+      "tenantId": "tenant_manufacturing",
+      "domain": "supplier_quality_assurance",
+      "filename": "manufacturing-supplier/01_vektor_material_certificate.pdf",
+      "sha256": "460573ad0a4c3349bdec44cded8f7c2802a9d17108d064b43d8cc88758b665b6",
+      "expectedPages": 2,
+      "expectedFacts": {
+        "certificateNumber": "VP-31-2026-1187",
+        "materialGrade": "1.4404 / X2CrNiMo17-12-2",
+        "declaredHeat": "H-26-7718",
+        "conflictingHeat": "H-26-771B",
+        "nickelResultPercent": 9.72,
+        "nickelMinimumPercent": 10,
+        "pmiSampleCount": 18,
+        "deliveredQuantity": 360
+      },
+      "expectedReviewFindings": [
+        "heat_number_traceability_conflict",
+        "nickel_below_specification",
+        "pmi_sample_below_customer_plan",
+        "authorized_inspector_signature_missing"
+      ],
+      "edgeCases": [
+        "digit_letter_identifier_ambiguity",
+        "threshold_failure",
+        "bilingual_declaration",
+        "unsigned_release"
+      ]
+    }
+  ]
+}

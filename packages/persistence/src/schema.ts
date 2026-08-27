@@ -17,7 +17,7 @@ const vector = customType<{ data: number[]; driverData: string }>({
     const dimensions =
       typeof config === 'object' && config !== null && 'dimensions' in config
         ? Number(config.dimensions)
-        : 1536;
+        : 768;
     return `vector(${dimensions})`;
   },
 });
@@ -270,7 +270,7 @@ export const policyChunks = pgTable(
     ordinal: integer('ordinal').notNull(),
     heading: text('heading'),
     content: text('content').notNull(),
-    embedding: vector('embedding', { dimensions: 1536 }),
+    embedding: vector('embedding', { dimensions: 768 }),
     metadata: jsonb('metadata').notNull().default({}),
     ...auditColumns,
   },
@@ -395,5 +395,22 @@ export const auditEvents = pgTable(
   (table) => [
     index('audit_case_time_idx').on(table.caseId, table.occurredAt),
     index('audit_tenant_time_idx').on(table.tenantId, table.occurredAt),
+  ],
+);
+
+export const workflowCheckpoints = pgTable(
+  'workflow_checkpoints',
+  {
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    checkpointKey: text('checkpoint_key').notNull(),
+    state: jsonb('state').notNull(),
+    revision: integer('revision').notNull().default(1),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.checkpointKey] }),
+    index('workflow_checkpoint_updated_idx').on(table.tenantId, table.updatedAt),
   ],
 );

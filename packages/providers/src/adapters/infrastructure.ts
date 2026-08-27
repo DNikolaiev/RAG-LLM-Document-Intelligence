@@ -1,4 +1,9 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  GetObjectCommand,
+  HeadBucketCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { Queue } from 'bullmq';
 import postgres from 'postgres';
 import {
@@ -39,7 +44,15 @@ export class S3CompatibleStorageProvider implements ObjectStorageProvider {
     return { id: this.config.id, features: ['immutable-object-storage'] };
   }
   async health(): Promise<ProviderResult<{ status: 'healthy' | 'degraded' }>> {
-    return ok({ status: 'healthy' });
+    try {
+      await this.#client.send(new HeadBucketCommand({ Bucket: this.config.bucket }));
+      return ok({ status: 'healthy' });
+    } catch (error) {
+      return fail('unavailable', 'S3 bucket is unavailable', true, { cause: error });
+    }
+  }
+  async close(): Promise<void> {
+    this.#client.destroy();
   }
   async put(
     key: string,
@@ -148,8 +161,11 @@ export class PgVectorSearchProvider implements VectorSearchProvider {
       return fail('unavailable', 'PostgreSQL is unavailable', true, { cause: error });
     }
   }
+  async close(): Promise<void> {
+    await this.#sql.end({ timeout: 5 });
+  }
   async index(chunks: readonly PolicyChunkRecord[]): Promise<ProviderResult<{ indexed: number }>> {
-    const expectedDimensions = this.config.dimensions ?? 1536;
+    const expectedDimensions = this.config.dimensions ?? 768;
     const mismatched = chunks.find((chunk) => chunk.embedding.length !== expectedDimensions);
     if (mismatched) {
       return fail(
@@ -158,9 +174,15 @@ export class PgVectorSearchProvider implements VectorSearchProvider {
       );
     }
     try {
-      for (const chunk of chunks)
-        await this
-          .#sql`insert into policy_search_chunks (id, tenant_id, domain_id, pack_version, document_id, document_version, collection_id, content, embedding, valid_from, valid_to, revoked_at, tags) values (${chunk.id}, ${chunk.tenantId}, ${chunk.domainId}, ${chunk.packVersion}, ${chunk.documentId}, ${chunk.documentVersion}, ${chunk.collectionId}, ${chunk.text}, ${JSON.stringify(chunk.embedding)}::vector, ${chunk.validFrom}, ${chunk.validTo}, ${chunk.revokedAt}, ${chunk.tags}) on conflict (id) do update set content = excluded.content, embedding = excluded.embedding, valid_from = excluded.valid_from, valid_to = excluded.valid_to, revoked_at = excluded.revoked_at, tags = excluded.tags`;
+      const tenantIds = [...new Set(chunks.map((chunk) => chunk.tenantId))];
+      for (const tenantId of tenantIds) {
+        const tenantChunks = chunks.filter((chunk) => chunk.tenantId === tenantId);
+        await this.#sql.begin(async (transaction) => {
+          await transaction`select set_config('app.tenant_id', ${tenantId}, true), set_config('app.platform_admin', 'false', true)`;
+          for (const chunk of tenantChunks)
+            await transaction`insert into policy_search_chunks (id, tenant_id, domain_id, pack_version, document_id, document_version, collection_id, content, embedding, valid_from, valid_to, revoked_at, tags) values (${chunk.id}, ${chunk.tenantId}, ${chunk.domainId}, ${chunk.packVersion}, ${chunk.documentId}, ${chunk.documentVersion}, ${chunk.collectionId}, ${chunk.text}, ${JSON.stringify(chunk.embedding)}::vector, ${chunk.validFrom}, ${chunk.validTo}, ${chunk.revokedAt}, ${chunk.tags}) on conflict (id) do update set content = excluded.content, embedding = excluded.embedding, valid_from = excluded.valid_from, valid_to = excluded.valid_to, revoked_at = excluded.revoked_at, tags = excluded.tags`;
+        });
+      }
       return ok({ indexed: chunks.length });
     } catch (error) {
       return fail('unavailable', 'Policy indexing failed', true, { cause: error });
@@ -172,7 +194,7 @@ export class PgVectorSearchProvider implements VectorSearchProvider {
     limit: number;
     scope: SearchScope;
   }): Promise<ProviderResult<SearchHit[]>> {
-    const expectedDimensions = this.config.dimensions ?? 1536;
+    const expectedDimensions = this.config.dimensions ?? 768;
     if (query.embedding.length !== expectedDimensions) {
       return fail(
         'invalid_response',
@@ -180,9 +202,11 @@ export class PgVectorSearchProvider implements VectorSearchProvider {
       );
     }
     try {
-      const rows = await this.#sql<
-        Array<PolicyChunkRecord & { vector_score: number; lexical_score: number }>
-      >`
+      const rows = await this.#sql.begin(async (transaction) => {
+        await transaction`select set_config('app.tenant_id', ${query.scope.tenantId}, true), set_config('app.platform_admin', 'false', true)`;
+        return transaction<
+          Array<PolicyChunkRecord & { vector_score: number; lexical_score: number }>
+        >`
         select id, tenant_id as "tenantId", domain_id as "domainId", pack_version as "packVersion", document_id as "documentId", document_version as "documentVersion", collection_id as "collectionId", content as text, embedding::text, valid_from as "validFrom", valid_to as "validTo", revoked_at as "revokedAt", tags,
           greatest(0, 1 - (embedding <=> ${JSON.stringify(query.embedding)}::vector)) as vector_score,
           ts_rank_cd(search_vector, websearch_to_tsquery('simple', ${query.text})) as lexical_score
@@ -190,6 +214,7 @@ export class PgVectorSearchProvider implements VectorSearchProvider {
           and revoked_at is null and valid_from <= ${query.scope.at}::timestamptz and (valid_to is null or valid_to >= ${query.scope.at}::timestamptz)
           and (${query.scope.collectionIds ?? null}::text[] is null or collection_id = any(${query.scope.collectionIds ?? null}::text[]))
         order by (1 - (embedding <=> ${JSON.stringify(query.embedding)}::vector)) * 0.7 + ts_rank_cd(search_vector, websearch_to_tsquery('simple', ${query.text})) * 0.3 desc limit ${query.limit}`;
+      });
       return ok(
         rows.map((row) => ({
           chunk: {

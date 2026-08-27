@@ -6,6 +6,7 @@ import {
   MemoryVectorSearchProvider,
   PgVectorSearchProvider,
   OpenAiCompatibleProvider,
+  HttpDocumentTextProvider,
   ProviderRegistry,
   type ModelProvider,
 } from '../src/index.js';
@@ -125,6 +126,109 @@ describe('PostgreSQL vector adapter boundaries', () => {
 });
 
 describe('HTTP provider error normalization', () => {
+  it('sends portable JSON-schema and reasoning controls when configured', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: '{"total":42}' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new OpenAiCompatibleProvider({
+      id: 'local-model',
+      baseUrl: 'http://model/v1',
+      apiKey: 'local',
+      chatModel: 'chat',
+      embeddingModel: 'embed',
+      reasoningEffort: 'none',
+      maxOutputTokens: 512,
+      structuredOutputMode: 'json-schema',
+    });
+    await expect(
+      provider.generateStructured({
+        system: 'Extract facts.',
+        prompt: 'Invoice total',
+        schema: z.object({ total: z.number() }),
+        schemaName: 'invoice',
+        timeoutMs: 10_000,
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { total: 42 } });
+    const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body).toMatchObject({
+      reasoning_effort: 'none',
+      max_tokens: 512,
+      temperature: 0,
+      response_format: { type: 'json_schema', json_schema: { name: 'invoice', strict: true } },
+    });
+  });
+
+  it('uses Ollama native JSON mode without leaking the validation schema into the prompt', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ message: { content: '{"total":42}' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new OpenAiCompatibleProvider({
+      id: 'local-ollama',
+      baseUrl: 'http://ollama:11434/v1',
+      apiKey: 'local',
+      chatModel: 'qwen3:4b',
+      embeddingModel: 'embeddinggemma:300m-qat-q4_0',
+      chatApiStyle: 'ollama-native',
+      structuredOutputMode: 'json-object',
+      includeSchemaInPrompt: false,
+      maxOutputTokens: 768,
+    });
+
+    await expect(
+      provider.generateStructured({
+        system: 'Extract facts.',
+        prompt: 'Return the invoice total.',
+        schema: z.object({ total: z.number() }),
+        schemaName: 'invoice',
+        timeoutMs: 10_000,
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { total: 42 } });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://ollama:11434/api/chat');
+    const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+    expect(body).toMatchObject({
+      model: 'qwen3:4b',
+      format: 'json',
+      stream: false,
+      think: false,
+      options: { temperature: 0, num_predict: 768 },
+    });
+    expect(body.messages[1].content).toBe('Return the invoice total.');
+  });
+
+  it('validates page-aware native extraction responses', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            pages: [{ page: 1, text: 'Contract text', rotation: 0, language: null, confidence: 1 }],
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        ),
+      ),
+    );
+    const provider = new HttpDocumentTextProvider({
+      id: 'local-text',
+      endpoint: 'http://ocr/v1/text',
+    });
+    await expect(provider.extract(new Uint8Array([1]), 'application/pdf')).resolves.toMatchObject({
+      ok: true,
+      value: [{ page: 1, text: 'Contract text' }],
+    });
+  });
+
   it.each([
     [429, 'rate_limited'],
     [503, 'unavailable'],

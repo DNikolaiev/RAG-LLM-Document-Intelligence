@@ -5,6 +5,12 @@ const optionalSecret = z.preprocess(
   (value) => (value === '' ? undefined : value),
   z.string().min(1).optional(),
 );
+const environmentBoolean = z
+  .preprocess(
+    (value) => (typeof value === 'string' ? value.toLocaleLowerCase() : value),
+    z.union([z.literal(true), z.literal(false), z.literal('true'), z.literal('false')]),
+  )
+  .transform((value) => value === true || value === 'true');
 
 export const appConfigSchema = z
   .object({
@@ -24,19 +30,33 @@ export const appConfigSchema = z
       .enum(['deterministic', 'openai-compatible', 'anthropic-compatible'])
       .default('deterministic'),
     MODEL_NAME: z.string().min(1).default('deterministic-v1'),
+    MODEL_API_STYLE: z.enum(['openai', 'ollama-native']).default('openai'),
+    MODEL_STRUCTURED_OUTPUT_MODE: z.enum(['json-object', 'json-schema']).default('json-schema'),
+    MODEL_INCLUDE_SCHEMA_IN_PROMPT: environmentBoolean.default(true),
+    EMBEDDING_MODEL: z.string().min(1).default('deterministic-embedding-v1'),
+    EMBEDDING_DIMENSIONS: z.coerce.number().int().min(1).max(4096).default(768),
     MODEL_BASE_URL: optionalUrl,
     MODEL_API_KEY: optionalSecret,
     EMBEDDING_PROVIDER: z.enum(['deterministic', 'openai-compatible']).default('deterministic'),
+    EMBEDDING_BASE_URL: optionalUrl,
+    EMBEDDING_API_KEY: optionalSecret,
     OCR_PROVIDER: z.enum(['deterministic', 'http']).default('deterministic'),
     OCR_BASE_URL: optionalUrl,
     OCR_API_KEY: optionalSecret,
     STORAGE_PROVIDER: z.enum(['memory', 'filesystem', 's3']).default('memory'),
     SEARCH_PROVIDER: z.enum(['memory', 'postgres']).default('memory'),
     QUEUE_PROVIDER: z.enum(['memory', 'bullmq']).default('memory'),
+    QUEUE_NAME: z.string().min(1).default('caselens-processing'),
     PERSISTENCE_PROVIDER: z.enum(['memory', 'postgres']).default('memory'),
     SCANNER_PROVIDER: z.enum(['deterministic', 'http']).default('deterministic'),
     DEMO_TENANT_ID: z.string().min(1).default('tenant_demo'),
-    AUTH_MODE: z.enum(['demo', 'oidc']).default('demo'),
+    AUTH_MODE: z.enum(['demo', 'test-profiles', 'oidc']).default('demo'),
+    ENABLE_TEST_IDENTITY_SWITCHER: environmentBoolean.default(false),
+    WORKER_CHUNK_CHARACTERS: z.coerce.number().int().min(1_000).max(20_000).default(6_000),
+    WORKER_CHUNK_OVERLAP: z.coerce.number().int().min(0).max(2_000).default(300),
+    WORKER_MAX_EXTRACTION_CHUNKS: z.coerce.number().int().min(1).max(512).default(48),
+    WORKER_MAX_DOCUMENTS: z.coerce.number().int().min(1).max(256).default(32),
+    WORKER_MODEL_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
   })
   .superRefine((config, context) => {
     const required = (condition: boolean, value: unknown, path: string, message: string) => {
@@ -87,6 +107,24 @@ export const appConfigSchema = z
       'MODEL_BASE_URL',
       'Required for an external model',
     );
+    const embeddingBaseUrl =
+      config.EMBEDDING_BASE_URL ??
+      (config.MODEL_PROVIDER === 'openai-compatible' ? config.MODEL_BASE_URL : undefined);
+    const embeddingApiKey =
+      config.EMBEDDING_API_KEY ??
+      (config.MODEL_PROVIDER === 'openai-compatible' ? config.MODEL_API_KEY : undefined);
+    required(
+      config.EMBEDDING_PROVIDER === 'openai-compatible',
+      embeddingBaseUrl,
+      'EMBEDDING_BASE_URL',
+      'Required for an external embedding model',
+    );
+    required(
+      config.EMBEDDING_PROVIDER === 'openai-compatible',
+      embeddingApiKey,
+      'EMBEDDING_API_KEY',
+      'Required for an external embedding model',
+    );
     required(
       config.MODEL_PROVIDER !== 'deterministic',
       config.MODEL_API_KEY,
@@ -99,6 +137,72 @@ export const appConfigSchema = z
       'OCR_BASE_URL',
       'Required for HTTP OCR',
     );
+    if (
+      config.APP_MODE === 'production' &&
+      !(config.AUTH_MODE === 'test-profiles' && config.ENABLE_TEST_IDENTITY_SWITCHER)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['AUTH_MODE'],
+        message:
+          'The local production runtime requires AUTH_MODE=test-profiles with ENABLE_TEST_IDENTITY_SWITCHER=true; OIDC remains disabled until a verified-token adapter is installed',
+      });
+    }
+    if (config.APP_MODE === 'production') {
+      const durableSelections = [
+        ['PERSISTENCE_PROVIDER', config.PERSISTENCE_PROVIDER, 'postgres'],
+        ['QUEUE_PROVIDER', config.QUEUE_PROVIDER, 'bullmq'],
+        ['STORAGE_PROVIDER', config.STORAGE_PROVIDER, 's3'],
+        ['SEARCH_PROVIDER', config.SEARCH_PROVIDER, 'postgres'],
+      ] as const;
+      for (const [path, actual, expected] of durableSelections) {
+        if (actual !== expected) {
+          context.addIssue({
+            code: 'custom',
+            path: [path],
+            message: `Production requires ${path}=${expected}`,
+          });
+        }
+      }
+      if (config.MODEL_PROVIDER === 'deterministic') {
+        context.addIssue({
+          code: 'custom',
+          path: ['MODEL_PROVIDER'],
+          message: 'Production requires a non-deterministic model provider',
+        });
+      }
+      if (config.EMBEDDING_PROVIDER !== 'openai-compatible') {
+        context.addIssue({
+          code: 'custom',
+          path: ['EMBEDDING_PROVIDER'],
+          message: 'Production requires EMBEDDING_PROVIDER=openai-compatible',
+        });
+      }
+      if (config.OCR_PROVIDER !== 'http') {
+        context.addIssue({
+          code: 'custom',
+          path: ['OCR_PROVIDER'],
+          message: 'Production requires OCR_PROVIDER=http',
+        });
+      }
+    }
+    if (
+      config.MODEL_API_STYLE === 'ollama-native' &&
+      config.MODEL_PROVIDER !== 'openai-compatible'
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['MODEL_API_STYLE'],
+        message: 'MODEL_API_STYLE=ollama-native requires MODEL_PROVIDER=openai-compatible',
+      });
+    }
+    if (config.WORKER_CHUNK_OVERLAP >= config.WORKER_CHUNK_CHARACTERS) {
+      context.addIssue({
+        code: 'custom',
+        path: ['WORKER_CHUNK_OVERLAP'],
+        message: 'WORKER_CHUNK_OVERLAP must be smaller than WORKER_CHUNK_CHARACTERS',
+      });
+    }
   });
 
 export type AppConfig = z.infer<typeof appConfigSchema>;

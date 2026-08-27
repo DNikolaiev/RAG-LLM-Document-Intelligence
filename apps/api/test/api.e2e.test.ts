@@ -33,6 +33,25 @@ describe('CaseLens API', () => {
     expect(response.body).not.toHaveProperty('tenantId');
   });
 
+  it('resolves catalog profiles server-side and gives only the platform admin an aggregate queue', async () => {
+    const legal = await request(app.getHttpServer())
+      .get('/v1/cases')
+      .set('x-test-profile-id', 'profile_jonas_feld')
+      .set('x-tenant-id', 'tenant_demo')
+      .set('x-role', 'admin')
+      .expect(200);
+    expect(legal.body.items).toHaveLength(1);
+    expect(legal.body.items[0]).toMatchObject({ tenantId: 'tenant_legal' });
+
+    const platform = await request(app.getHttpServer())
+      .get('/v1/cases')
+      .set('x-test-profile-id', 'profile_mara_stein')
+      .expect(200);
+    expect(new Set(platform.body.items.map((item: { tenantId: string }) => item.tenantId))).toEqual(
+      new Set(['tenant_demo', 'tenant_legal', 'tenant_insurance', 'tenant_manufacturing']),
+    );
+  });
+
   it('validates case creation and preserves idempotency', async () => {
     const invalid = await request(app.getHttpServer())
       .post('/v1/cases')

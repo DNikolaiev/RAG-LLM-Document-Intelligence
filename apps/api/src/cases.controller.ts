@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Headers,
+  Inject,
   Param,
   Patch,
   Post,
@@ -13,7 +14,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { z } from 'zod';
-import { CasesService } from './cases.service.js';
+import { CASES_RUNTIME, type CasesRuntime } from './cases-runtime.js';
 import type { CaseStatus } from './demo-data.js';
 import { Context, type RequestContext } from './request-context.js';
 import { parseBody } from './validation.js';
@@ -49,7 +50,7 @@ const listCasesSchema = z.object({
 
 @Controller('v1/cases')
 export class CasesController {
-  constructor(private readonly cases: CasesService) {}
+  constructor(@Inject(CASES_RUNTIME) private readonly cases: CasesRuntime) {}
 
   @Post()
   create(
@@ -69,28 +70,22 @@ export class CasesController {
     @Query('limit') limit?: string,
   ) {
     const parsed = parseBody(listCasesSchema, { status, query, cursor, limit: limit ?? 20 });
-    return this.cases.list(
-      context.tenantId,
-      parsed.status,
-      parsed.query,
-      parsed.cursor,
-      parsed.limit,
-    );
+    return this.cases.list(context, parsed.status, parsed.query, parsed.cursor, parsed.limit);
   }
 
   @Get(':id')
   get(@Context() context: RequestContext, @Param('id') id: string) {
-    return this.cases.get(context.tenantId, id);
+    return this.cases.get(context, id);
   }
 
   @Get(':id/audit')
-  audit(@Context() context: RequestContext, @Param('id') id: string) {
-    return { items: this.cases.get(context.tenantId, id).audit };
+  async audit(@Context() context: RequestContext, @Param('id') id: string) {
+    return { items: (await this.cases.get(context, id)).audit };
   }
 
   @Get(':id/export')
   export(@Context() context: RequestContext, @Param('id') id: string) {
-    return this.cases.export(context.tenantId, id);
+    return this.cases.export(context, id);
   }
 
   @Patch(':id/facts/:factId')

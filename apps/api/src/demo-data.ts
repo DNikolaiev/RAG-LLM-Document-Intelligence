@@ -310,5 +310,123 @@ export function createDemoCases(): DemoCase[] {
       audit: [],
       decision: null,
     },
+    createDomainCase({
+      id: 'case_legal_001',
+      tenantId: 'tenant_legal',
+      reference: 'CTR-2026-0088',
+      subjectName: 'Nordstern Distribution Agreement',
+      domain: 'Commercial contract review',
+      assignee: 'Jonas Feld',
+      findingTitle: 'Termination notice period is inconsistent',
+      findingDetail:
+        'The master agreement and schedule specify different termination notice periods.',
+      evidenceQuote: 'Either party may terminate with thirty (30) days written notice.',
+    }),
+    createDomainCase({
+      id: 'case_insurance_001',
+      tenantId: 'tenant_insurance',
+      reference: 'CLM-2026-3914',
+      subjectName: 'Kronenberg Water Damage Claim',
+      domain: 'Insurance claims assessment',
+      assignee: 'Amara Okafor',
+      findingTitle: 'Repair estimate exceeds automatic approval threshold',
+      findingDetail:
+        'The submitted repair estimate requires senior review under the active claims policy.',
+      evidenceQuote: 'Total estimated restoration cost: EUR 28,740.00 including VAT.',
+    }),
+    createDomainCase({
+      id: 'case_manufacturing_001',
+      tenantId: 'tenant_manufacturing',
+      reference: 'QMS-2026-0217',
+      subjectName: 'Vektor Precision Components',
+      domain: 'Supplier quality assurance',
+      assignee: 'Mateo Klein',
+      findingTitle: 'Material certificate is missing heat traceability',
+      findingDetail:
+        'The certificate does not connect the delivered batch to a verified material heat number.',
+      evidenceQuote: 'Batch VP-4421 — material grade 1.4301; heat number not recorded.',
+    }),
   ];
+}
+
+function createDomainCase(input: {
+  id: string;
+  tenantId: string;
+  reference: string;
+  subjectName: string;
+  domain: string;
+  assignee: string;
+  findingTitle: string;
+  findingDetail: string;
+  evidenceQuote: string;
+}): DemoCase {
+  return {
+    id: input.id,
+    tenantId: input.tenantId,
+    reference: input.reference,
+    subjectName: input.subjectName,
+    domain: input.domain,
+    domainPackVersion: '1.0.0',
+    status: 'needs_review',
+    recommendation: 'request_information',
+    progress: 100,
+    createdAt: '2026-08-26T08:00:00.000Z',
+    updatedAt: '2026-08-27T07:30:00.000Z',
+    dueAt: '2026-09-03T16:00:00.000Z',
+    assignedTo: input.assignee,
+    version: 1,
+    documents: [
+      {
+        id: `doc_${input.id}`,
+        name: 'Primary evidence package',
+        type: 'domain_evidence',
+        status: 'ready',
+        pages: 4,
+        confidence: 0.94,
+        fileName: `${input.reference.toLocaleLowerCase()}.pdf`,
+      },
+    ],
+    facts: [
+      {
+        id: `fact_${input.id}`,
+        label: 'Material review fact',
+        path: 'review.materialFact',
+        value: input.evidenceQuote,
+        rawValue: input.evidenceQuote,
+        confidence: 0.94,
+        reviewStatus: 'needs_review',
+        documentId: `doc_${input.id}`,
+        page: 1,
+        quote: input.evidenceQuote,
+        version: 1,
+      },
+    ],
+    findings: [
+      {
+        id: `finding_${input.id}`,
+        ruleKey: 'domain.material_review',
+        severity: 'major',
+        status: 'open',
+        title: input.findingTitle,
+        description: input.findingDetail,
+        remediation: 'Request clarification and supporting evidence before approval.',
+        evidence: {
+          documentId: `doc_${input.id}`,
+          page: 1,
+          quote: input.evidenceQuote,
+        },
+        version: 1,
+      },
+    ],
+    audit: [
+      {
+        id: `audit_${input.id}`,
+        at: '2026-08-27T07:30:00.000Z',
+        actor: 'workflow',
+        action: 'review.requested',
+        detail: 'One major domain finding requires human review.',
+      },
+    ],
+    decision: null,
+  };
 }

@@ -68,6 +68,7 @@ CREATE TABLE extracted_facts (
   CHECK ((review_status <> 'corrected') OR (correction_reason IS NOT NULL AND length(correction_reason) >= 8))
 );
 CREATE INDEX fact_case_path_idx ON extracted_facts(case_id, field_path);
+CREATE INDEX fact_evidence_idx ON extracted_facts(evidence_id);
 CREATE TABLE policy_documents (
   id text PRIMARY KEY, tenant_id text NOT NULL REFERENCES tenants(id), domain_pack_id text NOT NULL REFERENCES domain_packs(id), title text NOT NULL, policy_version text NOT NULL,
   valid_from timestamptz NOT NULL, valid_to timestamptz, revoked boolean NOT NULL DEFAULT false,
@@ -77,7 +78,7 @@ CREATE TABLE policy_documents (
 CREATE INDEX policy_scope_validity_idx ON policy_documents(tenant_id, domain_pack_id, valid_from DESC);
 CREATE TABLE policy_chunks (
   id text PRIMARY KEY, tenant_id text NOT NULL REFERENCES tenants(id), policy_document_id text NOT NULL REFERENCES policy_documents(id), ordinal integer NOT NULL,
-  heading text, content text NOT NULL, embedding vector(1536), metadata jsonb NOT NULL DEFAULT '{}',
+  heading text, content text NOT NULL, embedding vector(768), metadata jsonb NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), version integer NOT NULL DEFAULT 1,
   UNIQUE(policy_document_id, ordinal)
 );
@@ -87,7 +88,7 @@ CREATE INDEX policy_chunks_content_fts_idx ON policy_chunks USING gin (to_tsvect
 CREATE TABLE policy_search_chunks (
   id text PRIMARY KEY, tenant_id text NOT NULL REFERENCES tenants(id), domain_id text NOT NULL, pack_version text NOT NULL,
   document_id text NOT NULL, document_version text NOT NULL, collection_id text NOT NULL, content text NOT NULL,
-  embedding vector(1536) NOT NULL, search_vector tsvector GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
+  embedding vector(768) NOT NULL, search_vector tsvector GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
   valid_from timestamptz NOT NULL, valid_to timestamptz, revoked_at timestamptz, tags text[] NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), version integer NOT NULL DEFAULT 1,
   CHECK (valid_to IS NULL OR valid_to > valid_from)
@@ -122,6 +123,13 @@ CREATE TABLE jobs (
   UNIQUE(tenant_id, idempotency_key)
 );
 CREATE INDEX job_tenant_status_updated_idx ON jobs(tenant_id, status, updated_at DESC);
+CREATE INDEX job_case_idx ON jobs(case_id);
+CREATE TABLE workflow_checkpoints (
+  tenant_id text NOT NULL REFERENCES tenants(id), checkpoint_key text NOT NULL, state jsonb NOT NULL,
+  revision integer NOT NULL DEFAULT 1, updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, checkpoint_key)
+);
+CREATE INDEX workflow_checkpoint_updated_idx ON workflow_checkpoints(tenant_id, updated_at DESC);
 CREATE TABLE audit_events (
   id text PRIMARY KEY, tenant_id text NOT NULL REFERENCES tenants(id), case_id text REFERENCES cases(id), actor_type text NOT NULL, actor_id text,
   action text NOT NULL, resource_type text NOT NULL, resource_id text NOT NULL, correlation_id text NOT NULL, details jsonb NOT NULL DEFAULT '{}', occurred_at timestamptz NOT NULL DEFAULT now()

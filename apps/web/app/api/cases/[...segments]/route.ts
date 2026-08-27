@@ -1,4 +1,6 @@
 import type { NextRequest } from 'next/server';
+import { resolveTestProfile } from '@caselens/contracts';
+import { PROFILE_COOKIE, testProfilesEnabled } from '@/lib/session-profile';
 
 interface RouteContext {
   params: Promise<{ segments: string[] }>;
@@ -11,15 +13,15 @@ async function forward(request: NextRequest, context: RouteContext): Promise<Res
   target.search = request.nextUrl.search;
   const body =
     request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.arrayBuffer();
+  const profile = resolveTestProfile(request.cookies.get(PROFILE_COOKIE)?.value);
+  const identityHeaders = testProfilesEnabled() ? { 'x-test-profile-id': profile.id } : {};
   try {
     const response = await fetch(target, {
       method: request.method,
       headers: {
         accept: request.headers.get('accept') ?? 'application/json',
         'content-type': request.headers.get('content-type') ?? 'application/json',
-        'x-tenant-id': process.env.DEMO_TENANT_ID ?? 'tenant_demo',
-        'x-user-id': 'user_demo_reviewer',
-        'x-role': 'reviewer',
+        ...identityHeaders,
         'idempotency-key': request.headers.get('idempotency-key') ?? crypto.randomUUID(),
       },
       ...(body === undefined ? {} : { body }),

@@ -28,7 +28,7 @@ NestJS workflow worker
 
 Production adapters are defined for PostgreSQL/pgvector, Redis/BullMQ, S3-compatible storage, HTTP OCR, and configurable model APIs. Demo mode binds deterministic in-memory adapters so the complete review experience runs without credentials.
 
-The LangGraph runner in `packages/workflow` is implemented and tested, but the current `apps/worker` runtime still uses a deterministic progress simulator. BullMQ consumption, durable checkpoints, and provider composition remain explicit production backlog; see [`docs/architecture/langgraph-workflow.md`](docs/architecture/langgraph-workflow.md).
+The production-local worker consumes BullMQ jobs and runs the LangGraph state machine with PostgreSQL checkpoints, MinIO sources, PyMuPDF/Tesseract extraction, Ollama models, and pgvector retrieval. Demo mode retains the deterministic progress simulator; see [`docs/architecture/langgraph-workflow.md`](docs/architecture/langgraph-workflow.md).
 
 ## Design boundaries
 
@@ -56,20 +56,22 @@ A domain pack versions its document taxonomy, extraction schemas, thresholds, po
 - Uploaded bytes are validated by signature, MIME, size, page count, encryption state, and scanner result before processing.
 - Document text is always treated as untrusted data; it cannot introduce executable rules or tool instructions.
 - Material facts and findings retain source evidence references.
+- Long documents are extracted in bounded page-aware chunks, and model-produced citations are accepted only when their normalized quote is present on the claimed page.
+- Structured model responses are validated against application-owned schemas before entering workflow state.
 - Deterministic rules own thresholds and approval gates; model output remains advisory.
 - Tenant scope is enforced in contracts, retrieval filters, repository design, and PostgreSQL RLS.
 - Corrections and decisions use optimistic concurrency and append audit events.
 
 ## Runtime profiles
 
-The repository has two deliberately separate Compose definitions:
+The repository has two deliberately separate application profiles:
 
 - `infra/docker-compose.demo.yml` starts only the API and web application with deterministic, process-local memory providers. It is the implemented portfolio runtime and requires no infrastructure credentials.
-- `infra/docker-compose.prod-infra.yml` starts PostgreSQL/pgvector, password-protected Redis, and MinIO for durable-adapter development. It does not start the application and is not, by itself, a production deployment.
+- `infra/docker-compose.production-local.yml` starts the complete local production topology: web, API, worker, PostgreSQL/pgvector, Redis/BullMQ, MinIO, Ollama/model provisioning, and the OCR service.
 
-The PostgreSQL bootstrap creates `caselens_runtime` as a `NOLOGIN` least-privilege group role. Deployment-specific login roles and credentials belong in secret-managed provisioning rather than committed initialization SQL.
+The PostgreSQL bootstrap creates `caselens_runtime` as a `NOLOGIN` least-privilege group role. A one-shot local provisioner creates `caselens_app`, sets its ignored environment-file password, and grants only that group role.
 
-`APP_MODE=production` intentionally refuses API and worker startup until durable repositories, verified OIDC, BullMQ consumption, object storage, and dependency-backed readiness checks are composed. This prevents an infrastructure topology or demo configuration from being mistaken for an operationally complete production application.
+`APP_MODE=production` requires durable providers and normally verified OIDC. The local topology is the explicit exception: `AUTH_MODE=test-profiles` is accepted only with `ENABLE_TEST_IDENTITY_SWITCHER=true`. That switch must never be used for a public deployment.
 
 For deeper detail, see:
 

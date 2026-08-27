@@ -9,15 +9,10 @@ import { ProblemDetailsFilter } from './problem.filter.js';
 
 export async function bootstrap(): Promise<void> {
   const config = loadConfig();
-  if (config.APP_MODE === 'production') {
-    throw new Error(
-      'Production runtime composition is not enabled yet. Run APP_MODE=demo or bind durable repositories, verified OIDC, BullMQ, and object storage first.',
-    );
-  }
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.enableCors({
-    origin: config.APP_MODE === 'demo' ? true : config.PUBLIC_API_URL,
+    origin: config.APP_MODE === 'demo' ? true : [config.PUBLIC_API_URL, 'http://localhost:3000'],
     credentials: false,
   });
   app.useGlobalFilters(new ProblemDetailsFilter());

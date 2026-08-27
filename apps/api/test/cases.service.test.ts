@@ -3,9 +3,12 @@ import { CasesService } from '../src/cases.service.js';
 import type { RequestContext } from '../src/request-context.js';
 
 const context: RequestContext = {
+  profileId: 'profile_lena_vogt',
   tenantId: 'tenant_demo',
+  tenantIds: ['tenant_demo'],
   userId: 'reviewer_1',
   role: 'reviewer',
+  platformAdmin: false,
   correlationId: 'cor_test',
 };
 

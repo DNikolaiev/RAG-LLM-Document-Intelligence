@@ -140,15 +140,15 @@ export function ReviewPanel({
       facts,
       exportedAt: new Date().toISOString(),
     };
-    try {
-      const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/export`);
-      if (response.ok) exported = await response.json();
-      else if (authoritative) {
-        setNotice('The authoritative export could not be created.');
-        return;
-      }
-    } catch {
-      if (authoritative) {
+    if (authoritative) {
+      try {
+        const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/export`);
+        if (response.ok) exported = await response.json();
+        else {
+          setNotice('The authoritative export could not be created.');
+          return;
+        }
+      } catch {
         setNotice('The authoritative export could not be created because the API is unavailable.');
         return;
       }

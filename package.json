@@ -20,6 +20,7 @@
     "format:check": "prettier --check .",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "test:integration:database": "vitest run packages/persistence/src/case-store.integration.test.ts packages/providers/test/pgvector.integration.test.ts packages/workflow/src/postgres-checkpoints.integration.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:typecheck": "tsc --noEmit -p apps/web/e2e/tsconfig.json",

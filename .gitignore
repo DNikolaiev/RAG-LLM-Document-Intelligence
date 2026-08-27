@@ -12,6 +12,7 @@ __pycache__/
 .env
 .env.local
 infra/.env.prod-infra
-tmp/pdfs/rendered/
+infra/.env.production-local
+tmp/
 data/
 *.log

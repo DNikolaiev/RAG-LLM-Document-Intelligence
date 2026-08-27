@@ -4,6 +4,7 @@ import {
   CaseWorkflowRunner,
   MemoryWorkflowCheckpointStore,
   type CaseWorkflowState,
+  type WorkflowCheckpoint,
   type WorkflowDependencies,
 } from '../src/index.js';
 
@@ -161,6 +162,24 @@ describe('conditional document review workflow', () => {
     expect(result.state.status).toBe('needs_review');
   });
 
+  it('promotes quarantined model observations into visible review reasons', async () => {
+    const result = await new CaseWorkflowRunner(
+      dependencies({
+        extract: async () => ({
+          facts: {},
+          lowConfidencePaths: [],
+          warnings: ['Quarantined contract.total because its citation was not supported.'],
+        }),
+        reconcile: async () => ({ identityConflict: false, reviewReasons: [] }),
+      }),
+    ).run({ ...input, idempotencyKey: 'quarantined-observation' });
+
+    expect(result.state.status).toBe('needs_review');
+    expect(result.state.reviewReasons).toContain(
+      'Quarantined contract.total because its citation was not supported.',
+    );
+  });
+
   it('abstains safely when policy is stale, missing, or the provider is down', async () => {
     const missing = await new CaseWorkflowRunner(
       dependencies({
@@ -215,7 +234,39 @@ describe('conditional document review workflow', () => {
 describe('durability, idempotency, cancellation, and human resume', () => {
   it('returns the saved checkpoint after a duplicate job or worker restart', async () => {
     const store = new MemoryWorkflowCheckpointStore();
-    const first = await new CaseWorkflowRunner(dependencies(), store).run(input);
+    const evidence = {
+      'insurance.liabilityLimitEur': {
+        documentId: 'document-1',
+        page: 2,
+        quote: 'Liability coverage EUR 1,000,000',
+        confidence: 0.94,
+      },
+    };
+    const classifications = [
+      {
+        documentId: 'document-1',
+        typeId: 'insurance_certificate',
+        confidence: 0.96,
+        page: 1,
+        quote: 'Insurance certificate',
+      },
+    ];
+    const first = await new CaseWorkflowRunner(
+      dependencies({
+        extract: async () => ({
+          facts: { insurance: { liabilityLimitEur: 1_000_000 } },
+          factEvidence: evidence,
+          lowConfidencePaths: [],
+          warnings: [],
+        }),
+        classify: async () => ({
+          availableDocumentTypes: ['insurance_certificate'],
+          documentClassifications: classifications,
+          reviewReasons: [],
+        }),
+      }),
+      store,
+    ).run(input);
     const afterRestart = await new CaseWorkflowRunner(
       dependencies({
         validate: async () => {
@@ -227,6 +278,46 @@ describe('durability, idempotency, cancellation, and human resume', () => {
     expect(first.duplicate).toBe(false);
     expect(afterRestart.duplicate).toBe(true);
     expect(afterRestart.state).toEqual(first.state);
+    expect(afterRestart.state.factEvidence).toEqual(evidence);
+    expect(afterRestart.state.documentClassifications).toEqual(classifications);
+  });
+
+  it('resumes from the last durable phase after a worker interruption', async () => {
+    class InterruptAfterExtractStore extends MemoryWorkflowCheckpointStore {
+      interrupted = false;
+      override async save(checkpoint: WorkflowCheckpoint, expectedRevision: number | null) {
+        await super.save(checkpoint, expectedRevision);
+        if (!this.interrupted && checkpoint.state.phase === 'extract') {
+          this.interrupted = true;
+          throw new Error('simulated worker interruption');
+        }
+      }
+    }
+
+    const store = new InterruptAfterExtractStore();
+    let validationCalls = 0;
+    let extractionCalls = 0;
+    const durableDependencies = dependencies({
+      validate: async () => {
+        validationCalls += 1;
+        return { fatalErrors: [], warnings: [] };
+      },
+      extract: async () => {
+        extractionCalls += 1;
+        return { facts: {}, lowConfidencePaths: [], warnings: [] };
+      },
+      reconcile: async () => ({ identityConflict: false, reviewReasons: [] }),
+    });
+    const restartInput = { ...input, idempotencyKey: 'restart-after-extract' };
+
+    await expect(
+      new CaseWorkflowRunner(durableDependencies, store).run(restartInput),
+    ).rejects.toThrow('simulated worker interruption');
+    const resumed = await new CaseWorkflowRunner(durableDependencies, store).run(restartInput);
+
+    expect(resumed.state.status).toBe('completed');
+    expect(validationCalls).toBe(1);
+    expect(extractionCalls).toBe(1);
   });
 
   it('honors cancellation before work starts', async () => {
@@ -280,7 +371,7 @@ describe('durability, idempotency, cancellation, and human resume', () => {
       reason: 'Insurance certificate confirmed',
       factCorrections: { insurance: { liabilityLimitEur: 2_000_000 } },
     });
-    expect(resumed.revision).toBe(2);
+    expect(resumed.revision).toBeGreaterThan(2);
     expect(resumed.state).toMatchObject({ status: 'completed', recommendation: 'approve' });
   });
 

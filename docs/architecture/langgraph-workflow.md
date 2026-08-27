@@ -74,24 +74,28 @@ The graph state contains:
 
 The checkpoint key is `tenantId:caseId:idempotencyKey`. A duplicate `run()` returns the existing state instead of repeating provider calls. Saves use an expected revision, so two reviewers cannot silently overwrite the same checkpoint.
 
-The default checkpoint store is process-local memory. A durable production deployment still needs a PostgreSQL-backed checkpoint implementation shared by API and worker processes.
+The default demo checkpoint store is process-local memory. The production-local worker binds `PostgresWorkflowCheckpointStore`, whose rows are tenant-scoped by PostgreSQL RLS and saved with optimistic revisions.
 
 ## Current runtime wiring
 
-There are currently two different workflow-related implementations:
+There are two deliberate runtime implementations:
 
 1. `packages/workflow/CaseWorkflowRunner` is the LangGraph implementation described above and is covered by workflow tests.
-2. `apps/worker/DeterministicWorkflowRunner` is a simpler progress simulator that walks `validate`, `extract`, `classify`, `reconcile`, `retrieve`, and `evaluate` names and always returns the deterministic demo recommendation.
+2. `apps/worker/DeterministicWorkflowRunner` is the zero-infrastructure demo simulator.
 
-The worker application does not yet instantiate `CaseWorkflowRunner`, consume BullMQ jobs, or share durable checkpoints with the API. The production startup guard exists specifically to prevent that scaffold from being presented as a finished durable workflow.
+With `APP_MODE=production`, `apps/worker/src/production-runtime.ts` consumes BullMQ, loads immutable objects from MinIO, performs native extraction with OCR fallback, invokes Ollama for schema-validated extraction/classification/advisory summary, retrieves tenant-scoped policy evidence through pgvector, runs `CaseWorkflowRunner`, and stores workflow/job/case progress in PostgreSQL.
 
-## Production composition required
+Long documents are split into page-aware chunks with bounded overlap before extraction. A model response is accepted only after application-side schema validation, and each evidence reference must resolve to the same document and page with an exact normalized quote from the extracted source text. The pinned local Ollama runtime uses its native chat endpoint with thinking disabled and JSON-object output; provider-specific transport choices stay inside the adapter.
 
-Before the production application profile can be enabled, the worker must:
+Observations with an unknown path, a value that violates the domain field type, or an unsupported citation are quarantined as review warnings. Document classifications are evaluated independently per persisted document and influence required-document rules only after their type, confidence, page, and exact quote have all been validated.
 
-- consume idempotent BullMQ jobs from Redis;
-- construct `CaseWorkflowRunner` with real pipeline, retrieval, domain-pack, and summary dependencies;
-- load/store checkpoints and job status in PostgreSQL transactionally;
-- fetch immutable source documents from S3-compatible storage;
-- expose dependency-backed readiness and graceful shutdown;
-- preserve tenant identity and audit correlation across every job.
+## Production-local composition
+
+The worker now:
+
+- consumes idempotent BullMQ jobs from Redis;
+- constructs `CaseWorkflowRunner` with real pipeline, retrieval, domain-pack, and summary dependencies;
+- loads and stores checkpoints plus job status in PostgreSQL;
+- fetches immutable source documents from S3-compatible storage;
+- shuts down gracefully; and
+- preserves tenant identity across every job.

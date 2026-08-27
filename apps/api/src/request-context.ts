@@ -2,9 +2,12 @@ import { createParamDecorator, type ExecutionContext } from '@nestjs/common';
 import type { Request } from 'express';
 
 export interface RequestContext {
+  profileId: string;
   tenantId: string;
+  tenantIds: readonly string[];
   userId: string;
   role: 'intake' | 'reviewer' | 'approver' | 'auditor' | 'admin';
+  platformAdmin: boolean;
   correlationId: string;
 }
 

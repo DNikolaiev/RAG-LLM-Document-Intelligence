@@ -72,4 +72,19 @@ test.describe('case queue', () => {
     await expect(page.locator('tbody tr').first()).toBeVisible();
     expectNoRuntimeFailures(failures);
   });
+
+  test('switches the trusted local profile and workspace context', async ({ page }) => {
+    const failures = monitorRuntimeFailures(page);
+    await page.goto('/');
+
+    await page.getByLabel(/Switch profile\. Signed in as/).click();
+    const platformAdministrator = page.getByRole('button', { name: /Mara Stein/ });
+    await expect(platformAdministrator).toBeVisible();
+    await platformAdministrator.click();
+
+    await expect(page.getByLabel('Current workspace')).toContainText('All tenant workspaces');
+    await expect(page.getByLabel(/Switch profile\. Signed in as Mara Stein/)).toBeVisible();
+    await expectHealthyLayout(page);
+    expectNoRuntimeFailures(failures);
+  });
 });

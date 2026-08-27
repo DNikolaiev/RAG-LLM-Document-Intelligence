@@ -153,7 +153,9 @@ test.describe('case review workspace', () => {
     let bytes = 0;
     for await (const chunk of stream) bytes += chunk.length;
     expect(bytes).toBeGreaterThan(100);
-    await expect(review.getByRole('status')).toHaveText('Audit package exported as JSON.');
+    await expect(review.getByRole('status')).toHaveText(
+      /^(Audit package exported as JSON|Offline demo package exported as non-authoritative JSON)\.$/,
+    );
 
     await expectHealthyLayout(page);
     expectNoRuntimeFailures(failures);

@@ -3,17 +3,28 @@ import type { DomainPack } from '@caselens/domain';
 import { evaluateRequiredDocuments, evaluateRules, mapDecision } from '@caselens/domain';
 import type { RetrievalResult } from '@caselens/retrieval';
 import { MemoryWorkflowCheckpointStore, type WorkflowCheckpointStore } from './checkpoints.js';
-import { WorkflowState, type CaseWorkflowState, type HumanResumeCommand } from './state.js';
+import {
+  WorkflowState,
+  type CaseWorkflowState,
+  type DocumentClassification,
+  type FactEvidence,
+  type HumanResumeCommand,
+} from './state.js';
 
 export interface WorkflowDependencies {
   pack: DomainPack;
   validate(state: CaseWorkflowState): Promise<{ fatalErrors: string[]; warnings: string[] }>;
-  extract(
-    state: CaseWorkflowState,
-  ): Promise<{ facts: Record<string, unknown>; lowConfidencePaths: string[]; warnings: string[] }>;
-  classify(
-    state: CaseWorkflowState,
-  ): Promise<{ availableDocumentTypes: string[]; reviewReasons: string[] }>;
+  extract(state: CaseWorkflowState): Promise<{
+    facts: Record<string, unknown>;
+    factEvidence?: Record<string, FactEvidence>;
+    lowConfidencePaths: string[];
+    warnings: string[];
+  }>;
+  classify(state: CaseWorkflowState): Promise<{
+    availableDocumentTypes: string[];
+    documentClassifications?: DocumentClassification[];
+    reviewReasons: string[];
+  }>;
   reconcile(
     state: CaseWorkflowState,
   ): Promise<{ identityConflict: boolean; reviewReasons: string[] }>;
@@ -36,7 +47,9 @@ const defaultState = (
   status: 'running',
   phase: 'queued',
   facts: {},
+  factEvidence: {},
   availableDocumentTypes: [],
+  documentClassifications: [],
   lowConfidencePaths: [],
   identityConflict: false,
   retrievalStatus: 'pending',
@@ -129,8 +142,13 @@ export class CaseWorkflowRunner {
             phase: 'extract',
             attempts,
             facts: result.facts,
+            factEvidence: result.factEvidence ?? {},
             lowConfidencePaths: result.lowConfidencePaths,
             warnings: [...state.warnings, ...result.warnings],
+            reviewReasons: [
+              ...state.reviewReasons,
+              ...result.warnings.filter((warning) => warning.startsWith('Quarantined ')),
+            ],
           };
         } catch (error) {
           return {
@@ -156,6 +174,7 @@ export class CaseWorkflowRunner {
             phase: 'classify',
             attempts,
             availableDocumentTypes: result.availableDocumentTypes,
+            documentClassifications: result.documentClassifications ?? [],
             reviewReasons: [...state.reviewReasons, ...result.reviewReasons],
           };
         } catch (error) {
@@ -304,7 +323,18 @@ export class CaseWorkflowRunner {
         }
       })
       .addNode('complete', () => ({ phase: 'complete', status: 'completed' as const }))
-      .addEdge(START, 'validate')
+      .addConditionalEdges(START, (state) => resumeNode(state), [
+        END,
+        'validate',
+        'extract',
+        'classify',
+        'reconcile',
+        'retrieve',
+        'evaluate',
+        'review',
+        'summarize',
+        'complete',
+      ])
       .addConditionalEdges('validate', (state) => (state.status === 'failed' ? END : 'extract'), [
         END,
         'extract',
@@ -347,23 +377,43 @@ export class CaseWorkflowRunner {
   ): Promise<WorkflowRunResult> {
     const key = this.key(input);
     const previous = await this.checkpoints.get(key);
-    if (previous) return { state: previous.state, duplicate: true, revision: previous.revision };
-    let state: CaseWorkflowState;
+    if (previous && previous.state.status !== 'running')
+      return { state: previous.state, duplicate: true, revision: previous.revision };
+    let state = previous?.state ?? defaultState(input);
+    let revision = previous?.revision ?? 0;
+    let checkpointWriteFailed = false;
     try {
-      state = await this.#graph.invoke(defaultState(input));
+      const stream = await this.#graph.stream(state, { streamMode: 'values' });
+      for await (const snapshot of stream) {
+        state = snapshot;
+        const nextRevision = revision + 1;
+        try {
+          await this.checkpoints.save(
+            { key, state, updatedAt: new Date().toISOString(), revision: nextRevision },
+            revision === 0 ? null : revision,
+          );
+        } catch (error) {
+          checkpointWriteFailed = true;
+          throw error;
+        }
+        revision = nextRevision;
+      }
     } catch (error) {
+      if (checkpointWriteFailed) throw error;
       state = {
-        ...defaultState(input),
+        ...state,
         status: error instanceof WorkflowCancelledError ? 'cancelled' : 'failed',
         phase: error instanceof WorkflowCancelledError ? 'cancelled' : 'failed',
         reviewReasons: [safeError(error, 'Workflow failed')],
       };
+      const nextRevision = revision + 1;
+      await this.checkpoints.save(
+        { key, state, updatedAt: new Date().toISOString(), revision: nextRevision },
+        revision === 0 ? null : revision,
+      );
+      revision = nextRevision;
     }
-    await this.checkpoints.save(
-      { key, state, updatedAt: new Date().toISOString(), revision: 1 },
-      null,
-    );
-    return { state, duplicate: false, revision: 1 };
+    return { state, duplicate: false, revision };
   }
 
   async resume(
@@ -455,6 +505,23 @@ class WorkflowCancelledError extends Error {
   constructor() {
     super('Workflow cancelled');
   }
+}
+function resumeNode(state: CaseWorkflowState): string {
+  if (state.status !== 'running') return END;
+  if (state.phase === 'queued') return 'validate';
+  if (state.phase === 'validate') return 'extract';
+  if (state.phase === 'extract') return 'classify';
+  if (state.phase === 'classify') return 'reconcile';
+  if (state.phase === 'reconcile') return 'retrieve';
+  if (state.phase === 'retrieve') return 'evaluate';
+  if (state.phase === 'evaluate')
+    return state.reviewReasons.length > 0 ||
+      state.recommendation === 'request_information' ||
+      state.recommendation === 'manual_review'
+      ? 'review'
+      : 'summarize';
+  if (state.phase === 'summarize') return 'complete';
+  return END;
 }
 function safeError(error: unknown, fallback: string): string {
   return error instanceof WorkflowCancelledError

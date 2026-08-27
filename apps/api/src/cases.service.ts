@@ -11,6 +11,7 @@ import { validateFile } from '@caselens/document-pipeline';
 import { DeterministicVirusScanner } from '@caselens/providers';
 import type { RequestContext } from './request-context.js';
 import { createDemoCases, type CaseStatus, type DemoCase } from './demo-data.js';
+import { resolveTestTenant } from '@caselens/contracts';
 
 @Injectable()
 export class CasesService {
@@ -75,11 +76,18 @@ export class CasesService {
     return result;
   }
 
-  list(tenantId: string, status?: CaseStatus, query?: string, cursor?: string, limit = 20) {
+  list(
+    context: RequestContext | string,
+    status?: CaseStatus,
+    query?: string,
+    cursor?: string,
+    limit = 20,
+  ) {
+    const tenantIds = this.tenantIds(context);
     const normalized = query?.trim().toLocaleLowerCase();
     let filtered = this.cases.filter(
       (item) =>
-        item.tenantId === tenantId &&
+        tenantIds.includes(item.tenantId) &&
         (!status || item.status === status) &&
         (!normalized ||
           `${item.subjectName} ${item.reference}`.toLocaleLowerCase().includes(normalized)),
@@ -100,9 +108,10 @@ export class CasesService {
     };
   }
 
-  get(tenantId: string, id: string): DemoCase {
+  get(context: RequestContext | string, id: string): DemoCase {
+    const tenantIds = this.tenantIds(context);
     const item = this.cases.find(
-      (candidate) => candidate.id === id && candidate.tenantId === tenantId,
+      (candidate) => candidate.id === id && tenantIds.includes(candidate.tenantId),
     );
     if (!item) throw new NotFoundException({ code: 'CASE_NOT_FOUND', message: 'Case not found.' });
     return structuredClone(item);
@@ -115,7 +124,7 @@ export class CasesService {
     input: { value: unknown; reason: string; version: number },
   ) {
     this.requireRole(context, ['reviewer', 'approver', 'admin']);
-    const item = this.mutable(context.tenantId, caseId);
+    const item = this.mutable(context, caseId);
     const fact = item.facts.find((candidate) => candidate.id === factId);
     if (!fact)
       throw new NotFoundException({ code: 'FACT_NOT_FOUND', message: 'Extracted fact not found.' });
@@ -135,7 +144,7 @@ export class CasesService {
     input: { status: 'accepted' | 'dismissed' | 'resolved'; reason: string; version: number },
   ) {
     this.requireRole(context, ['reviewer', 'approver', 'admin']);
-    const item = this.mutable(context.tenantId, caseId);
+    const item = this.mutable(context, caseId);
     const finding = item.findings.find((candidate) => candidate.id === findingId);
     if (!finding)
       throw new NotFoundException({ code: 'FINDING_NOT_FOUND', message: 'Finding not found.' });
@@ -156,7 +165,7 @@ export class CasesService {
     const key = `${context.tenantId}:process:${caseId}:${idempotencyKey}`;
     const existing = this.idempotency.get(key);
     if (existing) return existing;
-    const item = this.mutable(context.tenantId, caseId);
+    const item = this.mutable(context, caseId);
     const job = {
       id: `job_${ulid()}`,
       tenantId: context.tenantId,
@@ -179,7 +188,7 @@ export class CasesService {
     idempotencyKey: string,
   ) {
     this.requireRole(context, ['intake', 'reviewer', 'admin']);
-    const item = this.mutable(context.tenantId, caseId);
+    const item = this.mutable(context, caseId);
     const key = `${context.tenantId}:upload:${caseId}:${idempotencyKey}`;
     const existing = this.idempotency.get(key);
     if (existing) return existing;
@@ -227,16 +236,16 @@ export class CasesService {
     return structuredClone(document);
   }
 
-  getJob(tenantId: string, id: string) {
+  getJob(context: RequestContext | string, id: string) {
     const job = this.jobs.get(id);
-    if (!job || job.tenantId !== tenantId)
+    if (!job || !this.tenantIds(context).includes(job.tenantId))
       throw new NotFoundException({ code: 'JOB_NOT_FOUND', message: 'Job not found.' });
     return structuredClone(job);
   }
 
   reEvaluate(context: RequestContext, caseId: string, idempotencyKey: string) {
     this.requireRole(context, ['reviewer', 'approver', 'admin']);
-    const item = this.mutable(context.tenantId, caseId);
+    const item = this.mutable(context, caseId);
     const open = item.findings.filter((finding) => finding.status === 'open');
     item.recommendation = open.some(
       (finding) => finding.severity === 'critical' || finding.severity === 'major',
@@ -257,7 +266,7 @@ export class CasesService {
       version: number;
     },
   ) {
-    const item = this.mutable(context.tenantId, caseId);
+    const item = this.mutable(context, caseId);
     if (item.version !== input.version) this.versionConflict(item.version);
     const allowedRoles =
       input.outcome === 'request_information'
@@ -291,8 +300,8 @@ export class CasesService {
     return structuredClone(item.decision);
   }
 
-  export(tenantId: string, caseId: string) {
-    const item = this.get(tenantId, caseId);
+  export(context: RequestContext, caseId: string) {
+    const item = this.get(context, caseId);
     return {
       schemaVersion: '1.0.0',
       exportedAt: new Date().toISOString(),
@@ -301,17 +310,24 @@ export class CasesService {
     };
   }
 
-  private mutable(tenantId: string, id: string): DemoCase {
+  private mutable(context: RequestContext | string, id: string): DemoCase {
+    const tenantIds = this.tenantIds(context);
     const item = this.cases.find(
-      (candidate) => candidate.id === id && candidate.tenantId === tenantId,
+      (candidate) => candidate.id === id && tenantIds.includes(candidate.tenantId),
     );
     if (!item) throw new NotFoundException({ code: 'CASE_NOT_FOUND', message: 'Case not found.' });
     return item;
   }
 
+  private tenantIds(context: RequestContext | string): readonly string[] {
+    return typeof context === 'string' ? [context] : context.tenantIds;
+  }
+
   private summary(item: DemoCase) {
     return {
       id: item.id,
+      tenantId: item.tenantId,
+      tenantName: resolveTestTenant(item.tenantId)?.name ?? item.tenantId,
       reference: item.reference,
       subjectName: item.subjectName,
       domain: item.domain,

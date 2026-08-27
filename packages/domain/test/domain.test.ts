@@ -7,10 +7,26 @@ import {
   normalizeCurrency,
   parseDomainPack,
   pharmacySupplierPack,
+  insuranceClaimsPack,
+  legalContractPack,
+  manufacturingQualityPack,
   reconcileFacts,
+  resolveDomainPack,
+  resolvePersistedDomainPack,
   resolvePath,
   type Condition,
 } from '../src/index.js';
+
+describe('domain pack catalog', () => {
+  it('selects a domain-specific pack for every seeded tenant domain', () => {
+    expect(resolveDomainPack('Pharmacy supplier qualification')).toBe(pharmacySupplierPack);
+    expect(resolveDomainPack('Commercial contract review')).toBe(legalContractPack);
+    expect(resolveDomainPack('Insurance claims assessment')).toBe(insuranceClaimsPack);
+    expect(resolveDomainPack('Supplier quality assurance')).toBe(manufacturingQualityPack);
+    expect(resolvePersistedDomainPack('pack_tenant_legal')).toBe(legalContractPack);
+    expect(resolvePersistedDomainPack('unknown')).toBeNull();
+  });
+});
 
 describe('safe condition DSL', () => {
   const context = {

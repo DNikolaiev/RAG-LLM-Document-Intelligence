@@ -11,6 +11,21 @@ export interface HumanResumeCommand {
   factCorrections?: Readonly<Record<string, unknown>>;
 }
 
+export interface FactEvidence {
+  documentId: string;
+  page: number;
+  quote: string;
+  confidence: number;
+}
+
+export interface DocumentClassification {
+  documentId: string;
+  typeId: string;
+  confidence: number;
+  page: number;
+  quote: string;
+}
+
 export const WorkflowState = Annotation.Root({
   tenantId: Annotation<string>,
   caseId: Annotation<string>,
@@ -18,7 +33,9 @@ export const WorkflowState = Annotation.Root({
   status: Annotation<WorkflowStatus>,
   phase: Annotation<string>,
   facts: Annotation<Record<string, unknown>>,
+  factEvidence: Annotation<Record<string, FactEvidence>>,
   availableDocumentTypes: Annotation<string[]>,
+  documentClassifications: Annotation<DocumentClassification[]>,
   lowConfidencePaths: Annotation<string[]>,
   identityConflict: Annotation<boolean>,
   retrievalStatus: Annotation<'pending' | 'found' | 'abstained'>,

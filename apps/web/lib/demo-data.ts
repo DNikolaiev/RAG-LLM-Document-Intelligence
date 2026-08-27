@@ -1,4 +1,7 @@
 import { cache } from 'react';
+import { cookies } from 'next/headers';
+import { DEFAULT_TEST_PROFILE_ID } from '@caselens/contracts';
+import { PROFILE_COOKIE, testProfilesEnabled } from './session-profile';
 
 export type CaseStatus = 'review_needed' | 'processing' | 'ready_for_decision' | 'approved';
 
@@ -6,6 +9,8 @@ export type Severity = 'critical' | 'major' | 'minor' | 'clear';
 
 export interface CaseSummary {
   id: string;
+  tenantId: string;
+  tenantName: string;
   reference: string;
   supplier: string;
   subtitle: string;
@@ -89,6 +94,8 @@ export const statusLabels: Record<CaseStatus, string> = {
 const cases: CaseSummary[] = [
   {
     id: 'case_01J5M8P2X4Y6Z7A8B9C0D1E2F3',
+    tenantId: 'tenant_demo',
+    tenantName: 'Düsseldorf Health Operations',
     reference: 'SUP-2026-0142',
     supplier: 'MediSupply GmbH',
     subtitle: 'Temperature-controlled medicine distributor',
@@ -102,6 +109,8 @@ const cases: CaseSummary[] = [
   },
   {
     id: 'case_01J5M8P2X4Y6Z7A8B9C0D1E2F4',
+    tenantId: 'tenant_demo',
+    tenantName: 'Düsseldorf Health Operations',
     reference: 'SUP-2026-0141',
     supplier: 'Nordlicht Lab Services AG',
     subtitle: 'Clinical packaging and labelling',
@@ -115,6 +124,8 @@ const cases: CaseSummary[] = [
   },
   {
     id: 'case_01J5M8P2X4Y6Z7A8B9C0D1E2F5',
+    tenantId: 'tenant_demo',
+    tenantName: 'Düsseldorf Health Operations',
     reference: 'SUP-2026-0140',
     supplier: 'CuraLogistik B.V.',
     subtitle: 'Cross-border cold-chain logistics',
@@ -128,6 +139,8 @@ const cases: CaseSummary[] = [
   },
   {
     id: 'case_01J5M8P2X4Y6Z7A8B9C0D1E2F6',
+    tenantId: 'tenant_demo',
+    tenantName: 'Düsseldorf Health Operations',
     reference: 'SUP-2026-0137',
     supplier: 'AlpenMed Verpackung KG',
     subtitle: 'Secondary pharmaceutical packaging',
@@ -368,6 +381,8 @@ const demoDetails: Record<string, CaseDetail> = {
 
 interface ApiCaseSummary {
   id: string;
+  tenantId?: string;
+  tenantName?: string;
   reference: string;
   subjectName: string;
   domain: string;
@@ -434,6 +449,8 @@ function mapApiSummary(item: ApiCaseSummary): CaseSummary {
   );
   return {
     id: item.id,
+    tenantId: item.tenantId ?? 'tenant_demo',
+    tenantName: item.tenantName ?? 'Düsseldorf Health Operations',
     reference: item.reference,
     supplier: item.subjectName,
     subtitle:
@@ -520,8 +537,8 @@ function mapApiDetail(item: ApiCaseDetail): CaseDetail {
     recommendationReason:
       item.recommendation === 'approve'
         ? 'All deterministic policy gates are satisfied and no material exception remains.'
-        : 'One required certificate is absent and two supplied facts do not satisfy the current qualification policy.',
-    domainPack: `pharmacy-supplier · v${item.domainPackVersion}`,
+        : `${item.findings.filter((finding) => finding.status === 'open').length} open finding(s) require human review before a final decision.`,
+    domainPack: `${item.domain} · v${item.domainPackVersion}`,
     documentsList: item.documents.map((document) => ({
       id: compactDocumentId(document.id),
       label: document.name,
@@ -589,10 +606,12 @@ function mapApiDetail(item: ApiCaseDetail): CaseDetail {
 async function apiGet<T>(path: string): Promise<T | null> {
   if (process.env.NODE_ENV === 'test') return null;
   const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:4100';
+  const store = await cookies();
+  const profileId = store.get(PROFILE_COOKIE)?.value ?? DEFAULT_TEST_PROFILE_ID;
   try {
     const response = await fetch(new URL(path, baseUrl), {
       cache: 'no-store',
-      headers: { 'x-tenant-id': process.env.DEMO_TENANT_ID ?? 'tenant_demo' },
+      headers: testProfilesEnabled() ? { 'x-test-profile-id': profileId } : {},
       signal: AbortSignal.timeout(2_000),
     });
     if (!response.ok) return null;

@@ -33,12 +33,15 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
   const filteredCases = filterCases(allCases, query, status);
   const counts = countByStatus(allCases);
   const materialFindings = allCases.reduce((total, item) => total + item.openFindings, 0);
+  const showTenant = new Set(allCases.map((item) => item.tenantId)).size > 1;
 
   return (
     <main id="main-content" className="queue-page">
       <section className="queue-intro" aria-labelledby="queue-title">
         <div>
-          <p className="eyebrow">Qualification docket · 26 August 2026</p>
+          <p className="eyebrow">
+            {showTenant ? 'Cross-tenant review docket' : 'Tenant review docket'} · 27 August 2026
+          </p>
           <h1 id="queue-title">Cases that need a human eye</h1>
           <p className="intro-copy">
             Review exceptions, verify their source, and leave every decision with a traceable
@@ -104,6 +107,7 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
             <thead>
               <tr>
                 <th scope="col">Case</th>
+                {showTenant ? <th scope="col">Tenant</th> : null}
                 <th scope="col">Status</th>
                 <th scope="col">Evidence set</th>
                 <th scope="col">Owner</th>
@@ -116,14 +120,19 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
             <tbody>
               {filteredCases.map((item) => (
                 <tr key={item.id}>
-                  <td>
+                  <td className="case-col">
                     <Link className="case-name" href={`/cases/${item.id}`}>
                       <strong>{item.supplier}</strong>
                       <span>{item.subtitle}</span>
                       <code>{item.reference}</code>
                     </Link>
                   </td>
-                  <td>
+                  {showTenant ? (
+                    <td className="tenant-col">
+                      <span className="tenant-cell">{item.tenantName}</span>
+                    </td>
+                  ) : null}
+                  <td className="status-col">
                     <StatusMark status={item.status} />
                     {item.openFindings > 0 ? (
                       <span className="finding-count">
@@ -132,7 +141,7 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
                       </span>
                     ) : null}
                   </td>
-                  <td>
+                  <td className="evidence-col">
                     <div className="evidence-progress">
                       <span>
                         {item.documents} documents · {item.progress}%
@@ -142,9 +151,9 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
                       </progress>
                     </div>
                   </td>
-                  <td>{item.assignee}</td>
-                  <td>{item.updatedAt}</td>
-                  <td>
+                  <td className="owner-col">{item.assignee}</td>
+                  <td className="updated-col">{item.updatedAt}</td>
+                  <td className="action-col">
                     <Link className="row-action" href={`/cases/${item.id}`}>
                       Review <span aria-hidden="true">→</span>
                     </Link>

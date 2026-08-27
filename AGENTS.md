@@ -80,7 +80,7 @@ docker compose -f infra/docker-compose.demo.yml up --build -d
 
 When it is running, execute browser coverage with `npm run test:e2e`. The default Playwright target is `http://127.0.0.1:3000`; override it with `PLAYWRIGHT_BASE_URL`. Tests run serially against desktop Chromium and a Pixel 7 profile. They intentionally mock browser-originated mutations so repeated runs do not alter shared demo state.
 
-PostgreSQL/pgvector, Redis, and MinIO are isolated in `infra/docker-compose.prod-infra.yml`. Copy `infra/.env.prod-infra.example` to the ignored `infra/.env.prod-infra`, replace every example secret, and use it with `docker compose --env-file infra/.env.prod-infra -f infra/docker-compose.prod-infra.yml up -d`. This infrastructure stack does not prove that production application bindings are complete.
+The complete local production profile is `infra/docker-compose.production-local.yml`. Copy `infra/.env.production-local.example` to ignored `infra/.env.production-local`, then start it with the matching `--env-file`. It composes durable repositories, BullMQ consumption, MinIO, Ollama, OCR, and dependency-backed readiness. The test identity switcher is local-only and does not replace public authentication.
 
 ## Change expectations
 

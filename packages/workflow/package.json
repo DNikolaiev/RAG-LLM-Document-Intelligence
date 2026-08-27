@@ -20,7 +20,8 @@
     "@caselens/document-pipeline": "0.1.0",
     "@caselens/domain": "0.1.0",
     "@caselens/retrieval": "0.1.0",
-    "@langchain/langgraph": "1.4.12"
+    "@langchain/langgraph": "1.4.12",
+    "postgres": "^3.4.7"
   },
   "devDependencies": {
     "typescript": "^6.0.0",

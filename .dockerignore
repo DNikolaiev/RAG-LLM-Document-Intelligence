@@ -3,6 +3,11 @@ node_modules
 dist
 coverage
 .turbo
+**/node_modules
+**/.next
+**/dist
+**/coverage
+**/.turbo
 .git
 .env
 .env.*
@@ -10,4 +15,6 @@ coverage
 *.tsbuildinfo
 tmp
 output
+playwright-report
+test-results
 scripts/__pycache__

@@ -3,6 +3,7 @@ import {
   fail,
   ok,
   type ModelProvider,
+  type DocumentTextProvider,
   type OcrProvider,
   type ProviderCapabilities,
   type ProviderErrorCode,
@@ -53,6 +54,11 @@ export interface OpenAiCompatibleConfig {
   chatModel: string;
   embeddingModel: string;
   organization?: string;
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+  maxOutputTokens?: number;
+  structuredOutputMode?: 'json-object' | 'json-schema';
+  chatApiStyle?: 'openai' | 'ollama-native';
+  includeSchemaInPrompt?: boolean;
 }
 export class OpenAiCompatibleProvider implements ModelProvider {
   constructor(private readonly config: OpenAiCompatibleConfig) {
@@ -73,25 +79,66 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     };
   }
   async generateStructured<T>(request: StructuredGenerationRequest<T>): Promise<ProviderResult<T>> {
+    const jsonSchema = z.toJSONSchema(request.schema);
+    const responseFormat =
+      this.config.structuredOutputMode === 'json-schema'
+        ? {
+            type: 'json_schema',
+            json_schema: { name: request.schemaName, strict: true, schema: jsonSchema },
+          }
+        : { type: 'json_object' };
+    const messages = [
+      { role: 'system', content: request.system },
+      {
+        role: 'user',
+        content:
+          this.config.includeSchemaInPrompt === false
+            ? request.prompt
+            : `${request.prompt}\n\nReturn JSON matching this schema exactly:\n${JSON.stringify(jsonSchema)}`,
+      },
+    ];
+    const ollamaNative = this.config.chatApiStyle === 'ollama-native';
     const result = await requestJson(
-      `${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`,
+      ollamaNative
+        ? `${this.config.baseUrl.replace(/\/v1\/?$/, '')}/api/chat`
+        : `${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`,
       {
         method: 'POST',
         headers: this.headers(),
-        body: JSON.stringify({
-          model: this.config.chatModel,
-          messages: [
-            { role: 'system', content: request.system },
-            { role: 'user', content: request.prompt },
-          ],
-          response_format: { type: 'json_object' },
-        }),
+        body: JSON.stringify(
+          ollamaNative
+            ? {
+                model: this.config.chatModel,
+                messages,
+                format: this.config.structuredOutputMode === 'json-schema' ? jsonSchema : 'json',
+                stream: false,
+                think: false,
+                options: {
+                  temperature: 0,
+                  ...(this.config.maxOutputTokens
+                    ? { num_predict: this.config.maxOutputTokens }
+                    : {}),
+                },
+              }
+            : {
+                model: this.config.chatModel,
+                messages,
+                response_format: responseFormat,
+                temperature: 0,
+                ...(this.config.reasoningEffort
+                  ? { reasoning_effort: this.config.reasoningEffort }
+                  : {}),
+                ...(this.config.maxOutputTokens ? { max_tokens: this.config.maxOutputTokens } : {}),
+              },
+        ),
       },
       request.timeoutMs,
     );
     if (!result.ok) return result;
-    const content = (result.value as { choices?: { message?: { content?: string } }[] })
-      .choices?.[0]?.message?.content;
+    const content = ollamaNative
+      ? (result.value as { message?: { content?: string } }).message?.content
+      : (result.value as { choices?: { message?: { content?: string } }[] }).choices?.[0]?.message
+          ?.content;
     if (!content) return fail('invalid_response', 'Model response had no content');
     try {
       const parsed = request.schema.safeParse(JSON.parse(content));
@@ -190,6 +237,60 @@ export interface HttpOcrConfig {
   apiKey?: string;
   timeoutMs?: number;
 }
+
+export class HttpDocumentTextProvider implements DocumentTextProvider {
+  constructor(private readonly config: HttpOcrConfig) {
+    if (!config.endpoint) throw new Error('HTTP document text provider is misconfigured');
+  }
+  capabilities(): ProviderCapabilities {
+    return { id: this.config.id, features: ['native-text', 'page-boundaries'], languages: ['*'] };
+  }
+  async health(): Promise<ProviderResult<{ status: 'healthy' | 'degraded' }>> {
+    const result = await requestJson(
+      this.config.endpoint.replace(/\/v1\/text\/?$/, '/health'),
+      { method: 'GET', headers: {} },
+      this.config.timeoutMs ?? 5_000,
+    );
+    return result.ok ? ok({ status: 'healthy' }) : result;
+  }
+  async extract(input: Uint8Array, mediaType: string): Promise<ProviderResult<TextPage[]>> {
+    const result = await requestJson(
+      this.config.endpoint,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}),
+        },
+        body: JSON.stringify({ content: Buffer.from(input).toString('base64'), mediaType }),
+      },
+      this.config.timeoutMs ?? 60_000,
+    );
+    if (!result.ok) return result;
+    const parsed = z
+      .object({
+        pages: z.array(
+          z.object({
+            page: z.number().int().positive(),
+            text: z.string(),
+            rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]),
+            language: z.string().nullable().optional(),
+            confidence: z.number().min(0).max(1),
+          }),
+        ),
+      })
+      .safeParse(result.value);
+    if (!parsed.success) return fail('invalid_response', 'Native text response failed validation');
+    return ok(
+      parsed.data.pages.map(({ language, ...page }) => ({
+        ...page,
+        ...(language ? { language } : {}),
+      })),
+      { providerId: this.config.id },
+    );
+  }
+}
+
 export class HttpOcrProvider implements OcrProvider {
   constructor(private readonly config: HttpOcrConfig) {
     if (!config.endpoint) throw new Error('HTTP OCR provider is misconfigured');
@@ -198,7 +299,12 @@ export class HttpOcrProvider implements OcrProvider {
     return { id: this.config.id, features: ['ocr', 'orientation'], languages: ['*'] };
   }
   async health(): Promise<ProviderResult<{ status: 'healthy' | 'degraded' }>> {
-    return ok({ status: 'healthy' });
+    const result = await requestJson(
+      this.config.endpoint.replace(/\/v1\/ocr\/?$/, '/health'),
+      { method: 'GET', headers: {} },
+      this.config.timeoutMs ?? 5_000,
+    );
+    return result.ok ? ok({ status: 'healthy' }) : result;
   }
   async recognize(
     input: Uint8Array,
@@ -217,11 +323,11 @@ export class HttpOcrProvider implements OcrProvider {
       this.config.timeoutMs ?? 60_000,
     );
     if (!result.ok) return result;
-    const PageSchema: z.ZodType<TextPage> = z.object({
+    const PageSchema = z.object({
       page: z.number().int().positive(),
       text: z.string(),
       rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]),
-      language: z.string().optional(),
+      language: z.string().nullable().optional(),
       confidence: z.number().min(0).max(1),
       blocks: z
         .array(
@@ -236,8 +342,8 @@ export class HttpOcrProvider implements OcrProvider {
         .optional(),
     });
     const parsed = PageSchema.safeParse(result.value);
-    return parsed.success
-      ? ok(parsed.data, { providerId: this.config.id })
-      : fail('invalid_response', 'OCR response failed validation');
+    if (!parsed.success) return fail('invalid_response', 'OCR response failed validation');
+    const { language, ...page } = parsed.data;
+    return ok({ ...page, ...(language ? { language } : {}) }, { providerId: this.config.id });
   }
 }
