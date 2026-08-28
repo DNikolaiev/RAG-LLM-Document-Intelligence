@@ -3,10 +3,12 @@ import Link from 'next/link';
 import {
   Activity,
   ArrowUpRight,
+  CheckCircle2,
+  CircleAlert,
+  Clock3,
   FileSearch,
   Layers3,
   ListFilter,
-  ScanSearch,
   Search,
   ShieldAlert,
 } from 'lucide-react';
@@ -33,6 +35,13 @@ const validStatuses = new Set<CaseStatus>([
   'approved',
 ]);
 
+const readinessStages = [
+  { status: 'processing', label: 'Processing', icon: Clock3 },
+  { status: 'review_needed', label: 'Review', icon: CircleAlert },
+  { status: 'ready_for_decision', label: 'Ready', icon: Layers3 },
+  { status: 'approved', label: 'Approved', icon: CheckCircle2 },
+] as const;
+
 export default async function QueuePage({ searchParams }: QueuePageProps) {
   const [allCases, params] = await Promise.all([listCases(), searchParams]);
   const rawStatus = typeof params.status === 'string' ? params.status : 'all';
@@ -44,6 +53,13 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
   const counts = countByStatus(allCases);
   const materialFindings = allCases.reduce((total, item) => total + item.openFindings, 0);
   const sourceDocuments = allCases.reduce((total, item) => total + item.documents, 0);
+  const averageEvidence = allCases.length
+    ? Math.round(allCases.reduce((total, item) => total + item.progress, 0) / allCases.length)
+    : 0;
+  const nextReview =
+    allCases.find((item) => item.status === 'review_needed') ??
+    allCases.find((item) => item.status === 'processing') ??
+    allCases[0];
   const showTenant = new Set(allCases.map((item) => item.tenantId)).size > 1;
 
   return (
@@ -72,26 +88,77 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
             </span>
           </div>
         </div>
-        <aside className="evidence-orbit" aria-label="Evidence pipeline is active">
-          <div className="orbit-grid" aria-hidden="true" />
-          <div className="orbit-ring orbit-ring-outer" aria-hidden="true" />
-          <div className="orbit-ring orbit-ring-inner" aria-hidden="true" />
-          <div className="orbit-beam" aria-hidden="true" />
-          <span className="orbit-node orbit-node-source">
-            <FileSearch aria-hidden="true" size={14} /> {sourceDocuments} sources
-          </span>
-          <span className="orbit-node orbit-node-rules">
-            <Layers3 aria-hidden="true" size={14} /> Policy linked
-          </span>
-          <div className="orbit-core">
-            <ScanSearch aria-hidden="true" size={30} strokeWidth={1.6} />
-            <span>Evidence graph</span>
-            <strong>Active</strong>
+        <aside className="readiness-brief" aria-labelledby="readiness-title">
+          <header className="readiness-header">
+            <div>
+              <p className="eyebrow">Queue intelligence</p>
+              <h2 id="readiness-title">Decision readiness</h2>
+            </div>
+            <span className="readiness-live">
+              <span aria-hidden="true" /> Live
+            </span>
+          </header>
+
+          <div className="readiness-summary">
+            <strong>{counts.review_needed}</strong>
+            <div>
+              <span>
+                {counts.review_needed === 1 ? 'case needs' : 'cases need'} reviewer attention
+              </span>
+              <small>
+                {sourceDocuments} source documents across {allCases.length} tracked cases
+              </small>
+            </div>
           </div>
-          <div className="orbit-caption">
-            <Activity aria-hidden="true" size={14} />
-            Sources → facts → policy → decision
-          </div>
+
+          <nav className="readiness-route" aria-label="Filter cases by workflow stage">
+            {readinessStages.map((stage) => {
+              const StageIcon = stage.icon;
+              const count = counts[stage.status];
+              return (
+                <Link
+                  aria-label={`${stage.label}: ${count} ${count === 1 ? 'case' : 'cases'}`}
+                  className={`readiness-stage readiness-${stage.status}`}
+                  href={`/?status=${stage.status}#case-queue`}
+                  key={stage.status}
+                >
+                  <span className="readiness-stage-icon" aria-hidden="true">
+                    <StageIcon size={14} />
+                  </span>
+                  <strong>{count}</strong>
+                  <span>{stage.label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+
+          {nextReview ? (
+            <Link className="next-review-card" href={`/cases/${nextReview.id}`}>
+              <span className="next-review-icon" aria-hidden="true">
+                <ShieldAlert size={17} />
+              </span>
+              <span className="next-review-copy">
+                <small>Next review</small>
+                <strong>{nextReview.supplier}</strong>
+                <span>
+                  {nextReview.openFindings} material{' '}
+                  {nextReview.openFindings === 1 ? 'finding' : 'findings'} · {nextReview.progress}%
+                  evidence ready
+                </span>
+              </span>
+              <ArrowUpRight aria-hidden="true" size={16} />
+            </Link>
+          ) : null}
+
+          <footer className="readiness-coverage">
+            <span>
+              <span>Average evidence coverage</span>
+              <strong>{averageEvidence}%</strong>
+            </span>
+            <progress value={averageEvidence} max="100">
+              {averageEvidence}%
+            </progress>
+          </footer>
         </aside>
       </section>
 

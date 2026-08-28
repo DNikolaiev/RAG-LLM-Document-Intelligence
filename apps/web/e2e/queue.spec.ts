@@ -15,7 +15,14 @@ test.describe('case queue', () => {
     await expect(
       page.getByRole('heading', { name: 'Every decision, grounded in evidence.' }),
     ).toBeVisible();
-    await expect(page.getByLabel('Evidence pipeline is active')).toBeAttached();
+    const readiness = page.getByRole('complementary', { name: 'Decision readiness' });
+    await expect(readiness).toBeVisible();
+    await expect(
+      readiness.getByRole('navigation', { name: 'Filter cases by workflow stage' }),
+    ).toBeVisible();
+    const reviewStage = readiness.getByRole('link', { name: /^Review: \d+ cases?$/ });
+    await expect(reviewStage).toBeVisible();
+    await expect(readiness.getByText('Average evidence coverage')).toBeVisible();
     await expect(page.locator('[aria-label="Case totals"]')).toBeVisible();
     await expect(page.getByRole('region', { name: 'Case queue' })).toBeVisible();
     await expect(page.getByRole('searchbox', { name: 'Find a subject or case' })).toBeVisible();
@@ -24,6 +31,10 @@ test.describe('case queue', () => {
     await expect(page.getByRole('table')).toBeVisible();
     expect(await page.locator('tbody tr').count()).toBeGreaterThan(0);
     await expectHealthyLayout(page);
+
+    await reviewStage.click();
+    await expect(page).toHaveURL(/status=review_needed/);
+    await expect(page.locator('tbody tr')).toHaveCount(1);
 
     const reviewLink = page.getByRole('link', { name: 'Review', exact: true }).first();
     await expect(reviewLink).toBeVisible();
