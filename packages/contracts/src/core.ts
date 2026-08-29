@@ -153,6 +153,68 @@ export const JobSchema = z.object({
   updatedAt: IsoTimestampSchema,
 });
 
+export const JobStatusSchema = z.enum([
+  'queued',
+  'processing',
+  'paused',
+  'needs_review',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+
+export const JobEventTypeSchema = z.enum([
+  'job.created',
+  'queue.enqueue_requested',
+  'queue.enqueued',
+  'queue.duplicate_suppressed',
+  'worker.claimed',
+  'worker.started',
+  'job.progress',
+  'job.retry_scheduled',
+  'job.completed',
+  'job.failed',
+  'job.cancel_requested',
+  'job.cancelled',
+  'queue.record_removed',
+]);
+
+export const JobLifecycleEventSchema = z.object({
+  id: z.string().min(1),
+  jobId: z.string().min(1),
+  tenantId: z.string().min(1),
+  recipientUserId: z.string().min(1),
+  actorUserId: z.string().min(1).nullable(),
+  sequence: z.number().int().positive(),
+  type: JobEventTypeSchema,
+  stage: z.string().min(1).nullable(),
+  status: JobStatusSchema,
+  progress: z.number().int().min(0).max(100),
+  message: z.string().min(1).max(500),
+  metadata: z.record(z.string(), JsonValueSchema),
+  occurredAt: IsoTimestampSchema,
+});
+
+export const JobNotificationSchema = z.object({
+  id: z.string().min(1),
+  tenantId: z.string().min(1),
+  caseId: z.string().min(1),
+  enqueuedByUserId: z.string().min(1),
+  kind: z.string().min(1),
+  status: JobStatusSchema,
+  progress: z.number().int().min(0).max(100),
+  attempts: z.number().int().nonnegative(),
+  errorCode: z.string().nullable(),
+  createdAt: IsoTimestampSchema,
+  updatedAt: IsoTimestampSchema,
+  latestEvent: JobLifecycleEventSchema.nullable(),
+});
+
+export const JobNotificationPageSchema = z.object({
+  items: z.array(JobNotificationSchema),
+  nextCursor: z.string().nullable(),
+});
+
 export const AuditEventSchema = z.object({
   id: AuditEventIdSchema,
   tenantId: TenantIdSchema,
@@ -186,5 +248,9 @@ export type EvidenceSpan = z.infer<typeof EvidenceSpanSchema>;
 export type ExtractedFact = z.infer<typeof ExtractedFactSchema>;
 export type Finding = z.infer<typeof FindingSchema>;
 export type Job = z.infer<typeof JobSchema>;
+export type JobStatus = z.infer<typeof JobStatusSchema>;
+export type JobEventType = z.infer<typeof JobEventTypeSchema>;
+export type JobLifecycleEvent = z.infer<typeof JobLifecycleEventSchema>;
+export type JobNotification = z.infer<typeof JobNotificationSchema>;
 export type AuditEvent = z.infer<typeof AuditEventSchema>;
 export type ProblemDetail = z.infer<typeof ProblemDetailSchema>;

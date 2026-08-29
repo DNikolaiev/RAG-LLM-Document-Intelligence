@@ -359,6 +359,11 @@ export const jobs = pgTable(
       .notNull()
       .references(() => tenants.id),
     caseId: text('case_id').references(() => cases.id),
+    enqueuedByUserId: text('enqueued_by_user_id')
+      .notNull()
+      .references(() => users.id),
+    correlationId: text('correlation_id').notNull(),
+    queueJobId: text('queue_job_id'),
     kind: text('kind').notNull(),
     status: text('status').notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
@@ -371,7 +376,47 @@ export const jobs = pgTable(
   (table) => [
     uniqueIndex('job_tenant_idempotency_uq').on(table.tenantId, table.idempotencyKey),
     index('job_case_idx').on(table.caseId),
+    index('job_enqueuer_updated_idx').on(table.enqueuedByUserId, table.updatedAt),
+    index('job_tenant_enqueuer_updated_idx').on(
+      table.tenantId,
+      table.enqueuedByUserId,
+      table.updatedAt,
+    ),
     index('job_tenant_status_updated_idx').on(table.tenantId, table.status, table.updatedAt),
+  ],
+);
+
+export const jobEvents = pgTable(
+  'job_events',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    jobId: text('job_id')
+      .notNull()
+      .references(() => jobs.id),
+    recipientUserId: text('recipient_user_id')
+      .notNull()
+      .references(() => users.id),
+    actorUserId: text('actor_user_id').references(() => users.id),
+    sequence: integer('sequence').notNull(),
+    eventType: text('event_type').notNull(),
+    stage: text('stage'),
+    status: text('status').notNull(),
+    progress: integer('progress').notNull(),
+    message: text('message').notNull(),
+    metadata: jsonb('metadata').notNull().default({}),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('job_event_job_sequence_uq').on(table.jobId, table.sequence),
+    index('job_event_tenant_recipient_time_idx').on(
+      table.tenantId,
+      table.recipientUserId,
+      table.occurredAt,
+    ),
+    index('job_event_job_time_idx').on(table.jobId, table.occurredAt),
   ],
 );
 

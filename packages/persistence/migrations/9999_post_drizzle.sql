@@ -56,7 +56,7 @@ BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'memberships','domain_packs','cases','documents','document_pages',
     'extraction_runs','evidence_spans','extracted_facts','policy_documents',
-    'policy_chunks','policy_search_chunks','rule_runs','findings','decisions','jobs','workflow_checkpoints','audit_events'
+    'policy_chunks','policy_search_chunks','rule_runs','findings','decisions','jobs','job_events','workflow_checkpoints','audit_events'
   ]
   LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', table_name);

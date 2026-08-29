@@ -117,13 +117,25 @@ CREATE TABLE decisions (
 );
 CREATE INDEX decision_case_time_idx ON decisions(case_id, decided_at DESC);
 CREATE TABLE jobs (
-  id text PRIMARY KEY, tenant_id text NOT NULL REFERENCES tenants(id), case_id text REFERENCES cases(id), kind text NOT NULL, status text NOT NULL,
+  id text PRIMARY KEY, tenant_id text NOT NULL REFERENCES tenants(id), case_id text REFERENCES cases(id), enqueued_by_user_id text NOT NULL REFERENCES users(id),
+  correlation_id text NOT NULL, queue_job_id text, kind text NOT NULL, status text NOT NULL,
   idempotency_key text NOT NULL, progress integer NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100), attempts integer NOT NULL DEFAULT 0, error jsonb, checkpoint jsonb NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), version integer NOT NULL DEFAULT 1,
   UNIQUE(tenant_id, idempotency_key)
 );
 CREATE INDEX job_tenant_status_updated_idx ON jobs(tenant_id, status, updated_at DESC);
 CREATE INDEX job_case_idx ON jobs(case_id);
+CREATE INDEX job_enqueuer_updated_idx ON jobs(enqueued_by_user_id, updated_at DESC);
+CREATE INDEX job_tenant_enqueuer_updated_idx ON jobs(tenant_id, enqueued_by_user_id, updated_at DESC);
+CREATE TABLE job_events (
+  id text PRIMARY KEY, tenant_id text NOT NULL REFERENCES tenants(id), job_id text NOT NULL REFERENCES jobs(id),
+  recipient_user_id text NOT NULL REFERENCES users(id), actor_user_id text REFERENCES users(id), sequence integer NOT NULL CHECK (sequence > 0),
+  event_type text NOT NULL, stage text, status text NOT NULL, progress integer NOT NULL CHECK (progress BETWEEN 0 AND 100),
+  message text NOT NULL CHECK (length(message) BETWEEN 1 AND 500), metadata jsonb NOT NULL DEFAULT '{}', occurred_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(job_id, sequence)
+);
+CREATE INDEX job_event_tenant_recipient_time_idx ON job_events(tenant_id, recipient_user_id, occurred_at DESC);
+CREATE INDEX job_event_job_time_idx ON job_events(job_id, occurred_at DESC);
 CREATE TABLE workflow_checkpoints (
   tenant_id text NOT NULL REFERENCES tenants(id), checkpoint_key text NOT NULL, state jsonb NOT NULL,
   revision integer NOT NULL DEFAULT 1, updated_at timestamptz NOT NULL DEFAULT now(),

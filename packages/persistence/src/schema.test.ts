@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cases, documents, findings, policyChunks } from './schema.js';
+import { cases, documents, findings, jobEvents, jobs, policyChunks } from './schema.js';
 
 describe('persistence schema', () => {
   it('exports the tenant-scoped core tables', () => {
@@ -7,5 +7,7 @@ describe('persistence schema', () => {
     expect(documents.sha256).toBeDefined();
     expect(findings.ruleRunId).toBeDefined();
     expect(policyChunks.embedding).toBeDefined();
+    expect(jobs.enqueuedByUserId).toBeDefined();
+    expect(jobEvents.recipientUserId).toBeDefined();
   });
 });
