@@ -98,6 +98,31 @@ test.describe('case queue', () => {
 
     await expect(page.getByLabel('Current workspace')).toContainText('All tenant workspaces');
     await expect(page.getByLabel(/Switch profile\. Signed in as Mara Stein/)).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'Tenant' })).toBeVisible();
+
+    const legalCase = page.locator('tbody tr').filter({ hasText: 'CTR-2026-0088' });
+    await expect(legalCase).toContainText('Rheinland Legal Services');
+    await legalCase.getByRole('link', { name: 'Review', exact: true }).click();
+    await expect(
+      page.getByRole('heading', { level: 1, name: 'Nordstern Distribution Agreement' }),
+    ).toBeVisible();
+    await expectHealthyLayout(page);
+    expectNoRuntimeFailures(failures);
+  });
+
+  test('opens a case before its first document is uploaded', async ({ page }) => {
+    const failures = monitorRuntimeFailures(page);
+    await page.goto('/');
+
+    const emptyEvidenceRow = page.locator('tbody tr').filter({ hasText: '0 documents' }).first();
+    await expect(emptyEvidenceRow).toBeVisible();
+    await emptyEvidenceRow.getByRole('link', { name: 'Review', exact: true }).click();
+
+    await expect(
+      page.getByRole('heading', { name: 'This dossier is ready for its first source' }),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Add document' })).toBeEnabled();
+    await expect(page.getByText('Nothing queued')).toBeVisible();
     await expectHealthyLayout(page);
     expectNoRuntimeFailures(failures);
   });

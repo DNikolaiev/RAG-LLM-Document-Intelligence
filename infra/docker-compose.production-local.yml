@@ -195,7 +195,12 @@ services:
     build:
       context: ..
       dockerfile: infra/docker/node.Dockerfile
-      args: { PACKAGE: '@caselens/web' }
+      args:
+        PACKAGE: '@caselens/web'
+        APP_MODE: production
+        AUTH_MODE: test-profiles
+        ENABLE_TEST_IDENTITY_SWITCHER: 'true'
+        PUBLIC_API_URL: http://api:4100
     environment:
       APP_MODE: production
       AUTH_MODE: test-profiles

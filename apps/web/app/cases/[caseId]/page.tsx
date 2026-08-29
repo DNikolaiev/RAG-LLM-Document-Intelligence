@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowLeft, Layers3, UserRound } from 'lucide-react';
 
 import { DossierNav } from '@/components/dossier-nav';
 import { DocumentSurfaceLoader } from '@/components/document-surface-loader';
+import { EmptyDocumentSurface } from '@/components/empty-document-surface';
 import { ReviewPanel } from '@/components/review-panel';
 import { StatusMark } from '@/components/status-mark';
 import { WorkspaceTabs } from '@/components/workspace-tabs';
@@ -28,14 +29,14 @@ export default async function CasePage({ params, searchParams }: CasePageProps) 
   const caseDetail = await getCase(caseId);
   if (!caseDetail) notFound();
 
-  const requestedDocument = typeof query.document === 'string' ? query.document : 'insurance';
+  const requestedDocument =
+    typeof query.document === 'string' ? query.document : caseDetail.documentsList[0]?.id;
   const selectedDocument =
     caseDetail.documentsList.find((document) => document.id === requestedDocument) ??
     caseDetail.documentsList[0];
-  if (!selectedDocument) notFound();
-  const visibleEvidence = caseDetail.evidence.filter(
-    (evidence) => evidence.documentId === selectedDocument.id,
-  );
+  const visibleEvidence = selectedDocument
+    ? caseDetail.evidence.filter((evidence) => evidence.documentId === selectedDocument.id)
+    : [];
   const severityCounts = caseDetail.findings
     .filter((finding) => finding.state === 'open')
     .reduce<Record<'critical' | 'major' | 'minor', number>>(
@@ -100,10 +101,16 @@ export default async function CasePage({ params, searchParams }: CasePageProps) 
           <DossierNav
             caseId={caseDetail.id}
             documents={caseDetail.documentsList}
-            selectedDocumentId={selectedDocument.id}
+            selectedDocumentId={selectedDocument?.id}
           />
         }
-        document={<DocumentSurfaceLoader document={selectedDocument} evidence={visibleEvidence} />}
+        document={
+          selectedDocument ? (
+            <DocumentSurfaceLoader document={selectedDocument} evidence={visibleEvidence} />
+          ) : (
+            <EmptyDocumentSurface />
+          )
+        }
         review={
           <ReviewPanel
             audit={caseDetail.audit}

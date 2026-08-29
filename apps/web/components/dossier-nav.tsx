@@ -11,7 +11,7 @@ export function DossierNav({
 }: {
   caseId: string;
   documents: CaseDocument[];
-  selectedDocumentId: string;
+  selectedDocumentId: string | undefined;
 }) {
   const complete = documents.filter((item) => item.state === 'verified').length;
   const stateIcons = {
@@ -29,15 +29,23 @@ export function DossierNav({
         </span>
         <p className="eyebrow">Dossier</p>
         <h2>Source documents</h2>
-        <span className="dossier-progress-copy">
-          <ShieldCheck aria-hidden="true" size={13} /> {complete} verified · {documents.length}{' '}
-          expected
-        </span>
-        <progress
-          value={complete}
-          max={documents.length}
-          aria-label={`${complete} of ${documents.length} documents verified`}
-        />
+        {documents.length ? (
+          <>
+            <span className="dossier-progress-copy">
+              <ShieldCheck aria-hidden="true" size={13} /> {complete} verified · {documents.length}{' '}
+              available
+            </span>
+            <progress
+              value={complete}
+              max={documents.length}
+              aria-label={`${complete} of ${documents.length} documents verified`}
+            />
+          </>
+        ) : (
+          <span className="dossier-progress-copy">
+            <FileClock aria-hidden="true" size={13} /> No source documents yet
+          </span>
+        )}
       </div>
       <ol className="document-list">
         {documents.map((document, index) => {
@@ -65,11 +73,18 @@ export function DossierNav({
         })}
       </ol>
       <DocumentUpload caseId={caseId} />
-      <div className="dossier-note">
-        <strong>Processing record</strong>
-        <span>32 pages · OCR on 2</span>
-        <span>Last run 09:41 · deterministic</span>
-      </div>
+      {documents.length ? (
+        <div className="dossier-note">
+          <strong>Processing record</strong>
+          <span>{documents.length} source documents</span>
+          <span>Review the audit trail for run details</span>
+        </div>
+      ) : (
+        <div className="dossier-note dossier-note-empty">
+          <strong>Nothing queued</strong>
+          <span>Upload evidence to begin processing</span>
+        </div>
+      )}
     </nav>
   );
 }

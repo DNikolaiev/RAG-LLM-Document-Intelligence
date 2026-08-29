@@ -11,10 +11,12 @@ describe.skipIf(!databaseUrl)('PostgresWorkflowCheckpointStore tenant integratio
     const tenantA = `tenant_checkpoint_a_${suffix}`;
     const tenantB = `tenant_checkpoint_b_${suffix}`;
     const admin = postgres(databaseUrl!, { prepare: false });
-    await admin`insert into tenants (id, name) values (${tenantA}, 'Checkpoint A'), (${tenantB}, 'Checkpoint B')`;
-    const first = new PostgresWorkflowCheckpointStore(databaseUrl!, tenantA);
-    const second = new PostgresWorkflowCheckpointStore(databaseUrl!, tenantB);
+    let first: PostgresWorkflowCheckpointStore | undefined;
+    let second: PostgresWorkflowCheckpointStore | undefined;
     try {
+      await admin`insert into tenants (id, name) values (${tenantA}, 'Checkpoint A'), (${tenantB}, 'Checkpoint B')`;
+      first = new PostgresWorkflowCheckpointStore(databaseUrl!, tenantA);
+      second = new PostgresWorkflowCheckpointStore(databaseUrl!, tenantB);
       const state = makeState(tenantA);
       const base = {
         key: 'shared-key',
@@ -38,9 +40,23 @@ describe.skipIf(!databaseUrl)('PostgresWorkflowCheckpointStore tenant integratio
       expect((await second.get('shared-key'))?.state.tenantId).toBe(tenantB);
       await expect(first.save({ ...base, revision: 2 }, 99)).rejects.toThrow('Checkpoint conflict');
     } finally {
-      await first.close();
-      await second.close();
-      await admin.end({ timeout: 5 });
+      try {
+        await admin.begin(async (tx) => {
+          await tx`select set_config('app.tenant_id', '', true), set_config('app.platform_admin', 'true', true)`;
+          await tx`delete from workflow_checkpoints where tenant_id in (${tenantA}, ${tenantB})`;
+          await tx`delete from tenants where id in (${tenantA}, ${tenantB})`;
+        });
+      } finally {
+        try {
+          await first?.close();
+        } finally {
+          try {
+            await second?.close();
+          } finally {
+            await admin.end({ timeout: 5 });
+          }
+        }
+      }
     }
   });
 });

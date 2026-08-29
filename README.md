@@ -46,27 +46,33 @@ Stop the stack without losing data using `docker compose ... down`. To intention
 
 ## Components and why they exist
 
-| Component                    | Purpose                                                                                     | Current runtime status                                                 |
-| ---------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `apps/web`                   | Next.js review console for cases, documents, evidence, findings, corrections, and decisions | Used by the demo                                                       |
-| `apps/api`                   | Authoritative NestJS API enforcing validation and business invariants                       | Used by the demo with memory state                                     |
-| `apps/worker`                | Consumes BullMQ jobs and runs document processing plus LangGraph                            | Deterministic simulator in demo; durable consumer in local production  |
-| `apps/mcp`                   | Read-only agent interface over the API                                                      | Optional; not started by Compose                                       |
-| `packages/contracts`         | Shared Zod schemas, identifiers, and API/domain types                                       | Used across applications                                               |
-| `packages/config`            | Validates environment variables and provider selections                                     | Used at startup                                                        |
-| `packages/domain`            | Versioned domain packs and safe deterministic rule DSL                                      | Used by the workflow and demo data                                     |
-| `packages/providers`         | Vendor-neutral ports plus deterministic, HTTP, S3, pgvector, and BullMQ adapters            | Selected by environment in both runtime profiles                       |
-| `packages/document-pipeline` | File validation, extraction/OCR strategy, structured facts, confidence, and provenance      | Implemented and tested as a package                                    |
-| `packages/retrieval`         | Tenant/version/date-scoped policy retrieval for grounded decisions                          | Implemented and tested as a package                                    |
-| `packages/workflow`          | LangGraph state machine, retries, checkpoints, review pause, and resume                     | Memory checkpoints in demo; PostgreSQL checkpoints in local production |
-| `packages/persistence`       | PostgreSQL/pgvector schema, repositories, indexes, and tenant RLS                           | Active in local production                                             |
-| PostgreSQL + pgvector        | Durable records plus hybrid/vector policy search                                            | Internal production network service                                    |
-| Redis + BullMQ               | Cross-process jobs, retries, cancellation, and progress                                     | Internal production network service                                    |
-| MinIO                        | Local S3-compatible immutable source-document storage                                       | Active in local production; demo uses memory storage                   |
-| Ollama                       | Free local structured generation and embeddings                                             | Qwen3 + EmbeddingGemma by default; model names are configurable        |
-| OCR service                  | Native PDF text extraction and Tesseract fallback                                           | PyMuPDF + Tesseract, internal production network service               |
+| Component                    | Purpose                                                                                            | Current runtime status                                                 |
+| ---------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `apps/web`                   | Next.js review console for cases, documents, evidence, findings, corrections, and decisions        | Used by both demo and local production                                 |
+| `apps/api`                   | Authoritative NestJS API enforcing validation, tenant scope, and business invariants               | Memory-backed in demo; PostgreSQL-backed in local production           |
+| `apps/worker`                | Consumes BullMQ jobs and runs document processing plus LangGraph                                   | Deterministic simulator in demo; durable consumer in local production  |
+| `apps/mcp`                   | Read-only agent interface over the API                                                             | Optional; not started by Compose                                       |
+| `packages/contracts`         | Shared Zod schemas, identifiers, and API/domain types                                              | Used across applications                                               |
+| `packages/config`            | Validates environment variables and provider selections                                            | Used at startup                                                        |
+| `packages/domain`            | Versioned domain packs and safe deterministic rule DSL                                             | Used by the workflow and demo data                                     |
+| `packages/providers`         | Vendor-neutral ports plus deterministic, HTTP, S3, pgvector, and BullMQ adapters                   | Selected by environment in both runtime profiles                       |
+| `packages/document-pipeline` | File validation, extraction/OCR strategy, structured facts, confidence, and provenance             | Implemented and tested as a package                                    |
+| `packages/retrieval`         | Tenant/version/date-scoped policy retrieval for grounded decisions                                 | Implemented and tested as a package                                    |
+| `packages/workflow`          | LangGraph state machine, retries, checkpoints, review pause, and resume                            | Memory checkpoints in demo; PostgreSQL checkpoints in local production |
+| `packages/persistence`       | PostgreSQL/pgvector schema, repositories, indexes, and tenant RLS                                  | Active in local production                                             |
+| PostgreSQL + pgvector        | Durable records plus hybrid/vector policy search                                                   | Internal production network service                                    |
+| Redis + BullMQ               | Queue handoff, claim coordination, deduplication keys, and retry scheduling between API and worker | Internal production network service; not a business-data store         |
+| MinIO                        | Local S3-compatible immutable source-document storage                                              | Active in local production; demo uses memory storage                   |
+| Ollama                       | Free local structured generation and embeddings                                                    | Qwen3 + EmbeddingGemma by default; model names are configurable        |
+| OCR service                  | Native PDF text extraction and Tesseract fallback                                                  | PyMuPDF + Tesseract, internal production network service               |
 
 MinIO is not a business dependency. It is the local S3-compatible implementation of the replaceable `ObjectStorageProvider`; AWS S3, Cloudflare R2, another S3-compatible service, the filesystem adapter, or a new Azure Blob adapter can replace it without changing domain rules.
+
+### What Redis does here
+
+Redis is the transport behind BullMQ in local production. After the API has stored a job record in PostgreSQL, it places a small message in Redis containing the database job ID, tenant ID, case ID, and idempotency key. BullMQ lets one worker claim that message, limits the worker to two concurrent cases, attempts each failed job execution up to three times in total with exponential backoff, and prevents the same job ID from being enqueued twice. Completed queue entries are retained only as a bounded operational history, and Redis persistence uses append-only files on a Docker volume so an API or worker restart does not silently empty the queue.
+
+Redis is **not** the source of truth for case progress and is not used as a general cache. PostgreSQL stores cases, document metadata, durable job status/progress, audit events, workflow checkpoints, and pgvector policy chunks. MinIO stores the uploaded file bytes. Ollama runs generation and embeddings. If Redis is unavailable, new processing work cannot be handed to a worker, but already persisted cases and documents remain in PostgreSQL and MinIO.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for system boundaries and [AGENTS.md](AGENTS.md) for contributor guidance.
 

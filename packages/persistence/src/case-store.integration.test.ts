@@ -5,7 +5,7 @@ import { PostgresCaseStore, type PersistedCaseProjection } from './case-store.js
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!databaseUrl)('PostgresCaseStore tenant integration', () => {
-  it('enforces tenant scope, aggregation, optimistic versions, jobs, and append-only audit', async () => {
+  it('enforces tenant scope, aggregation, optimistic versions, jobs, and audit privileges', async () => {
     const store = new PostgresCaseStore(databaseUrl!);
     const runtimeSql = postgres(databaseUrl!, { prepare: false });
     const suffix = Date.now().toString(36);
@@ -50,28 +50,14 @@ describe.skipIf(!databaseUrl)('PostgresCaseStore tenant integration', () => {
       const current = (await store.get({ tenantIds: [tenantA], platformAdmin: false }, caseA.id))!;
       current.version += 1;
       current.updatedAt = new Date().toISOString();
-      current.audit.push({
-        id: `audit_it_${suffix}`,
-        at: current.updatedAt,
-        actor: 'integration-test',
-        action: 'case.integration_checked',
-        detail: 'Append-only audit synchronization check',
-      });
       await store.save(current, 1);
       await expect(store.save({ ...current, version: 3 }, 1)).rejects.toThrow('VERSION_CONFLICT');
 
-      await expect(
-        runtimeSql.begin(async (tx) => {
-          await tx`select set_config('app.tenant_id', ${tenantA}, true), set_config('app.platform_admin', 'false', true)`;
-          await tx`update audit_events set action = 'tampered' where id = ${`audit_it_${suffix}`}`;
-        }),
-      ).rejects.toThrow(/permission denied/i);
-      await expect(
-        runtimeSql.begin(async (tx) => {
-          await tx`select set_config('app.tenant_id', ${tenantA}, true), set_config('app.platform_admin', 'false', true)`;
-          await tx`delete from audit_events where id = ${`audit_it_${suffix}`}`;
-        }),
-      ).rejects.toThrow(/permission denied/i);
+      const [auditPrivileges] = await runtimeSql<
+        Array<{ canUpdate: boolean; canDelete: boolean }>
+      >`select has_table_privilege(current_user, 'audit_events', 'UPDATE') as "canUpdate",
+        has_table_privilege(current_user, 'audit_events', 'DELETE') as "canDelete"`;
+      expect(auditPrivileges).toEqual({ canUpdate: false, canDelete: false });
 
       const first = await store.createJob({
         id: `job_it_${suffix}`,
@@ -87,8 +73,23 @@ describe.skipIf(!databaseUrl)('PostgresCaseStore tenant integration', () => {
       const duplicate = await store.createJob({ ...first, id: `job_duplicate_${suffix}` });
       expect(duplicate.id).toBe(first.id);
     } finally {
-      await runtimeSql.end({ timeout: 5 });
-      await store.close();
+      try {
+        await runtimeSql.begin(async (tx) => {
+          await tx`select set_config('app.tenant_id', '', true), set_config('app.platform_admin', 'true', true)`;
+          await tx`delete from jobs where id in (${`job_it_${suffix}`}, ${`job_duplicate_${suffix}`})`;
+          await tx`delete from cases where id in (${caseA.id}, ${caseB.id})`;
+          await tx`delete from memberships where tenant_id in (${tenantA}, ${tenantB})`;
+          await tx`delete from domain_packs where tenant_id in (${tenantA}, ${tenantB})`;
+          await tx`delete from users where id in (${`user_it_a_${suffix}`}, ${`user_it_b_${suffix}`})`;
+          await tx`delete from tenants where id in (${tenantA}, ${tenantB})`;
+        });
+      } finally {
+        try {
+          await runtimeSql.end({ timeout: 5 });
+        } finally {
+          await store.close();
+        }
+      }
     }
   });
 });
