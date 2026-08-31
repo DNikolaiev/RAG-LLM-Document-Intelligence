@@ -23,8 +23,10 @@ x-app-environment: &app-environment
   MODEL_API_KEY: ollama-local
   MODEL_NAME: ${OLLAMA_CHAT_MODEL:-qwen3:4b}
   MODEL_API_STYLE: ollama-native
+  # Ollama 0.11 can crash while compiling the recursive rule-condition JSON grammar.
+  # Prompted JSON plus strict Zod validation keeps the provider boundary safe and portable.
   MODEL_STRUCTURED_OUTPUT_MODE: json-object
-  MODEL_INCLUDE_SCHEMA_IN_PROMPT: 'false'
+  MODEL_INCLUDE_SCHEMA_IN_PROMPT: 'true'
   EMBEDDING_BASE_URL: http://ollama:11434/v1
   EMBEDDING_API_KEY: ollama-local
   EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-embeddinggemma:300m-qat-q4_0}
@@ -34,7 +36,7 @@ x-app-environment: &app-environment
   SCANNER_PROVIDER: deterministic
 
 x-durable-dependencies: &durable-dependencies
-  postgres-provision:
+  postgres-migrate:
     condition: service_completed_successfully
   redis:
     condition: service_healthy
@@ -76,6 +78,38 @@ services:
       ]
     depends_on:
       postgres: { condition: service_healthy }
+    restart: 'no'
+
+  integration-tests:
+    profiles: ['test']
+    build:
+      context: ..
+      dockerfile: infra/docker/node.Dockerfile
+    environment:
+      TEST_DATABASE_URL: postgresql://caselens_app:${APP_DATABASE_PASSWORD:?Set APP_DATABASE_PASSWORD}@postgres:5432/caselens
+      TEST_ADMIN_DATABASE_URL: postgresql://caselens_owner:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/caselens
+    command: npm run test:integration:database
+    depends_on:
+      postgres-migrate: { condition: service_completed_successfully }
+    restart: 'no'
+
+  postgres-migrate:
+    image: pgvector/pgvector:pg17
+    environment:
+      PGHOST: postgres
+      PGDATABASE: caselens
+      PGUSER: caselens_owner
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - ../packages/persistence/migrations:/migrations:ro
+    command:
+      [
+        'sh',
+        '-c',
+        'psql -v ON_ERROR_STOP=1 -f /migrations/0001_job_lifecycle_events.sql -f /migrations/0002_policy_library.sql',
+      ]
+    depends_on:
+      postgres-provision: { condition: service_completed_successfully }
     restart: 'no'
 
   redis:
@@ -130,6 +164,8 @@ services:
 
   ollama:
     image: ollama/ollama:0.11.10
+    environment:
+      OLLAMA_CONTEXT_LENGTH: '8192'
     volumes: ['production-ollama-data:/root/.ollama']
     healthcheck:
       test: ['CMD', 'ollama', 'list']

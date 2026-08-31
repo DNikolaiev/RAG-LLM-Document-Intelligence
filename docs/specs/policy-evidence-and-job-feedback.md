@@ -69,4 +69,3 @@ sequenceDiagram
 ## Job visibility
 
 `jobs.enqueued_by_user_id` and every `job_events.actor_user_id` are authoritative. Tenant users query by both tenant and enqueuing user. The platform administrator uses the aggregate scope. User-facing errors contain safe codes and guidance; provider diagnostics remain administrator-only.
-

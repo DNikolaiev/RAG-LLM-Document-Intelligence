@@ -84,6 +84,41 @@ describe('CaseLens API', () => {
     expect(response.body).toMatchObject({ code: 'MIME_SIGNATURE_MISMATCH' });
   });
 
+  it('streams an uploaded original with tenant checks and byte-range support', async () => {
+    const createdCase = await request(app.getHttpServer())
+      .post('/v1/cases')
+      .set('idempotency-key', 'source-content-case-e2e')
+      .send({
+        subjectName: 'Source Content Test GmbH',
+        domainPackId: 'pharmacy-supplier',
+      })
+      .expect(201);
+    const upload = await request(app.getHttpServer())
+      .post(`/v1/cases/${createdCase.body.id}/documents`)
+      .set('idempotency-key', 'source-content-e2e')
+      .attach('file', Buffer.from('CaseLens source content'), {
+        filename: 'source-evidence.txt',
+        contentType: 'text/plain',
+      })
+      .expect(201);
+
+    const path = `/v1/cases/${createdCase.body.id}/documents/${upload.body.id}/content`;
+    const full = await request(app.getHttpServer()).get(path).expect(200);
+    expect(full.headers['content-type']).toMatch(/^text\/plain/);
+    expect(full.headers['content-disposition']).toContain('inline; filename="source-evidence.txt"');
+    expect(full.headers['accept-ranges']).toBe('bytes');
+    expect(full.text).toBe('CaseLens source content');
+
+    const partial = await request(app.getHttpServer())
+      .get(path)
+      .set('range', 'bytes=0-7')
+      .expect(206);
+    expect(partial.headers['content-range']).toBe('bytes 0-7/23');
+    expect(partial.text).toBe('CaseLens');
+
+    await request(app.getHttpServer()).get(path).set('x-tenant-id', 'tenant_other').expect(404);
+  });
+
   it('lets reviewers request information but reserves approval for approvers', async () => {
     await request(app.getHttpServer())
       .post('/v1/cases/case_01J67X4Q7B5E6QG4S9CY0F7R2K/decisions')

@@ -30,6 +30,7 @@ export interface CaseDocument {
   state: 'verified' | 'warning' | 'missing' | 'processing';
   pages: number;
   kind: string;
+  sourceUrl?: string;
 }
 
 export interface EvidenceAnchor {
@@ -72,6 +73,12 @@ export interface AuditEvent {
   detail: string;
 }
 
+export interface CaseContact {
+  name?: string;
+  role?: string;
+  email?: string;
+}
+
 export interface CaseDetail extends CaseSummary {
   recommendation: 'request_information' | 'approve' | 'reject';
   recommendationReason: string;
@@ -81,6 +88,7 @@ export interface CaseDetail extends CaseSummary {
   findings: Finding[];
   facts: Fact[];
   audit: AuditEvent[];
+  contact?: CaseContact;
   version?: number;
 }
 
@@ -160,6 +168,11 @@ const medSupplyDetail: CaseDetail = {
   recommendationReason:
     'One required certificate is absent and two supplied facts do not satisfy the current qualification policy.',
   domainPack: 'pharmacy-supplier · v1.2.0',
+  contact: {
+    name: 'Dr. Klara Rehm',
+    role: 'Quality and Compliance',
+    email: 'klara.rehm@medisupply.example',
+  },
   documentsList: [
     {
       id: 'questionnaire',
@@ -168,6 +181,7 @@ const medSupplyDetail: CaseDetail = {
       state: 'verified',
       pages: 5,
       kind: 'Questionnaire',
+      sourceUrl: '/demo-documents/01_supplier_questionnaire.pdf',
     },
     {
       id: 'register',
@@ -176,6 +190,7 @@ const medSupplyDetail: CaseDetail = {
       state: 'verified',
       pages: 3,
       kind: 'Legal identity',
+      sourceUrl: '/demo-documents/02_commercial_register_extract.pdf',
     },
     {
       id: 'iso',
@@ -184,6 +199,7 @@ const medSupplyDetail: CaseDetail = {
       state: 'verified',
       pages: 2,
       kind: 'Certification',
+      sourceUrl: '/demo-documents/03_iso_13485_certificate.pdf',
     },
     {
       id: 'insurance',
@@ -192,6 +208,7 @@ const medSupplyDetail: CaseDetail = {
       state: 'warning',
       pages: 2,
       kind: 'Insurance',
+      sourceUrl: '/demo-documents/04_insurance_certificate.pdf',
     },
     {
       id: 'dpa',
@@ -200,6 +217,7 @@ const medSupplyDetail: CaseDetail = {
       state: 'verified',
       pages: 8,
       kind: 'Agreement',
+      sourceUrl: '/demo-documents/05_data_processing_agreement.pdf',
     },
     {
       id: 'contract',
@@ -208,6 +226,7 @@ const medSupplyDetail: CaseDetail = {
       state: 'warning',
       pages: 12,
       kind: 'Contract',
+      sourceUrl: '/demo-documents/06_supply_contract.pdf',
     },
     {
       id: 'gdp',
@@ -398,6 +417,7 @@ interface ApiCaseDetail extends ApiCaseSummary {
   version: number;
   domainPackVersion: string;
   recommendation: 'request_information' | 'approve' | 'reject' | null;
+  contact?: CaseContact;
   documents: Array<{
     id: string;
     name: string;
@@ -539,6 +559,7 @@ function mapApiDetail(item: ApiCaseDetail): CaseDetail {
         ? 'All deterministic policy gates are satisfied and no material exception remains.'
         : `${item.findings.filter((finding) => finding.status === 'open').length} open finding(s) require human review before a final decision.`,
     domainPack: `${item.domain} · v${item.domainPackVersion}`,
+    ...(item.contact ? { contact: item.contact } : {}),
     documentsList: item.documents.map((document) => ({
       id: compactDocumentId(document.id),
       label: document.name,
@@ -551,6 +572,11 @@ function mapApiDetail(item: ApiCaseDetail): CaseDetail {
             : 'warning',
       pages: document.pages,
       kind: document.type.replaceAll('_', ' '),
+      sourceUrl:
+        process.env.APP_MODE === 'demo'
+          ? (demoSourceUrl(compactDocumentId(document.id)) ??
+            `/api/cases/${encodeURIComponent(item.id)}/documents/${encodeURIComponent(document.id)}/content`)
+          : `/api/cases/${encodeURIComponent(item.id)}/documents/${encodeURIComponent(document.id)}/content`,
     })),
     evidence,
     findings: item.findings.map((finding) => {
@@ -601,6 +627,21 @@ function mapApiDetail(item: ApiCaseDetail): CaseDetail {
       }).format(new Date(event.at)),
     })),
   };
+}
+
+function demoSourceUrl(documentId: string): string | undefined {
+  const fixtureByDocument: Record<string, string> = {
+    questionnaire: '01_supplier_questionnaire.pdf',
+    register: '02_commercial_register_extract.pdf',
+    iso: '03_iso_13485_certificate.pdf',
+    insurance: '04_insurance_certificate.pdf',
+    dpa: '05_data_processing_agreement.pdf',
+    contract: '06_supply_contract.pdf',
+    catalog: '11_multilingual_product_catalog.pdf',
+    delivery: '12_rotated_low_contrast_delivery_note.pdf',
+  };
+  const fixture = fixtureByDocument[documentId];
+  return fixture ? `/demo-documents/${encodeURIComponent(fixture)}` : undefined;
 }
 
 async function apiGet<T>(path: string): Promise<T | null> {

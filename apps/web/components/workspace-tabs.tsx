@@ -2,8 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { useState } from 'react';
-
-type WorkspacePane = 'dossier' | 'document' | 'review';
+export type WorkspacePane = 'dossier' | 'document' | 'review';
 
 const panes: Array<{ id: WorkspacePane; label: string }> = [
   { id: 'dossier', label: 'Dossier' },
@@ -15,13 +14,18 @@ export function WorkspaceTabs({
   dossier,
   document,
   review,
+  activePane: controlledPane,
+  onPaneChange,
 }: {
   dossier: ReactNode;
   document: ReactNode;
   review: ReactNode;
+  activePane?: WorkspacePane;
+  onPaneChange?: (pane: WorkspacePane) => void;
 }) {
-  const [activePane, setActivePane] = useState<WorkspacePane>('document');
-
+  const [internalPane, setInternalPane] = useState<WorkspacePane>('document');
+  const activePane = controlledPane ?? internalPane;
+  const changePane = onPaneChange ?? setInternalPane;
   return (
     <section className="workspace-shell" data-active-pane={activePane}>
       <div className="mobile-workspace-tabs" role="tablist" aria-label="Case workspace views">
@@ -32,7 +36,7 @@ export function WorkspaceTabs({
             className="mobile-tab"
             id={`tab-${pane.id}`}
             key={pane.id}
-            onClick={() => setActivePane(pane.id)}
+            onClick={() => changePane(pane.id)}
             role="tab"
             type="button"
           >

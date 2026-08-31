@@ -85,6 +85,8 @@ There are two deliberate runtime implementations:
 
 With `APP_MODE=production`, `apps/worker/src/production-runtime.ts` consumes BullMQ, loads immutable objects from MinIO, performs native extraction with OCR fallback, invokes Ollama for schema-validated extraction/classification/advisory summary, retrieves tenant-scoped policy evidence through pgvector, runs `CaseWorkflowRunner`, and stores workflow/job/case progress in PostgreSQL.
 
+Before compiling the graph, the worker loads active, valid policy rules for the case tenant and persisted domain-pack ID. It validates the stored condition tree by parsing the resulting effective domain pack, then evaluates code-owned and policy-owned rules together. The completed `rule_runs.input_snapshot` records the installed pack version and every active policy/rule version used; later activation never rewrites that historical run.
+
 Long documents are split into page-aware chunks with bounded overlap before extraction. A model response is accepted only after application-side schema validation, and each evidence reference must resolve to the same document and page with an exact normalized quote from the extracted source text. The pinned local Ollama runtime uses its native chat endpoint with thinking disabled and JSON-object output; provider-specific transport choices stay inside the adapter.
 
 Observations with an unknown path, a value that violates the domain field type, or an unsupported citation are quarantined as review warnings. Document classifications are evaluated independently per persisted document and influence required-document rules only after their type, confidence, page, and exact quote have all been validated.

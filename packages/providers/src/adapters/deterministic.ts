@@ -186,7 +186,7 @@ export class MemoryJobQueueProvider implements JobQueueProvider {
     { id: string; type: string; payload: Readonly<Record<string, unknown>>; cancelled: boolean }
   >();
   capabilities(): ProviderCapabilities {
-    return { id: 'memory-queue', features: ['enqueue', 'cancel', 'idempotency'] };
+    return { id: 'memory-queue', features: ['enqueue', 'cancel', 'retry', 'idempotency'] };
   }
   health = health;
   async enqueue(
@@ -204,6 +204,12 @@ export class MemoryJobQueueProvider implements JobQueueProvider {
     const found = [...this.jobs.values()].find((job) => job.id === jobId);
     if (!found) return fail('not_found', `Job not found: ${jobId}`);
     found.cancelled = true;
+    return ok(undefined);
+  }
+  async retry(jobId: string): Promise<ProviderResult<void>> {
+    const found = [...this.jobs.values()].find((job) => job.id === jobId);
+    if (!found) return fail('not_found', `Job not found: ${jobId}`);
+    found.cancelled = false;
     return ok(undefined);
   }
 }

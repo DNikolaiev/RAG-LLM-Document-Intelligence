@@ -132,6 +132,7 @@ export interface JobQueueProvider extends Provider {
     options: { idempotencyKey: string; maxAttempts: number },
   ): Promise<ProviderResult<{ jobId: string; duplicate: boolean }>>;
   cancel(jobId: string): Promise<ProviderResult<void>>;
+  retry(jobId: string): Promise<ProviderResult<void>>;
 }
 export interface VirusScannerProvider extends Provider {
   scan(

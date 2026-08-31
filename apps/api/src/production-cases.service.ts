@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { ulid } from 'ulid';
 import { loadConfig } from '@caselens/config';
 import { TEST_PROFILES, TEST_TENANTS, resolveTestTenant } from '@caselens/contracts';
@@ -56,6 +57,7 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleInit(): Promise<void> {
+    const seededCases = createDemoCases();
     await this.#store.seed(
       TEST_TENANTS,
       TEST_PROFILES.map((profile) => ({
@@ -65,8 +67,64 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
         tenantIds: profile.tenantIds,
         role: profile.role,
       })),
-      createDemoCases(),
+      seededCases,
     );
+    await this.materializeSeedDocuments(seededCases);
+  }
+
+  private async materializeSeedDocuments(cases: readonly DemoCase[]): Promise<void> {
+    const fixtureByDocumentId: Readonly<Record<string, string>> = {
+      doc_questionnaire: 'pharmacy-supplier/01_supplier_questionnaire.pdf',
+      doc_register: 'pharmacy-supplier/02_commercial_register_extract.pdf',
+      doc_iso: 'pharmacy-supplier/03_iso_13485_certificate.pdf',
+      doc_insurance: 'pharmacy-supplier/04_insurance_certificate.pdf',
+      doc_dpa: 'pharmacy-supplier/05_data_processing_agreement.pdf',
+      doc_contract: 'pharmacy-supplier/06_supply_contract.pdf',
+      doc_case_legal_001: 'legal-contract/01_nordstern_distribution_agreement.pdf',
+      doc_case_insurance_001: 'insurance-claim/01_kronenberg_water_damage_claim.pdf',
+      doc_case_manufacturing_001: 'manufacturing-supplier/01_vektor_material_certificate.pdf',
+    };
+
+    for (const item of cases) {
+      const existing = new Set(
+        (
+          await this.#store.listDocuments(
+            { tenantIds: [item.tenantId], platformAdmin: true },
+            item.id,
+          )
+        ).map((document) => document.id),
+      );
+      for (const document of item.documents) {
+        const fixture = fixtureByDocumentId[document.id];
+        if (!fixture || existing.has(document.id)) continue;
+        const source = await readFile(
+          new URL(`../../../fixtures/documents/${fixture}`, import.meta.url),
+        );
+        const sha256 = createHash('sha256').update(source).digest('hex');
+        const originalName = document.fileName ?? fixture.split('/').at(-1)!;
+        const storageKey = `${item.tenantId}/${item.id}/${document.id}/${sha256}-${safeFileName(originalName)}`;
+        const stored = await this.#storage.put(storageKey, source, {
+          tenant: item.tenantId,
+          case: item.id,
+          sha256,
+          seed: 'true',
+        });
+        if (!stored.ok) throw new Error(stored.error.message);
+        await this.#store.recordDocument({
+          id: document.id,
+          tenantId: item.tenantId,
+          caseId: item.id,
+          storageKey,
+          originalName,
+          mediaType: 'application/pdf',
+          sha256,
+          byteSize: source.byteLength,
+          pageCount: document.pages,
+          warning: 'Seeded local production evidence.',
+          processingStatus: document.status === 'needs_review' ? 'needs_review' : 'ready',
+        });
+      }
+    }
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -154,6 +212,39 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     return structuredClone(item) as DemoCase;
   }
 
+  async getDocumentContent(context: RequestContext, caseId: string, documentId: string) {
+    const scope = this.scope(context);
+    const item = await this.#store.get(scope, caseId);
+    if (!item) throw new NotFoundException({ code: 'CASE_NOT_FOUND', message: 'Case not found.' });
+    const document = (await this.#store.listDocuments(scope, caseId)).find(
+      (candidate) => candidate.id === documentId,
+    );
+    if (!document) {
+      throw new NotFoundException({
+        code: 'DOCUMENT_NOT_FOUND',
+        message: 'Document not found.',
+      });
+    }
+    const source = await this.#storage.get(document.storageKey);
+    if (!source.ok) {
+      if (source.error.code === 'not_found') {
+        throw new NotFoundException({
+          code: 'DOCUMENT_CONTENT_NOT_FOUND',
+          message: 'The original document content is not available.',
+        });
+      }
+      throw new ServiceUnavailableException({
+        code: 'STORAGE_UNAVAILABLE',
+        message: source.error.message,
+      });
+    }
+    return {
+      body: source.value,
+      mediaType: document.mediaType,
+      fileName: document.originalName,
+    };
+  }
+
   async correctFact(
     context: RequestContext,
     caseId: string,
@@ -207,13 +298,20 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     this.requireRole(context, ['intake', 'reviewer', 'admin']);
     const item = await this.mutable(context, caseId);
     const timestamp = new Date().toISOString();
-    const durableKey = `${context.tenantId}:${caseId}:process:${idempotencyKey}`;
+    const durableKey = `${context.tenantId}:${context.userId}:${caseId}:process:${idempotencyKey}`;
     const job = await this.#store.createJob({
       id: stableId('job', durableKey),
       tenantId: item.tenantId,
       caseId,
+      targetType: 'case',
+      targetId: caseId,
+      enqueuedByUserId: context.userId,
+      correlationId: context.correlationId,
+      queueJobId: null,
       status: 'queued',
       progress: 0,
+      attempts: 0,
+      errorCode: null,
       kind: 'process_case',
       idempotencyKey: durableKey,
       createdAt: timestamp,
@@ -225,12 +323,30 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
       { idempotencyKey: job.id, maxAttempts: 3 },
     );
     if (!enqueued.ok) {
-      await this.#store.updateJob(job.id, item.tenantId, { status: 'failed', progress: 0 });
+      await this.#store.updateJob(job.id, item.tenantId, {
+        status: 'failed',
+        progress: 0,
+        errorCode: 'QUEUE_UNAVAILABLE',
+        eventType: 'job.failed',
+        stage: 'queue',
+        message: 'The request could not be added to the processing queue.',
+      });
       throw new ServiceUnavailableException({
         code: 'QUEUE_UNAVAILABLE',
         message: enqueued.error.message,
       });
     }
+    await this.#store.updateJob(job.id, item.tenantId, {
+      status: 'queued',
+      progress: 0,
+      queueJobId: enqueued.value.jobId,
+      eventType: enqueued.value.duplicate ? 'queue.duplicate_suppressed' : 'queue.enqueued',
+      stage: 'queue',
+      message: enqueued.value.duplicate
+        ? 'This request was already queued; the existing job will be used.'
+        : 'Request queued and waiting for a worker.',
+      actorUserId: context.userId,
+    });
     if (!enqueued.value.duplicate) {
       const priorVersion = item.version;
       this.touch(item, context, 'processing.queued', `Processing job ${job.id} queued`);
@@ -316,6 +432,101 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     return job;
   }
 
+  async listJobs(context: RequestContext, limit = 30) {
+    const jobs = await this.#store.listJobs(this.scope(context), limit);
+    const events = await this.#store.listJobEvents(this.scope(context), undefined, limit * 4);
+    const latestByJob = new Map<string, (typeof events)[number]>();
+    for (const event of events)
+      if (!latestByJob.has(event.jobId)) latestByJob.set(event.jobId, event);
+    return {
+      items: jobs.map((job) => ({ ...job, latestEvent: latestByJob.get(job.id) ?? null })),
+      nextCursor: null,
+    };
+  }
+
+  async getJobEvents(context: RequestContext, id: string) {
+    await this.getJob(context, id);
+    return {
+      items: await this.#store.listJobEvents(this.scope(context), id, 100),
+      nextCursor: null,
+    };
+  }
+
+  async markJobEventsRead(context: RequestContext, eventIds: readonly string[]) {
+    await this.#store.markJobEventsRead(this.scope(context), eventIds);
+    return { updated: eventIds.length };
+  }
+
+  async cancelJob(context: RequestContext, id: string) {
+    const job = await this.#store.getJob(this.scope(context), id);
+    if (!job) throw new NotFoundException({ code: 'JOB_NOT_FOUND', message: 'Job not found.' });
+    if (job.status !== 'queued') {
+      throw new ConflictException({
+        code: 'JOB_NOT_CANCELLABLE',
+        message: 'Only a queued request can be cancelled.',
+      });
+    }
+    await this.#store.updateJob(job.id, job.tenantId, {
+      status: job.status,
+      progress: job.progress,
+      eventType: 'job.cancel_requested',
+      stage: 'queue',
+      message: 'Cancellation requested.',
+      actorUserId: context.userId,
+    });
+    const removed = await this.#queue.cancel(job.queueJobId ?? job.id);
+    if (!removed.ok) {
+      throw new ConflictException({
+        code: 'JOB_NOT_CANCELLABLE',
+        message: 'The worker has already claimed this request.',
+      });
+    }
+    await this.#store.updateJob(job.id, job.tenantId, {
+      status: 'cancelled',
+      progress: job.progress,
+      eventType: 'job.cancelled',
+      stage: 'queue',
+      message: 'Request cancelled before processing began.',
+      actorUserId: context.userId,
+    });
+    await this.#store.updateJob(job.id, job.tenantId, {
+      status: 'cancelled',
+      progress: job.progress,
+      eventType: 'queue.record_removed',
+      stage: 'queue',
+      message: 'Queue record removed after cancellation.',
+    });
+    return this.#store.getJob(this.scope(context), id);
+  }
+
+  async retryJob(context: RequestContext, id: string) {
+    const job = await this.#store.getJob(this.scope(context), id);
+    if (!job) throw new NotFoundException({ code: 'JOB_NOT_FOUND', message: 'Job not found.' });
+    if (job.status !== 'failed') {
+      throw new ConflictException({
+        code: 'JOB_NOT_RETRYABLE',
+        message: 'Only a failed request can be retried.',
+      });
+    }
+    const retried = await this.#queue.retry(job.queueJobId ?? job.id);
+    if (!retried.ok) {
+      throw new ConflictException({
+        code: 'JOB_NOT_RETRYABLE',
+        message: 'The failed queue record is no longer available for retry.',
+      });
+    }
+    await this.#store.updateJob(job.id, job.tenantId, {
+      status: 'queued',
+      progress: 0,
+      errorCode: null,
+      eventType: 'job.retry_scheduled',
+      stage: 'queue',
+      message: 'Retry scheduled and waiting for a worker.',
+      actorUserId: context.userId,
+    });
+    return this.#store.getJob(this.scope(context), id);
+  }
+
   async reEvaluate(context: RequestContext, caseId: string, idempotencyKey: string) {
     this.requireRole(context, ['reviewer', 'approver', 'admin']);
     const item = await this.mutable(context, caseId);
@@ -374,7 +585,7 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     const priorVersion = item.version;
     this.touch(item, context, 'decision.recorded', `${input.outcome}: ${input.reason}`);
     await this.save(item, priorVersion);
-    return structuredClone(item.decision);
+    return { ...structuredClone(item.decision!), caseVersion: item.version };
   }
 
   async export(context: RequestContext, caseId: string) {
@@ -406,7 +617,11 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
   private scope(context: RequestContext | string): AccessScope {
     return typeof context === 'string'
       ? { tenantIds: [context], platformAdmin: false }
-      : { tenantIds: context.tenantIds, platformAdmin: context.platformAdmin };
+      : {
+          tenantIds: context.tenantIds,
+          platformAdmin: context.platformAdmin,
+          userId: context.userId,
+        };
   }
 
   private summary(item: PersistedCaseProjection) {

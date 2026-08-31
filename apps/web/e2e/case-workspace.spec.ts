@@ -59,18 +59,18 @@ test.describe('case review workspace', () => {
       await page.getByRole('tab', { name: 'Document', exact: true }).click();
     } else {
       await expect(page.getByRole('navigation', { name: 'Case dossier' })).toBeVisible();
-      await expect(page.getByRole('article')).toBeVisible();
+      await expect(page.getByText('Original source')).toBeVisible();
       await expect(page.getByRole('complementary', { name: 'Case review' })).toBeVisible();
     }
 
-    const zoom = page.locator('output');
-    await expect(zoom).toHaveText('92%');
+    const zoom = page.getByRole('group', { name: 'Document zoom' }).locator('output');
+    await expect(zoom).toHaveText('100%');
     await page.getByRole('button', { name: 'Zoom in' }).click();
-    await expect(zoom).toHaveText('102%');
+    await expect(zoom).toHaveText('110%');
     await page.getByRole('button', { name: 'Zoom out' }).click();
-    await expect(zoom).toHaveText('92%');
+    await expect(zoom).toHaveText('100%');
 
-    const pdfLink = page.getByRole('link', { name: 'Open verified PDF' });
+    const pdfLink = page.getByRole('link', { name: 'Open original in a new tab' });
     await expect(pdfLink).toBeVisible();
     const pdfHref = await pdfLink.getAttribute('href');
     expect(pdfHref).toBeTruthy();
@@ -127,6 +127,10 @@ test.describe('case review workspace', () => {
 
   test('exercises findings, guarded decisions, and export', async ({ page }) => {
     const failures = monitorRuntimeFailures(page);
+    const profileResponse = await page.request.post('/api/session/profile', {
+      data: { profileId: 'profile_mara_stein' },
+    });
+    expect(profileResponse.ok()).toBe(true);
     await openReviewCase(page);
     await selectWorkspaceTabIfVisible(page, 'Review');
 
@@ -137,17 +141,28 @@ test.describe('case review workspace', () => {
     const requestInformation = review.getByRole('button', { name: 'Request information' });
     const recordDecision = review.getByRole('button', { name: 'Record decision' });
     const exportButton = review.getByRole('button', { name: 'Export' });
-    await expect(requestInformation).toBeEnabled();
     await expect(recordDecision).toBeDisabled();
     await expect(exportButton).toBeEnabled();
 
+    const acceptFollowUp = review.getByRole('button', { name: 'Add to follow-up' }).first();
+    if (await acceptFollowUp.isVisible()) await acceptFollowUp.click();
+    await expect(review.getByText('Included in follow-up', { exact: true }).first()).toBeVisible();
+    await expect(requestInformation).toBeEnabled();
+    await expect(requestInformation.getByLabel(/\d+ selected/)).toBeVisible();
     await requestInformation.click();
-    await expect(review.getByRole('status')).toHaveText('Information request recorded.');
-
-    const acceptFollowUp = review.getByRole('button', { name: 'Accept follow-up' }).first();
-    await expect(acceptFollowUp).toBeVisible();
-    await acceptFollowUp.click();
-    await expect(review.getByText('accepted', { exact: true }).first()).toBeVisible();
+    const followUpDialog = page.getByRole('dialog', { name: 'Review the information request' });
+    await expect(followUpDialog).toBeVisible();
+    await expect(followUpDialog.getByLabel(/Message covering \d+ follow-up points?/)).toContainText(
+      'Requested action:',
+    );
+    await expect(followUpDialog.getByLabel(/Message covering \d+ follow-up points?/)).toContainText(
+      'Kind regards,\nMara Stein',
+    );
+    await expect(
+      followUpDialog.getByRole('button', { name: 'Record and open email' }),
+    ).toBeEnabled();
+    await followUpDialog.getByRole('button', { name: 'Close information request' }).click();
+    await expect(followUpDialog).toBeHidden();
 
     const markResolved = review.getByRole('button', { name: 'Mark resolved' });
     while ((await markResolved.count()) > 0) {
@@ -185,6 +200,12 @@ test.describe('case review workspace', () => {
     await factsTab.click();
     await expect(factsTab).toHaveAttribute('aria-selected', 'true');
     await expect(review.getByRole('heading', { name: 'Material facts' })).toBeVisible();
+
+    const openEvidence = review.getByRole('link', { name: 'Open in document' }).first();
+    await openEvidence.click();
+    await expect(page).toHaveURL(/[?&]document=[^&]+.*[?&]evidence=[^&]+.*[?&]page=\d+/);
+    await expect(page.locator('.evidence-locator')).toBeVisible();
+    await selectWorkspaceTabIfVisible(page, 'Review');
 
     await review.getByRole('button', { name: 'Correct value' }).first().click();
     let dialog = page.getByRole('dialog');

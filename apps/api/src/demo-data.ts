@@ -54,6 +54,7 @@ export interface DemoCase {
   updatedAt: string;
   dueAt: string;
   assignedTo: string;
+  contact?: { name?: string; role?: string; email?: string };
   version: number;
   documents: DemoDocument[];
   facts: DemoFact[];
@@ -80,6 +81,11 @@ export function createDemoCases(): DemoCase[] {
       updatedAt: now,
       dueAt: '2026-08-29T16:00:00.000Z',
       assignedTo: 'Dmytro Nikolaiev',
+      contact: {
+        name: 'Dr. Klara Rehm',
+        role: 'Quality and Compliance',
+        email: 'klara.rehm@medisupply.example',
+      },
       version: 3,
       documents: [
         {
@@ -317,6 +323,11 @@ export function createDemoCases(): DemoCase[] {
       subjectName: 'Nordstern Distribution Agreement',
       domain: 'Commercial contract review',
       assignee: 'Jonas Feld',
+      contact: {
+        name: 'Elena Fischer',
+        role: 'Contract Operations',
+        email: 'elena.fischer@nordstern.example',
+      },
       findingTitle: 'Termination notice period is inconsistent',
       findingDetail:
         'The master agreement and schedule specify different termination notice periods.',
@@ -329,6 +340,11 @@ export function createDemoCases(): DemoCase[] {
       subjectName: 'Kronenberg Water Damage Claim',
       domain: 'Insurance claims assessment',
       assignee: 'Amara Okafor',
+      contact: {
+        name: 'Patrick Weber',
+        role: 'Policyholder',
+        email: 'patrick.weber@kronenberg.example',
+      },
       findingTitle: 'Repair estimate exceeds automatic approval threshold',
       findingDetail:
         'The submitted repair estimate requires senior review under the active claims policy.',
@@ -341,6 +357,11 @@ export function createDemoCases(): DemoCase[] {
       subjectName: 'Vektor Precision Components',
       domain: 'Supplier quality assurance',
       assignee: 'Mateo Klein',
+      contact: {
+        name: 'Sofia Hartmann',
+        role: 'Supplier Quality',
+        email: 'sofia.hartmann@vektor.example',
+      },
       findingTitle: 'Material certificate is missing heat traceability',
       findingDetail:
         'The certificate does not connect the delivered batch to a verified material heat number.',
@@ -356,6 +377,7 @@ function createDomainCase(input: {
   subjectName: string;
   domain: string;
   assignee: string;
+  contact?: DemoCase['contact'];
   findingTitle: string;
   findingDetail: string;
   evidenceQuote: string;
@@ -374,6 +396,7 @@ function createDomainCase(input: {
     updatedAt: '2026-08-27T07:30:00.000Z',
     dueAt: '2026-09-03T16:00:00.000Z',
     assignedTo: input.assignee,
+    ...(input.contact ? { contact: input.contact } : {}),
     version: 1,
     documents: [
       {

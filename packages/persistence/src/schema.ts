@@ -22,6 +22,8 @@ const vector = customType<{ data: number[]; driverData: string }>({
   },
 });
 
+const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' });
+
 const auditColumns = {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -247,13 +249,43 @@ export const policyDocuments = pgTable(
       .references(() => domainPacks.id),
     title: text('title').notNull(),
     policyVersion: text('policy_version').notNull(),
+    collectionId: text('collection_id').notNull(),
+    storageKey: text('storage_key').notNull(),
+    originalName: text('original_name').notNull(),
+    mediaType: text('media_type').notNull(),
+    sha256: text('sha256').notNull(),
+    byteSize: integer('byte_size').notNull(),
+    pageCount: integer('page_count'),
+    language: text('language').notNull().default('und'),
+    status: text('status').notNull().default('draft'),
     validFrom: timestamp('valid_from', { withTimezone: true }).notNull(),
     validTo: timestamp('valid_to', { withTimezone: true }),
     revoked: boolean('revoked').notNull().default(false),
+    uploadedByUserId: text('uploaded_by_user_id')
+      .notNull()
+      .references(() => users.id),
+    approvedByUserId: text('approved_by_user_id').references(() => users.id),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    activatedAt: timestamp('activated_at', { withTimezone: true }),
+    processingError: jsonb('processing_error'),
+    extractionMetadata: jsonb('extraction_metadata').notNull().default({}),
     ...auditColumns,
   },
   (table) => [
     index('policy_scope_validity_idx').on(table.tenantId, table.domainPackId, table.validFrom),
+    uniqueIndex('policy_tenant_pack_collection_title_version_uq').on(
+      table.tenantId,
+      table.domainPackId,
+      table.collectionId,
+      table.title,
+      table.policyVersion,
+    ),
+    index('policy_tenant_status_updated_idx').on(table.tenantId, table.status, table.updatedAt),
+    index('policy_tenant_hash_idx').on(table.tenantId, table.sha256),
+    index('policy_domain_pack_idx').on(table.domainPackId),
+    index('policy_uploaded_by_idx').on(table.uploadedByUserId),
+    index('policy_approved_by_idx').on(table.approvedByUserId),
   ],
 );
 
@@ -268,15 +300,184 @@ export const policyChunks = pgTable(
       .notNull()
       .references(() => policyDocuments.id),
     ordinal: integer('ordinal').notNull(),
+    pageFrom: integer('page_from').notNull(),
+    pageTo: integer('page_to').notNull(),
     heading: text('heading'),
+    headingPath: jsonb('heading_path').notNull().default([]),
     content: text('content').notNull(),
+    sourceQuote: text('source_quote').notNull(),
     embedding: vector('embedding', { dimensions: 768 }),
+    searchVector: tsvector('search_vector'),
+    embeddingProvider: text('embedding_provider'),
+    embeddingModel: text('embedding_model'),
+    tags: text('tags').array().notNull().default([]),
     metadata: jsonb('metadata').notNull().default({}),
     ...auditColumns,
   },
   (table) => [
     uniqueIndex('policy_chunk_ordinal_uq').on(table.policyDocumentId, table.ordinal),
     index('policy_chunk_scope_idx').on(table.tenantId, table.policyDocumentId),
+    index('policy_chunk_document_page_idx').on(
+      table.policyDocumentId,
+      table.pageFrom,
+      table.pageTo,
+    ),
+  ],
+);
+
+export const policyDocumentPages = pgTable(
+  'policy_document_pages',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    policyDocumentId: text('policy_document_id')
+      .notNull()
+      .references(() => policyDocuments.id),
+    pageNumber: integer('page_number').notNull(),
+    extractionMethod: text('extraction_method').notNull(),
+    language: text('language'),
+    rotationDegrees: integer('rotation_degrees').notNull().default(0),
+    text: text('text').notNull(),
+    quality: numeric('quality', { precision: 5, scale: 4 }).notNull(),
+    blocks: jsonb('blocks').notNull().default([]),
+    warnings: jsonb('warnings').notNull().default([]),
+    ...auditColumns,
+  },
+  (table) => [
+    uniqueIndex('policy_document_page_number_uq').on(table.policyDocumentId, table.pageNumber),
+    index('policy_document_page_scope_idx').on(table.tenantId, table.policyDocumentId),
+  ],
+);
+
+export const policyRuleProposals = pgTable(
+  'policy_rule_proposals',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    policyDocumentId: text('policy_document_id')
+      .notNull()
+      .references(() => policyDocuments.id),
+    status: text('status').notNull(),
+    title: text('title').notNull(),
+    description: text('description').notNull(),
+    severity: text('severity').notNull(),
+    condition: jsonb('condition').notNull(),
+    policyTags: text('policy_tags').array().notNull().default([]),
+    confidence: numeric('confidence', { precision: 5, scale: 4 }).notNull(),
+    providerId: text('provider_id').notNull(),
+    model: text('model').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    validationIssues: jsonb('validation_issues').notNull().default([]),
+    proposedByUserId: text('proposed_by_user_id').references(() => users.id),
+    reviewedByUserId: text('reviewed_by_user_id').references(() => users.id),
+    reviewReason: text('review_reason'),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    ...auditColumns,
+  },
+  (table) => [
+    index('policy_rule_proposal_document_status_idx').on(
+      table.policyDocumentId,
+      table.status,
+      table.updatedAt,
+    ),
+    index('policy_rule_proposal_tenant_status_idx').on(table.tenantId, table.status),
+    index('policy_rule_proposal_proposer_idx').on(table.proposedByUserId),
+    index('policy_rule_proposal_reviewer_idx').on(table.reviewedByUserId),
+  ],
+);
+
+export const policyRuleProposalCitations = pgTable(
+  'policy_rule_proposal_citations',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    proposalId: text('proposal_id')
+      .notNull()
+      .references(() => policyRuleProposals.id),
+    policyChunkId: text('policy_chunk_id').references(() => policyChunks.id),
+    pageNumber: integer('page_number').notNull(),
+    quote: text('quote').notNull(),
+    ...auditColumns,
+  },
+  (table) => [
+    index('policy_rule_citation_proposal_idx').on(table.proposalId),
+    index('policy_rule_citation_chunk_idx').on(table.policyChunkId),
+  ],
+);
+
+export const policyRuleProposalTests = pgTable(
+  'policy_rule_proposal_tests',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    proposalId: text('proposal_id')
+      .notNull()
+      .references(() => policyRuleProposals.id),
+    kind: text('kind').notNull(),
+    name: text('name').notNull(),
+    input: jsonb('input').notNull(),
+    expected: boolean('expected').notNull(),
+    actual: boolean('actual'),
+    passed: boolean('passed'),
+    executedAt: timestamp('executed_at', { withTimezone: true }),
+    ...auditColumns,
+  },
+  (table) => [
+    uniqueIndex('policy_rule_test_proposal_kind_name_uq').on(
+      table.proposalId,
+      table.kind,
+      table.name,
+    ),
+    index('policy_rule_test_proposal_idx').on(table.proposalId),
+  ],
+);
+
+export const policyRules = pgTable(
+  'policy_rules',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    domainPackId: text('domain_pack_id')
+      .notNull()
+      .references(() => domainPacks.id),
+    policyDocumentId: text('policy_document_id')
+      .notNull()
+      .references(() => policyDocuments.id),
+    proposalId: text('proposal_id')
+      .notNull()
+      .references(() => policyRuleProposals.id),
+    ruleKey: text('rule_key').notNull(),
+    ruleVersion: integer('rule_version').notNull(),
+    status: text('status').notNull(),
+    title: text('title').notNull(),
+    description: text('description').notNull(),
+    severity: text('severity').notNull(),
+    condition: jsonb('condition').notNull(),
+    policyTags: text('policy_tags').array().notNull().default([]),
+    priority: integer('priority').notNull().default(0),
+    approvedByUserId: text('approved_by_user_id')
+      .notNull()
+      .references(() => users.id),
+    activatedAt: timestamp('activated_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    ...auditColumns,
+  },
+  (table) => [
+    uniqueIndex('policy_rule_key_version_uq').on(table.tenantId, table.ruleKey, table.ruleVersion),
+    index('policy_rule_active_scope_idx').on(table.tenantId, table.domainPackId, table.status),
+    index('policy_rule_document_idx').on(table.policyDocumentId),
+    index('policy_rule_proposal_idx').on(table.proposalId),
+    index('policy_rule_approver_idx').on(table.approvedByUserId),
   ],
 );
 
@@ -359,6 +560,8 @@ export const jobs = pgTable(
       .notNull()
       .references(() => tenants.id),
     caseId: text('case_id').references(() => cases.id),
+    targetType: text('target_type').notNull(),
+    targetId: text('target_id').notNull(),
     enqueuedByUserId: text('enqueued_by_user_id')
       .notNull()
       .references(() => users.id),
@@ -376,6 +579,7 @@ export const jobs = pgTable(
   (table) => [
     uniqueIndex('job_tenant_idempotency_uq').on(table.tenantId, table.idempotencyKey),
     index('job_case_idx').on(table.caseId),
+    index('job_tenant_target_idx').on(table.tenantId, table.targetType, table.targetId),
     index('job_enqueuer_updated_idx').on(table.enqueuedByUserId, table.updatedAt),
     index('job_tenant_enqueuer_updated_idx').on(
       table.tenantId,
@@ -408,6 +612,7 @@ export const jobEvents = pgTable(
     message: text('message').notNull(),
     metadata: jsonb('metadata').notNull().default({}),
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    readAt: timestamp('read_at', { withTimezone: true }),
   },
   (table) => [
     uniqueIndex('job_event_job_sequence_uq').on(table.jobId, table.sequence),

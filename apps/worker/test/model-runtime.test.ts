@@ -40,7 +40,12 @@ describe('worker model provider composition', () => {
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe('http://ollama:11434/api/chat');
     const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
-    expect(body).toMatchObject({ format: 'json', stream: false, think: false });
+    expect(body).toMatchObject({
+      format: 'json',
+      stream: false,
+      think: false,
+      options: { temperature: 0, num_predict: 2_048 },
+    });
     expect(body.messages[1].content).not.toContain('Return JSON matching this schema');
   });
 

@@ -11,6 +11,8 @@ Next.js review console
 NestJS application API <---- read-only MCP server
         |
         +---- case and document services
+        +---- policy upload, proposal review, and activation
+        +---- durable actor-scoped job/event feed
         +---- versioned domain packs and deterministic rules
         +---- provider registry and typed ports
         |
@@ -26,9 +28,21 @@ NestJS workflow worker
         +---- human-review checkpoint
 ```
 
+The browser never talks directly to PostgreSQL, Redis, MinIO, or Ollama. Next.js forwards the selected local test identity to NestJS; NestJS authorizes every case, policy, source-file, and job request. Source bytes are streamed only after authorization.
+
+## Durable processing boundaries
+
+Case and policy uploads follow the same delivery rule: write durable business state and a PostgreSQL job record before placing the small work reference in BullMQ. Redis coordinates claims, locks, retries, and backoff; it is not the job-history database. The worker appends progress to `job_events`, and the header feed filters those rows to the exact enqueueing user. Only the platform administrator receives an aggregate view.
+
+Policy processing is a separate worker route: immutable PDF → page extraction/OCR → clause chunks → embeddings → pgvector → cited rule proposals. Proposals cannot execute until an administrator reviews their original clause, validation result, and four deterministic fixture classes. Activation writes immutable `policy_rules`; future case runs load the active rules for the tenant/domain/date and pin their identifiers and versions in `rule_runs.input_snapshot`.
+
+Case review is evidence-first. The original PDF is the primary surface. Facts and findings carry a document, page, and quotation; selecting one creates a deep link and navigates to the matching source/page/highlight. Extracted text is explicitly labelled as a secondary aid.
+
 Production adapters are defined for PostgreSQL/pgvector, Redis/BullMQ, S3-compatible storage, HTTP OCR, and configurable model APIs. Demo mode binds deterministic in-memory adapters so the complete review experience runs without credentials.
 
 The production-local worker consumes BullMQ jobs and runs the LangGraph state machine with PostgreSQL checkpoints, MinIO sources, PyMuPDF/Tesseract extraction, Ollama models, and pgvector retrieval. Demo mode retains the deterministic progress simulator; see [`docs/architecture/langgraph-workflow.md`](docs/architecture/langgraph-workflow.md).
+
+The production-local Compose profile also runs idempotent forward migrations after PostgreSQL provisioning and before API/worker startup, so an existing Docker volume receives job-event and policy-governance schema additions without being deleted.
 
 ## Design boundaries
 

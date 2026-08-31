@@ -1,4 +1,5 @@
-import Link from 'next/link';
+'use client';
+
 import { FileCheck2, FileClock, Files, FileWarning, LoaderCircle, ShieldCheck } from 'lucide-react';
 
 import { DocumentUpload } from '@/components/document-upload';
@@ -8,12 +9,16 @@ export function DossierNav({
   caseId,
   documents,
   selectedDocumentId,
+  onSelectDocument,
 }: {
   caseId: string;
   documents: CaseDocument[];
   selectedDocumentId: string | undefined;
+  onSelectDocument: (documentId: string) => void;
 }) {
   const complete = documents.filter((item) => item.state === 'verified').length;
+  const present = documents.filter((item) => item.state !== 'missing').length;
+  const missing = documents.length - present;
   const stateIcons = {
     verified: FileCheck2,
     warning: FileWarning,
@@ -32,8 +37,8 @@ export function DossierNav({
         {documents.length ? (
           <>
             <span className="dossier-progress-copy">
-              <ShieldCheck aria-hidden="true" size={13} /> {complete} verified · {documents.length}{' '}
-              available
+              <ShieldCheck aria-hidden="true" size={13} /> {complete} verified · {present} present
+              {missing ? ` · ${missing} missing` : ''}
             </span>
             <progress
               value={complete}
@@ -52,10 +57,14 @@ export function DossierNav({
           const StateIcon = stateIcons[document.state];
           return (
             <li key={document.id}>
-              <Link
+              <a
                 aria-current={selectedDocumentId === document.id ? 'page' : undefined}
                 className={`document-link document-${document.state}`}
-                href={`/cases/${caseId}?document=${document.id}`}
+                href={`/cases/${encodeURIComponent(caseId)}?document=${encodeURIComponent(document.id)}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onSelectDocument(document.id);
+                }}
               >
                 <span className="document-index" aria-hidden="true">
                   <StateIcon size={15} />
@@ -67,7 +76,7 @@ export function DossierNav({
                   </small>
                 </span>
                 <span className="document-state" aria-label={document.state} />
-              </Link>
+              </a>
             </li>
           );
         })}

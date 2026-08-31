@@ -120,7 +120,7 @@ export class BullMqQueueProvider implements JobQueueProvider {
         jobId: options.idempotencyKey,
         attempts: options.maxAttempts,
         backoff: { type: 'exponential', delay: 1_000 },
-        removeOnComplete: 1000,
+        removeOnComplete: true,
       });
       return ok({ jobId: job.id ?? options.idempotencyKey, duplicate: false });
     } catch (error) {
@@ -135,6 +135,16 @@ export class BullMqQueueProvider implements JobQueueProvider {
       return ok(undefined);
     } catch (error) {
       return fail('unavailable', 'BullMQ cancellation failed', true, { cause: error });
+    }
+  }
+  async retry(jobId: string): Promise<ProviderResult<void>> {
+    try {
+      const job = await this.#queue.getJob(jobId);
+      if (!job) return fail('not_found', `Job not found: ${jobId}`);
+      await job.retry('failed');
+      return ok(undefined);
+    } catch (error) {
+      return fail('unavailable', 'BullMQ retry failed', true, { cause: error });
     }
   }
 }
@@ -207,13 +217,37 @@ export class PgVectorSearchProvider implements VectorSearchProvider {
         return transaction<
           Array<PolicyChunkRecord & { vector_score: number; lexical_score: number }>
         >`
-        select id, tenant_id as "tenantId", domain_id as "domainId", pack_version as "packVersion", document_id as "documentId", document_version as "documentVersion", collection_id as "collectionId", content as text, embedding::text, valid_from as "validFrom", valid_to as "validTo", revoked_at as "revokedAt", tags,
+        with candidates as (
+          select chunk.id, chunk.tenant_id, pack.domain_key as domain_id,
+            pack.semantic_version as pack_version, document.id as document_id,
+            document.policy_version as document_version, document.collection_id,
+            chunk.content, chunk.embedding, chunk.search_vector, document.valid_from,
+            document.valid_to, case when document.revoked then document.updated_at else null end as revoked_at,
+            chunk.tags
+          from policy_chunks chunk
+          join policy_documents document on document.id = chunk.policy_document_id
+          join domain_packs pack on pack.id = document.domain_pack_id
+          where document.status = 'active' and chunk.embedding is not null
+          union all
+          select id, tenant_id, domain_id, pack_version, document_id, document_version,
+            collection_id, content, embedding, search_vector, valid_from, valid_to, revoked_at, tags
+          from policy_search_chunks
+        )
+        select id, tenant_id as "tenantId", domain_id as "domainId", pack_version as "packVersion",
+          document_id as "documentId", document_version as "documentVersion",
+          collection_id as "collectionId", content as text, embedding::text,
+          valid_from as "validFrom", valid_to as "validTo", revoked_at as "revokedAt", tags,
           greatest(0, 1 - (embedding <=> ${JSON.stringify(query.embedding)}::vector)) as vector_score,
           ts_rank_cd(search_vector, websearch_to_tsquery('simple', ${query.text})) as lexical_score
-        from policy_search_chunks where tenant_id = ${query.scope.tenantId} and domain_id = ${query.scope.domainId} and pack_version = ${query.scope.packVersion}
-          and revoked_at is null and valid_from <= ${query.scope.at}::timestamptz and (valid_to is null or valid_to >= ${query.scope.at}::timestamptz)
-          and (${query.scope.collectionIds ?? null}::text[] is null or collection_id = any(${query.scope.collectionIds ?? null}::text[]))
-        order by (1 - (embedding <=> ${JSON.stringify(query.embedding)}::vector)) * 0.7 + ts_rank_cd(search_vector, websearch_to_tsquery('simple', ${query.text})) * 0.3 desc limit ${query.limit}`;
+        from candidates where tenant_id = ${query.scope.tenantId}
+          and domain_id = ${query.scope.domainId} and pack_version = ${query.scope.packVersion}
+          and revoked_at is null and valid_from <= ${query.scope.at}::timestamptz
+          and (valid_to is null or valid_to >= ${query.scope.at}::timestamptz)
+          and (${query.scope.collectionIds ?? null}::text[] is null
+            or collection_id = any(${query.scope.collectionIds ?? null}::text[]))
+        order by (1 - (embedding <=> ${JSON.stringify(query.embedding)}::vector)) * 0.7
+          + ts_rank_cd(search_vector, websearch_to_tsquery('simple', ${query.text})) * 0.3 desc
+        limit ${query.limit}`;
       });
       return ok(
         rows.map((row) => ({

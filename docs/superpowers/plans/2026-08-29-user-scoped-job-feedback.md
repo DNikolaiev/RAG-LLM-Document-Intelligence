@@ -23,6 +23,7 @@
 ### Task 1: Durable job actor and event schema
 
 **Files:**
+
 - Modify: `packages/contracts/src/core.ts`
 - Modify: `packages/persistence/src/schema.ts`
 - Modify: `infra/postgres/init/010_schema.sql`
@@ -39,6 +40,7 @@
 ### Task 2: Repository and authorization
 
 **Files:**
+
 - Modify: `packages/persistence/src/case-store.ts`
 - Create: `packages/persistence/src/job-event-store.ts`
 - Modify: `apps/api/src/jobs.controller.ts`
@@ -55,6 +57,7 @@
 ### Task 3: BullMQ lifecycle instrumentation
 
 **Files:**
+
 - Modify: `packages/providers/src/adapters/infrastructure.ts`
 - Modify: `apps/api/src/production-cases.service.ts`
 - Modify: `apps/worker/src/production-runtime.ts`
@@ -71,6 +74,7 @@
 ### Task 4: SSE feed and polling fallback
 
 **Files:**
+
 - Modify: `apps/api/src/jobs.controller.ts`
 - Modify: `apps/web/app/api/cases/[...segments]/route.ts`
 - Create: `apps/web/app/api/job-events/stream/route.ts`
@@ -84,6 +88,7 @@
 ### Task 5: Notification centre and contextual timeline
 
 **Files:**
+
 - Create: `apps/web/components/job-notification-provider.tsx`
 - Create: `apps/web/components/notification-centre.tsx`
 - Create: `apps/web/components/job-timeline.tsx`
@@ -104,6 +109,7 @@
 ### Task 6: Operations and retention documentation
 
 **Files:**
+
 - Modify: `README.md`
 - Modify: `ARCHITECTURE.md`
 - Modify: `docs/operations/observability.md`
@@ -113,4 +119,3 @@
 - [ ] Document operational queries without exposing secrets or document text.
 - [ ] Run `npm run verify`, database integration, and Playwright coverage.
 - [ ] Commit the completed job-feedback feature.
-

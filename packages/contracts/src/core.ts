@@ -193,12 +193,15 @@ export const JobLifecycleEventSchema = z.object({
   message: z.string().min(1).max(500),
   metadata: z.record(z.string(), JsonValueSchema),
   occurredAt: IsoTimestampSchema,
+  readAt: IsoTimestampSchema.nullable(),
 });
 
 export const JobNotificationSchema = z.object({
   id: z.string().min(1),
   tenantId: z.string().min(1),
-  caseId: z.string().min(1),
+  caseId: z.string().min(1).nullable(),
+  targetType: z.enum(['case', 'case_document', 'policy_version']),
+  targetId: z.string().min(1),
   enqueuedByUserId: z.string().min(1),
   kind: z.string().min(1),
   status: JobStatusSchema,

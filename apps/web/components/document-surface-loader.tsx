@@ -20,9 +20,24 @@ const DocumentSurface = dynamic(
 export function DocumentSurfaceLoader({
   document,
   evidence,
+  selectedEvidence,
+  page,
+  onPageChange,
 }: {
   document: CaseDocument;
   evidence: EvidenceAnchor[];
+  selectedEvidence?: EvidenceAnchor | undefined;
+  page: number;
+  onPageChange: (page: number) => void;
 }) {
-  return <DocumentSurface document={document} evidence={evidence} />;
+  return (
+    <DocumentSurface
+      key={document.id}
+      document={document}
+      evidence={evidence}
+      onPageChange={onPageChange}
+      page={page}
+      selectedEvidence={selectedEvidence}
+    />
+  );
 }

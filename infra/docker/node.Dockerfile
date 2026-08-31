@@ -3,6 +3,7 @@ WORKDIR /app
 COPY package.json package-lock.json turbo.json tsconfig.base.json ./
 COPY apps ./apps
 COPY packages ./packages
+COPY fixtures ./fixtures
 ARG PACKAGE
 ARG APP_MODE
 ARG AUTH_MODE

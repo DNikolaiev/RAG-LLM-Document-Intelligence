@@ -57,6 +57,12 @@ export const appConfigSchema = z
     WORKER_MAX_EXTRACTION_CHUNKS: z.coerce.number().int().min(1).max(512).default(48),
     WORKER_MAX_DOCUMENTS: z.coerce.number().int().min(1).max(256).default(32),
     WORKER_MODEL_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
+    WORKER_POLICY_MODEL_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(30_000)
+      .max(600_000)
+      .default(300_000),
   })
   .superRefine((config, context) => {
     const required = (condition: boolean, value: unknown, path: string, message: string) => {

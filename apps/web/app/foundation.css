@@ -564,6 +564,382 @@ code {
   background: var(--iris-soft);
 }
 
+.notification-center {
+  position: relative;
+}
+
+.notification-trigger {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 11px;
+  background: rgb(255 255 255 / 80%);
+  color: #515974;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgb(31 38 78 / 6%);
+  transition:
+    transform 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.notification-trigger:hover {
+  transform: translateY(-1px);
+  border-color: #9c9eee;
+  color: var(--blueprint-deep);
+}
+
+.notification-trigger > span {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+  border: 2px solid white;
+  border-radius: 999px;
+  background: var(--rose);
+  color: white;
+  font: 600 8px/1 var(--mono);
+}
+
+.notification-panel {
+  position: absolute;
+  top: calc(100% + 14px);
+  right: -52px;
+  width: min(720px, calc(100vw - 28px));
+  overflow: hidden;
+  border: 1px solid rgb(207 212 227 / 90%);
+  border-radius: 18px;
+  background: rgb(255 255 255 / 98%);
+  box-shadow: 0 26px 80px rgb(27 33 67 / 20%);
+  z-index: 20;
+  animation: menu-enter 160ms ease-out both;
+}
+
+.notification-panel > header {
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 16px 12px 18px;
+  border-bottom: 1px solid var(--rule);
+  background: linear-gradient(90deg, rgb(84 87 214 / 8%), rgb(24 174 179 / 5%)), white;
+}
+
+.notification-panel > header p {
+  margin: 0 0 4px;
+  color: var(--blueprint);
+  font: 500 8px/1 var(--mono);
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.notification-panel > header strong {
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+
+.notification-panel > header button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.notification-panel > header button:hover {
+  background: var(--iris-soft);
+  color: var(--blueprint-deep);
+}
+
+.notification-connection {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-muted);
+  font: 500 8px/1 var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.notification-connection > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--clear);
+  box-shadow: 0 0 0 3px rgb(37 155 120 / 12%);
+}
+
+.notification-connection.is-polling > span {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px rgb(231 149 57 / 12%);
+}
+
+.notification-connection.is-offline > span {
+  background: var(--rose);
+  box-shadow: 0 0 0 3px rgb(223 95 115 / 12%);
+}
+
+.notification-body {
+  min-height: 260px;
+  max-height: min(560px, calc(100vh - 150px));
+  display: grid;
+  grid-template-columns: minmax(230px, 0.84fr) minmax(290px, 1.16fr);
+  overflow: hidden;
+}
+
+.notification-list,
+.job-event-detail {
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.notification-list {
+  border-right: 1px solid var(--rule);
+  background: #fafbfe;
+}
+
+.notification-list > button {
+  width: 100%;
+  min-height: 72px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 8px;
+  align-items: start;
+  gap: 9px;
+  padding: 13px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.notification-list > button:hover,
+.notification-list > button.is-selected {
+  background: white;
+  color: var(--blueprint);
+  box-shadow: inset 3px 0 0 var(--blueprint);
+}
+
+.notification-list > button > span {
+  min-width: 0;
+}
+
+.notification-list strong,
+.job-event-timeline strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.notification-list small,
+.job-event-timeline small {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink-muted);
+  font: 500 8px/1.35 var(--mono);
+  text-transform: uppercase;
+}
+
+.notification-list i {
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--evidence);
+  box-shadow: 0 0 0 3px rgb(24 174 179 / 12%);
+}
+
+.notification-empty {
+  min-height: 240px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 7px;
+  padding: 28px;
+  color: var(--ink-muted);
+  text-align: center;
+}
+
+.notification-empty strong {
+  font-size: 12px;
+}
+
+.notification-empty span {
+  max-width: 170px;
+  font-size: 10px;
+}
+
+.job-event-detail {
+  display: flex;
+  flex-direction: column;
+  background: white;
+}
+
+.job-event-timeline {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 0;
+  margin: 0;
+  padding: 12px 18px 12px 22px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.job-event-timeline li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.job-event-timeline li::before {
+  content: '';
+  position: absolute;
+  top: 26px;
+  bottom: -10px;
+  left: 5px;
+  width: 1px;
+  background: var(--rule-strong);
+}
+
+.job-event-timeline li:last-child::before {
+  display: none;
+}
+
+.job-event-timeline li > span {
+  position: relative;
+  z-index: 1;
+  width: 11px;
+  height: 11px;
+  margin-top: 2px;
+  border: 3px solid white;
+  border-radius: 50%;
+  background: var(--blueprint);
+  box-shadow: 0 0 0 1px var(--blueprint);
+}
+
+.job-event-timeline .event-failed > span {
+  background: var(--rose);
+  box-shadow: 0 0 0 1px var(--rose);
+}
+
+.job-event-timeline .event-completed > span,
+.job-event-timeline .event-needs_review > span {
+  background: var(--clear);
+  box-shadow: 0 0 0 1px var(--clear);
+}
+
+.notification-cancel,
+.notification-retry {
+  min-height: 38px;
+  margin: 0 18px 16px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 10px;
+  background: white;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.notification-cancel:hover {
+  border-color: var(--rose);
+  color: #a8324b;
+  background: var(--rose-soft);
+}
+
+.notification-retry:hover {
+  border-color: var(--blueprint);
+  color: var(--blueprint-deep);
+  background: var(--iris-soft);
+}
+
+.job-toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 80;
+  width: min(410px, calc(100vw - 32px));
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 12px 13px 15px;
+  border: 1px solid #d5d9e8;
+  border-left: 4px solid var(--blueprint);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 97%);
+  box-shadow: 0 18px 55px rgb(27 33 67 / 20%);
+  color: var(--blueprint);
+  backdrop-filter: blur(16px);
+  animation: toast-enter 220ms ease-out both;
+}
+
+.job-toast.toast-failed {
+  border-left-color: var(--rose);
+  color: var(--rose);
+}
+
+.job-toast.toast-completed,
+.job-toast.toast-needs_review {
+  border-left-color: var(--clear);
+  color: var(--clear);
+}
+
+.job-toast strong {
+  display: block;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.job-toast small {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink-muted);
+  font: 500 8px/1.2 var(--mono);
+  text-transform: uppercase;
+}
+
+.job-toast button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.spin {
+  animation: notification-spin 900ms linear infinite;
+}
+
 .eyebrow {
   margin: 0 0 7px;
   color: #6166c5;
@@ -677,6 +1053,34 @@ code {
   .environment-mark {
     display: none;
   }
+
+  .notification-panel {
+    position: fixed;
+    top: calc(var(--header-height) + 8px);
+    right: 8px;
+    left: 8px;
+    width: auto;
+  }
+
+  .notification-body {
+    grid-template-columns: 1fr;
+    max-height: calc(100vh - var(--header-height) - 54px);
+  }
+
+  .notification-list {
+    max-height: 220px;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .job-event-detail {
+    min-height: 220px;
+  }
+
+  .job-toast {
+    right: 16px;
+    bottom: 16px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -715,6 +1119,23 @@ code {
   from {
     opacity: 0;
     transform: translateY(-5px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes notification-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
   }
   to {
     opacity: 1;

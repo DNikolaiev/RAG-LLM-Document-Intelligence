@@ -1,8 +1,9 @@
 import Link from 'next/link';
-import { LayoutDashboard, ScanSearch } from 'lucide-react';
+import { BookOpenCheck, LayoutDashboard, ScanSearch } from 'lucide-react';
 import { TEST_PROFILES } from '@caselens/contracts';
 import { getSelectedProfile, testProfilesEnabled } from '@/lib/session-profile';
 import { ProfileSwitcher } from './profile-switcher';
+import { NotificationCenter } from './notification-center';
 
 export async function BrandHeader() {
   const profile = await getSelectedProfile();
@@ -26,6 +27,10 @@ export async function BrandHeader() {
           Review queue
           <span>Live</span>
         </Link>
+        <Link href="/policies">
+          <BookOpenCheck aria-hidden="true" size={16} />
+          Policy library
+        </Link>
       </nav>
 
       <div className="header-context" aria-label="Current workspace">
@@ -37,6 +42,7 @@ export async function BrandHeader() {
           <strong>{profile.activeTenantName}</strong>
           <small>{profile.platformAdmin ? 'Cross-tenant oversight' : 'Full tenant access'}</small>
         </span>
+        <NotificationCenter profileId={profile.id} aggregate={profile.platformAdmin} />
         {showProfileSwitcher ? (
           <ProfileSwitcher selected={profile} profiles={TEST_PROFILES} />
         ) : null}

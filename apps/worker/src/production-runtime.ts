@@ -3,8 +3,8 @@ import { Worker, type Job } from 'bullmq';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { AppConfig } from '@caselens/config';
-import { resolvePersistedDomainPack, type DomainPack } from '@caselens/domain';
-import { PostgresCaseStore } from '@caselens/persistence';
+import { parseDomainPack, resolvePersistedDomainPack, type DomainPack } from '@caselens/domain';
+import { PostgresCaseStore, PostgresPolicyStore } from '@caselens/persistence';
 import {
   HttpDocumentTextProvider,
   HttpOcrProvider,
@@ -15,11 +15,19 @@ import {
 import { PolicyRetriever } from '@caselens/retrieval';
 import { CaseWorkflowRunner, PostgresWorkflowCheckpointStore } from '@caselens/workflow';
 import { createWorkerModelRuntime } from './model-runtime.js';
+import {
+  chunkPolicyPages,
+  extractPolicyPages,
+  generatePolicyProposals,
+} from './policy/policy-pipeline.js';
 
 interface QueuePayload {
   databaseJobId: string;
   tenantId: string;
-  caseId: string;
+  caseId?: string;
+  policyDocumentId?: string;
+  targetType?: 'case' | 'case_document' | 'policy_version';
+  targetId?: string;
   idempotencyKey: string;
 }
 
@@ -55,6 +63,7 @@ export async function runProductionWorker(config: AppConfig): Promise<void> {
     ...(redis.password ? { password: decodeURIComponent(redis.password) } : {}),
   };
   const store = new PostgresCaseStore(config.DATABASE_URL!);
+  const policyStore = new PostgresPolicyStore(config.DATABASE_URL!);
   const storage = new S3CompatibleStorageProvider({
     id: 'local-minio',
     bucket: config.S3_BUCKET,
@@ -79,14 +88,64 @@ export async function runProductionWorker(config: AppConfig): Promise<void> {
 
   const worker = new Worker<QueuePayload>(
     config.QUEUE_NAME,
-    async (queueJob) =>
-      processJob(queueJob, config, store, storage, text, ocr, modelRuntime.chat, retriever),
+    async (queueJob) => {
+      if (queueJob.name === 'process_policy' || queueJob.data.targetType === 'policy_version') {
+        return processPolicyJob(
+          queueJob,
+          config,
+          store,
+          policyStore,
+          storage,
+          text,
+          ocr,
+          modelRuntime.chat,
+          modelRuntime.embeddings,
+        );
+      }
+      return processJob(
+        queueJob,
+        config,
+        store,
+        policyStore,
+        storage,
+        text,
+        ocr,
+        modelRuntime.chat,
+        retriever,
+      );
+    },
     { connection, concurrency: 2 },
   );
-  worker.on('completed', (job) => logger.log(`Completed ${job.data.databaseJobId}`));
-  worker.on('failed', (job, error) =>
-    logger.error(`Failed ${job?.data.databaseJobId ?? 'unknown'}: ${error.message}`),
-  );
+  worker.on('completed', (job) => {
+    void store
+      .recordQueueRecordRemoved(job.data.databaseJobId, job.data.tenantId)
+      .then(() => logger.log(`Completed ${job.data.databaseJobId}; queue record removed`))
+      .catch((error: unknown) =>
+        logger.error(
+          `Completed ${job.data.databaseJobId}, but queue removal could not be recorded: ${error instanceof Error ? error.message : 'unknown error'}`,
+        ),
+      );
+  });
+  worker.on('failed', (job, error) => {
+    logger.error(`Failed ${job?.data.databaseJobId ?? 'unknown'}: ${error.message}`);
+    if (!job) return;
+    const maxAttempts = Number(job.opts.attempts ?? 1);
+    if (job.attemptsMade >= maxAttempts) return;
+    void store
+      .updateJob(job.data.databaseJobId, job.data.tenantId, {
+        status: 'queued',
+        progress: 0,
+        eventType: 'job.retry_scheduled',
+        stage: 'queue',
+        message: `Retry ${job.attemptsMade + 1} of ${maxAttempts} scheduled after backoff.`,
+        metadata: { attempt: job.attemptsMade, maxAttempts },
+      })
+      .catch((retryError: unknown) =>
+        logger.error(
+          `Could not record retry for ${job.data.databaseJobId}: ${retryError instanceof Error ? retryError.message : 'unknown error'}`,
+        ),
+      );
+  });
   await worker.waitUntilReady();
   logger.log(`Consuming ${config.QUEUE_NAME} with ${config.MODEL_NAME}`);
 
@@ -97,6 +156,7 @@ export async function runProductionWorker(config: AppConfig): Promise<void> {
   await worker.close();
   await search.close();
   await storage.close();
+  await policyStore.close();
   await store.close();
 }
 
@@ -104,6 +164,7 @@ async function processJob(
   queueJob: Job<QueuePayload>,
   config: AppConfig,
   store: PostgresCaseStore,
+  policyStore: PostgresPolicyStore,
   storage: S3CompatibleStorageProvider,
   textProvider: HttpDocumentTextProvider,
   ocrProvider: HttpOcrProvider,
@@ -111,16 +172,58 @@ async function processJob(
   retriever: PolicyRetriever,
 ): Promise<void> {
   const { databaseJobId, tenantId, caseId, idempotencyKey } = queueJob.data;
+  if (!caseId) throw new Error('Case processing requires caseId');
   const scope = { tenantIds: [tenantId], platformAdmin: false };
-  await store.updateJob(databaseJobId, tenantId, { status: 'processing', progress: 5 });
+  await store.updateJob(databaseJobId, tenantId, {
+    status: 'processing',
+    progress: 2,
+    errorCode: null,
+    eventType: 'worker.claimed',
+    stage: 'worker',
+    message: 'A worker claimed the request.',
+  });
+  await store.updateJob(databaseJobId, tenantId, {
+    status: 'processing',
+    progress: 5,
+    eventType: 'worker.started',
+    stage: 'validation',
+    message: 'Document processing started.',
+  });
   const item = await store.get(scope, caseId);
   if (!item) throw new Error('Queued case no longer exists');
   const startingVersion = item.version;
   const checkpoint = new PostgresWorkflowCheckpointStore(config.DATABASE_URL!, tenantId);
   try {
-    const domainPack = item.domainPackId ? resolvePersistedDomainPack(item.domainPackId) : null;
-    if (!domainPack)
+    const installedPack = item.domainPackId ? resolvePersistedDomainPack(item.domainPackId) : null;
+    if (!installedPack)
       throw new Error(`No installed domain pack matches ${item.domainPackId ?? 'none'}`);
+    const activePolicyRules = await policyStore.listActiveRules(
+      tenantId,
+      item.domainPackId!,
+      new Date().toISOString(),
+    );
+    const persistedPack = await policyStore.getDomainPackDescriptor(tenantId, item.domainPackId!);
+    if (!persistedPack)
+      throw new Error(`Persisted domain pack ${item.domainPackId} is unavailable`);
+    const domainPack = parseDomainPack({
+      ...installedPack,
+      rules: [
+        ...installedPack.rules,
+        ...activePolicyRules.map((rule) => ({
+          id: rule.id,
+          title: rule.title,
+          description: rule.description,
+          severity: rule.severity,
+          when: rule.condition,
+          policyTags: [
+            ...rule.policyTags,
+            `policy:${rule.policyDocumentId}`,
+            `policy-version:${rule.policyVersion}`,
+            `rule-version:${rule.ruleVersion}`,
+          ],
+        })),
+      ],
+    });
     const documents = await store.listDocuments(scope, caseId);
     if (documents.length > config.WORKER_MAX_DOCUMENTS) {
       throw new Error(
@@ -148,7 +251,13 @@ async function processJob(
         sourcePages.push({ documentId: document.id, page: page.page, text: pageText });
       }
     }
-    await store.updateJob(databaseJobId, tenantId, { status: 'processing', progress: 25 });
+    await store.updateJob(databaseJobId, tenantId, {
+      status: 'processing',
+      progress: 25,
+      eventType: 'job.progress',
+      stage: 'text_extraction',
+      message: 'Text extraction and OCR are running.',
+    });
     const evidenceChunks = sourcePages.flatMap((page) =>
       chunkSourcePage(page, config.WORKER_CHUNK_CHARACTERS, config.WORKER_CHUNK_OVERLAP),
     );
@@ -165,7 +274,13 @@ async function processJob(
           warnings: [],
         }),
         extract: async () => {
-          await store.updateJob(databaseJobId, tenantId, { status: 'processing', progress: 40 });
+          await store.updateJob(databaseJobId, tenantId, {
+            status: 'processing',
+            progress: 40,
+            eventType: 'job.progress',
+            stage: 'fact_extraction',
+            message: 'Structured facts are being extracted and validated.',
+          });
           const facts: Record<string, unknown> = {};
           const warnings: string[] = [];
           const factEvidence: Record<
@@ -237,7 +352,13 @@ async function processJob(
           return { facts, factEvidence, lowConfidencePaths, warnings };
         },
         classify: async () => {
-          await store.updateJob(databaseJobId, tenantId, { status: 'processing', progress: 55 });
+          await store.updateJob(databaseJobId, tenantId, {
+            status: 'processing',
+            progress: 55,
+            eventType: 'job.progress',
+            stage: 'classification',
+            message: 'Documents are being classified.',
+          });
           const allowedTypes = new Set(domainPack.documentTypes.map((type) => type.id));
           const reportProgress = createProgressReporter(documents.length, 55, 69, (progress) =>
             store.updateJob(databaseJobId, tenantId, { status: 'processing', progress }),
@@ -351,13 +472,19 @@ async function processJob(
         },
         reconcile: async () => ({ identityConflict: false, reviewReasons: [] }),
         retrieve: async (state) => {
-          await store.updateJob(databaseJobId, tenantId, { status: 'processing', progress: 70 });
+          await store.updateJob(databaseJobId, tenantId, {
+            status: 'processing',
+            progress: 70,
+            eventType: 'job.progress',
+            stage: 'policy_retrieval',
+            message: 'Relevant policy evidence is being retrieved.',
+          });
           return retriever.retrieve(
             JSON.stringify(state.facts).slice(0, 4_000),
             {
               tenantId,
-              domainId: domainPack.id,
-              packVersion: domainPack.version,
+              domainId: persistedPack.domainKey,
+              packVersion: persistedPack.semanticVersion,
               at: new Date().toISOString(),
             },
             { limit: 5, threshold: domainPack.thresholds.retrieval },
@@ -490,9 +617,53 @@ async function processJob(
       {
         status: result.state.status,
         progress: 100,
+        errorCode: null,
         checkpoint: { revision: result.revision, phase: result.state.phase },
+        eventType: result.state.status === 'completed' ? 'job.completed' : 'job.progress',
+        stage: 'review',
+        message:
+          result.state.status === 'completed'
+            ? 'Processing completed and the case is ready for review.'
+            : 'Processing paused for human review.',
       },
       classifications.size === documents.length ? 'ready' : 'needs_review',
+      {
+        id: stableWorkerId('rule_run', databaseJobId),
+        domainPackId: item.domainPackId!,
+        status: result.state.status,
+        completedAt: item.updatedAt,
+        inputSnapshot: {
+          domainPack: { id: installedPack.id, version: installedPack.version },
+          activePolicyRules: activePolicyRules.map((rule) => ({
+            id: rule.id,
+            ruleKey: rule.ruleKey,
+            ruleVersion: rule.ruleVersion,
+            policyDocumentId: rule.policyDocumentId,
+            policyVersion: rule.policyVersion,
+          })),
+          factPaths: (item.facts as Array<{ path: string }>).map((fact) => fact.path),
+          availableDocumentTypes: result.state.availableDocumentTypes,
+        },
+        findings: (
+          item.findings as Array<{
+            id: string;
+            ruleKey: string;
+            severity: 'critical' | 'major' | 'minor';
+            status: string;
+            title: string;
+            description: string;
+            remediation: string;
+          }>
+        ).map((finding) => ({
+          id: stableWorkerId('run_finding', `${databaseJobId}:${finding.id}`),
+          ruleKey: finding.ruleKey,
+          severity: finding.severity,
+          status: finding.status,
+          title: finding.title,
+          description: finding.description,
+          remediation: finding.remediation,
+        })),
+      },
     );
   } catch (error) {
     const priorVersion = startingVersion;
@@ -530,6 +701,10 @@ async function processJob(
         status: 'failed',
         progress: 100,
         checkpoint: { error: error instanceof Error ? error.message : 'Processing failed' },
+        errorCode: 'WORKFLOW_FAILED',
+        eventType: 'job.failed',
+        stage: 'workflow',
+        message: 'Processing failed. Review the job details before retrying.',
       },
       'needs_review',
     );
@@ -537,6 +712,207 @@ async function processJob(
   } finally {
     await checkpoint.close();
   }
+}
+
+async function processPolicyJob(
+  queueJob: Job<QueuePayload>,
+  config: AppConfig,
+  jobs: PostgresCaseStore,
+  policies: PostgresPolicyStore,
+  storage: S3CompatibleStorageProvider,
+  textProvider: HttpDocumentTextProvider,
+  ocrProvider: HttpOcrProvider,
+  model: ModelProvider,
+  embeddings: ModelProvider,
+): Promise<void> {
+  const { databaseJobId, tenantId } = queueJob.data;
+  const policyDocumentId = queueJob.data.policyDocumentId ?? queueJob.data.targetId;
+  if (!policyDocumentId) throw new Error('Policy processing requires policyDocumentId');
+  const scope = { tenantIds: [tenantId], platformAdmin: false };
+  const initialPolicy = await policies.get(scope, policyDocumentId);
+  if (!initialPolicy) throw new Error('Queued policy no longer exists');
+  let policy = initialPolicy;
+  try {
+    await jobs.updateJob(databaseJobId, tenantId, {
+      status: 'processing',
+      progress: 2,
+      errorCode: null,
+      eventType: 'worker.claimed',
+      stage: 'worker',
+      message: 'A worker claimed the policy-processing request.',
+    });
+    policy = await policies.updateStatus({
+      tenantId,
+      id: policy.id,
+      expectedVersion: policy.version,
+      status: 'processing',
+      processingError: null,
+    });
+    const pack = resolvePolicyPack(policy.domainPackId);
+    const collection = pack.policyCollections.find(
+      (candidate) => candidate.id === policy.collectionId,
+    );
+    if (!collection) throw new Error(`No policy collection exists in ${pack.id}`);
+
+    await jobs.updateJob(databaseJobId, tenantId, {
+      status: 'processing',
+      progress: 10,
+      eventType: 'job.progress',
+      stage: 'storage',
+      message: 'The immutable policy source is being loaded from object storage.',
+    });
+    const object = await storage.get(policy.storageKey);
+    if (!object.ok) throw new Error(`Could not load policy source: ${object.error.message}`);
+
+    await jobs.updateJob(databaseJobId, tenantId, {
+      status: 'processing',
+      progress: 20,
+      eventType: 'job.progress',
+      stage: 'text_extraction',
+      message: 'Policy pages are being extracted; scanned pages use OCR.',
+    });
+    const pages = await extractPolicyPages({
+      bytes: object.value,
+      mediaType: policy.mediaType,
+      languageHints: policy.language === 'und' ? ['eng', 'deu'] : policy.language.split(/[,+]/),
+      textProvider,
+      ocrProvider,
+    });
+    if (!pages.some((page) => page.text.trim()))
+      throw new Error('The policy contains no extractable text');
+
+    const chunkDrafts = chunkPolicyPages(policy.id, pages, {
+      chunkSize: collection.chunkSize,
+      overlap: Math.min(collection.overlap, collection.chunkSize - 1),
+    });
+    if (!chunkDrafts.length) throw new Error('The policy produced no searchable clauses');
+    await jobs.updateJob(databaseJobId, tenantId, {
+      status: 'processing',
+      progress: 45,
+      eventType: 'job.progress',
+      stage: 'embedding',
+      message: `${chunkDrafts.length} policy clauses are being embedded for semantic retrieval.`,
+    });
+    const embedded = await embeddings.embed(chunkDrafts.map((chunk) => chunk.content));
+    if (!embedded.ok) throw new Error(`Policy embedding failed: ${embedded.error.message}`);
+    if (embedded.value.length !== chunkDrafts.length) {
+      throw new Error('Embedding provider returned an incomplete policy result');
+    }
+    const chunks = chunkDrafts.map((chunk, index) => ({
+      ...chunk,
+      embedding: embedded.value[index]!,
+      embeddingProvider: embeddings.capabilities().id,
+      embeddingModel: config.EMBEDDING_MODEL,
+    }));
+    await policies.replaceExtractedContent({
+      tenantId,
+      policyDocumentId: policy.id,
+      pages,
+      chunks,
+    });
+
+    await jobs.updateJob(databaseJobId, tenantId, {
+      status: 'processing',
+      progress: 72,
+      eventType: 'job.progress',
+      stage: 'rule_proposal',
+      message: 'Cited deterministic rule proposals are being generated and validated.',
+    });
+    const proposals = await generatePolicyProposals({
+      policyDocumentId: policy.id,
+      uploaderUserId: policy.uploadedByUserId,
+      pack,
+      chunks,
+      model,
+      modelName: config.MODEL_NAME,
+      timeoutMs: config.WORKER_POLICY_MODEL_TIMEOUT_MS,
+    });
+    for (const proposal of proposals) {
+      await policies.saveProposal(tenantId, policy.id, proposal);
+    }
+    const refreshed = await policies.get(scope, policy.id);
+    if (!refreshed) throw new Error('Policy disappeared after extraction');
+    await policies.updateStatus({
+      tenantId,
+      id: policy.id,
+      expectedVersion: refreshed.version,
+      status: 'under_review',
+      processingError: null,
+      extractionMetadata: {
+        pageCount: pages.length,
+        chunkCount: chunks.length,
+        proposalCount: proposals.length,
+        embeddingProvider: embeddings.capabilities().id,
+        embeddingModel: config.EMBEDDING_MODEL,
+        proposalProvider: model.capabilities().id,
+        proposalModel: config.MODEL_NAME,
+        completedAt: new Date().toISOString(),
+      },
+    });
+    await jobs.updateJob(databaseJobId, tenantId, {
+      status: 'completed',
+      progress: 100,
+      errorCode: null,
+      eventType: 'job.completed',
+      stage: 'review',
+      message:
+        proposals.length > 0
+          ? 'Policy processing completed. Rule proposals are ready for administrator review.'
+          : 'Policy processing completed. No enforceable rule proposal was found.',
+      metadata: {
+        policyDocumentId,
+        pages: pages.length,
+        chunks: chunks.length,
+        proposals: proposals.length,
+      },
+    });
+  } catch (error) {
+    const latest = await policies.get(scope, policyDocumentId).catch(() => null);
+    if (latest && !['active', 'superseded', 'revoked'].includes(latest.status)) {
+      await policies
+        .updateStatus({
+          tenantId,
+          id: latest.id,
+          expectedVersion: latest.version,
+          status: 'failed',
+          processingError: {
+            code: 'POLICY_PROCESSING_FAILED',
+            message:
+              error instanceof Error ? error.message.slice(0, 1_000) : 'Policy processing failed',
+          },
+        })
+        .catch(() => undefined);
+    }
+    await jobs.updateJob(databaseJobId, tenantId, {
+      status: 'failed',
+      progress: 100,
+      errorCode: 'POLICY_PROCESSING_FAILED',
+      eventType: 'job.failed',
+      stage: 'policy_processing',
+      message: 'Policy processing failed. Review the policy timeline before retrying.',
+    });
+    throw error;
+  }
+}
+
+function resolvePolicyPack(domainPackId: string): DomainPack {
+  const direct = resolvePersistedDomainPack(domainPackId);
+  if (direct) return direct;
+  const key = domainPackId.startsWith('pack_tenant_')
+    ? domainPackId.replace(/^pack_tenant_/, '').replaceAll('_', '-')
+    : domainPackId
+        .replace(/^pack_/, '')
+        .replace(/_\d+_\d+_\d+$/, '')
+        .replaceAll('_', '-');
+  const aliases: Record<string, string> = {
+    demo: 'pharmacy-supplier',
+    legal: 'commercial-contract-review',
+    insurance: 'insurance-claims-assessment',
+    manufacturing: 'supplier-quality-assurance',
+  };
+  const pack = resolvePersistedDomainPack(aliases[key] ?? key);
+  if (!pack) throw new Error(`No installed domain pack matches ${domainPackId}`);
+  return pack;
 }
 
 type ExtractionField = DomainPack['documentTypes'][number]['extractionFields'][number];

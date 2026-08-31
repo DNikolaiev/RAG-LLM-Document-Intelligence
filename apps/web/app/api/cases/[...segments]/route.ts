@@ -15,6 +15,7 @@ async function forward(request: NextRequest, context: RouteContext): Promise<Res
     request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.arrayBuffer();
   const profile = resolveTestProfile(request.cookies.get(PROFILE_COOKIE)?.value);
   const identityHeaders = testProfilesEnabled() ? { 'x-test-profile-id': profile.id } : {};
+  const range = request.headers.get('range');
   try {
     const response = await fetch(target, {
       method: request.method,
@@ -22,15 +23,29 @@ async function forward(request: NextRequest, context: RouteContext): Promise<Res
         accept: request.headers.get('accept') ?? 'application/json',
         'content-type': request.headers.get('content-type') ?? 'application/json',
         ...identityHeaders,
+        ...(range ? { range } : {}),
         'idempotency-key': request.headers.get('idempotency-key') ?? crypto.randomUUID(),
       },
       ...(body === undefined ? {} : { body }),
       cache: 'no-store',
       signal: AbortSignal.timeout(5_000),
     });
+    const headers = new Headers({
+      'content-type': response.headers.get('content-type') ?? 'application/json',
+    });
+    for (const name of [
+      'accept-ranges',
+      'content-disposition',
+      'content-length',
+      'content-range',
+      'cache-control',
+    ]) {
+      const value = response.headers.get(name);
+      if (value) headers.set(name, value);
+    }
     return new Response(response.body, {
       status: response.status,
-      headers: { 'content-type': response.headers.get('content-type') ?? 'application/json' },
+      headers,
     });
   } catch {
     return Response.json(
@@ -41,5 +56,6 @@ async function forward(request: NextRequest, context: RouteContext): Promise<Res
 }
 
 export const GET = forward;
+export const HEAD = forward;
 export const PATCH = forward;
 export const POST = forward;

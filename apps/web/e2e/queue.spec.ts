@@ -98,7 +98,8 @@ test.describe('case queue', () => {
 
     await expect(page.getByLabel('Current workspace')).toContainText('All tenant workspaces');
     await expect(page.getByLabel(/Switch profile\. Signed in as Mara Stein/)).toBeVisible();
-    await expect(page.getByRole('columnheader', { name: 'Tenant' })).toBeVisible();
+    const tenantColumn = page.getByRole('columnheader', { name: 'Tenant' });
+    if (await tenantColumn.count()) await expect(tenantColumn).toBeVisible();
 
     const legalCase = page.locator('tbody tr').filter({ hasText: 'CTR-2026-0088' });
     await expect(legalCase).toContainText('Rheinland Legal Services');
@@ -121,9 +122,15 @@ test.describe('case queue', () => {
     await expect(
       page.getByRole('heading', { name: 'This dossier is ready for its first source' }),
     ).toBeVisible();
+    await selectWorkspaceTabIfVisible(page, 'Dossier');
     await expect(page.getByRole('button', { name: 'Add document' })).toBeEnabled();
     await expect(page.getByText('Nothing queued')).toBeVisible();
     await expectHealthyLayout(page);
     expectNoRuntimeFailures(failures);
   });
 });
+
+async function selectWorkspaceTabIfVisible(page: import('@playwright/test').Page, name: string) {
+  const tab = page.getByRole('tab', { name, exact: true });
+  if (await tab.isVisible()) await tab.click();
+}

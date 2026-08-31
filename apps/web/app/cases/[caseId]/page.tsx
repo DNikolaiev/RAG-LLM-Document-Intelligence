@@ -3,13 +3,10 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { AlertTriangle, ArrowLeft, Layers3, UserRound } from 'lucide-react';
 
-import { DossierNav } from '@/components/dossier-nav';
-import { DocumentSurfaceLoader } from '@/components/document-surface-loader';
-import { EmptyDocumentSurface } from '@/components/empty-document-surface';
-import { ReviewPanel } from '@/components/review-panel';
+import { CaseWorkspace } from '@/components/case-workspace';
 import { StatusMark } from '@/components/status-mark';
-import { WorkspaceTabs } from '@/components/workspace-tabs';
 import { getCase } from '@/lib/demo-data';
+import { getSelectedProfile } from '@/lib/session-profile';
 
 interface CasePageProps {
   params: Promise<{ caseId: string }>;
@@ -25,18 +22,25 @@ export async function generateMetadata({ params }: CasePageProps): Promise<Metad
 }
 
 export default async function CasePage({ params, searchParams }: CasePageProps) {
-  const [{ caseId }, query] = await Promise.all([params, searchParams]);
+  const [{ caseId }, query, selectedProfile] = await Promise.all([
+    params,
+    searchParams,
+    getSelectedProfile(),
+  ]);
   const caseDetail = await getCase(caseId);
   if (!caseDetail) notFound();
 
   const requestedDocument =
     typeof query.document === 'string' ? query.document : caseDetail.documentsList[0]?.id;
+  const requestedEvidenceId = typeof query.evidence === 'string' ? query.evidence : undefined;
+  const requestedEvidence = caseDetail.evidence.find(
+    (evidence) => evidence.id === requestedEvidenceId,
+  );
   const selectedDocument =
-    caseDetail.documentsList.find((document) => document.id === requestedDocument) ??
-    caseDetail.documentsList[0];
-  const visibleEvidence = selectedDocument
-    ? caseDetail.evidence.filter((evidence) => evidence.documentId === selectedDocument.id)
-    : [];
+    caseDetail.documentsList.find(
+      (document) => document.id === (requestedEvidence?.documentId ?? requestedDocument),
+    ) ?? caseDetail.documentsList[0];
+  const requestedPage = typeof query.page === 'string' ? Number.parseInt(query.page, 10) : 1;
   const severityCounts = caseDetail.findings
     .filter((finding) => finding.state === 'open')
     .reduce<Record<'critical' | 'major' | 'minor', number>>(
@@ -96,32 +100,22 @@ export default async function CasePage({ params, searchParams }: CasePageProps) 
         </section>
       </header>
 
-      <WorkspaceTabs
-        dossier={
-          <DossierNav
-            caseId={caseDetail.id}
-            documents={caseDetail.documentsList}
-            selectedDocumentId={selectedDocument?.id}
-          />
-        }
-        document={
-          selectedDocument ? (
-            <DocumentSurfaceLoader document={selectedDocument} evidence={visibleEvidence} />
-          ) : (
-            <EmptyDocumentSurface />
-          )
-        }
-        review={
-          <ReviewPanel
-            audit={caseDetail.audit}
-            authoritative={caseDetail.version !== undefined}
-            caseId={caseDetail.id}
-            caseReference={caseDetail.reference}
-            caseVersion={caseDetail.version ?? 1}
-            initialFacts={caseDetail.facts}
-            initialFindings={caseDetail.findings}
-          />
-        }
+      <CaseWorkspace
+        audit={caseDetail.audit}
+        authoritative={caseDetail.version !== undefined}
+        caseId={caseDetail.id}
+        caseReference={caseDetail.reference}
+        caseVersion={caseDetail.version ?? 1}
+        contact={caseDetail.contact}
+        documents={caseDetail.documentsList}
+        evidence={caseDetail.evidence}
+        facts={caseDetail.facts}
+        findings={caseDetail.findings}
+        senderName={selectedProfile.displayName}
+        subjectName={caseDetail.supplier}
+        initialDocumentId={selectedDocument?.id}
+        initialEvidenceId={requestedEvidence?.id}
+        initialPage={Number.isFinite(requestedPage) ? requestedPage : 1}
       />
     </main>
   );

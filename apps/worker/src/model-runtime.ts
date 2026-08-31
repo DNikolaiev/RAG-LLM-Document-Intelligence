@@ -32,7 +32,9 @@ function createChatProvider(config: AppConfig): ModelProvider {
       apiKey: config.MODEL_API_KEY!,
       chatModel: config.MODEL_NAME,
       embeddingModel: config.EMBEDDING_MODEL,
-      maxOutputTokens: 768,
+      // Policy proposals include citations and four executable boundary cases. This budget
+      // fits a small set of proposals while remaining practical for CPU-only local models.
+      maxOutputTokens: 2_048,
       structuredOutputMode: config.MODEL_STRUCTURED_OUTPUT_MODE,
       chatApiStyle: config.MODEL_API_STYLE,
       includeSchemaInPrompt: config.MODEL_INCLUDE_SCHEMA_IN_PROMPT,

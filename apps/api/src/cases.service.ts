@@ -13,21 +13,51 @@ import type { RequestContext } from './request-context.js';
 import { createDemoCases, type CaseStatus, type DemoCase } from './demo-data.js';
 import { resolveTestTenant } from '@caselens/contracts';
 
+export interface DemoJob {
+  id: string;
+  tenantId: string;
+  caseId: string;
+  targetType: 'case' | 'case_document' | 'policy_version';
+  targetId: string;
+  enqueuedByUserId: string;
+  correlationId: string;
+  queueJobId: string | null;
+  status: string;
+  progress: number;
+  attempts: number;
+  errorCode: string | null;
+  kind: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 @Injectable()
 export class CasesService {
   private readonly cases = createDemoCases();
   private readonly idempotency = new Map<string, unknown>();
-  private readonly jobs = new Map<
+  private readonly documentContent = new Map<
     string,
-    {
+    { body: Uint8Array; mediaType: string; fileName: string }
+  >();
+  private readonly jobs = new Map<string, DemoJob>();
+  private readonly jobEvents = new Map<
+    string,
+    Array<{
       id: string;
+      jobId: string;
       tenantId: string;
-      caseId: string;
+      recipientUserId: string;
+      actorUserId: string | null;
+      sequence: number;
+      type: string;
+      stage: string | null;
       status: string;
       progress: number;
-      kind: string;
-      createdAt: string;
-    }
+      message: string;
+      metadata: Record<string, unknown>;
+      occurredAt: string;
+      readAt: string | null;
+    }>
   >();
 
   create(
@@ -160,23 +190,46 @@ export class CasesService {
     return { ...structuredClone(finding), caseVersion: item.version };
   }
 
-  process(context: RequestContext, caseId: string, idempotencyKey: string) {
+  process(context: RequestContext, caseId: string, idempotencyKey: string): DemoJob {
     this.requireRole(context, ['intake', 'reviewer', 'admin']);
-    const key = `${context.tenantId}:process:${caseId}:${idempotencyKey}`;
+    const key = `${context.tenantId}:${context.userId}:process:${caseId}:${idempotencyKey}`;
     const existing = this.idempotency.get(key);
-    if (existing) return existing;
+    if (existing) return existing as DemoJob;
     const item = this.mutable(context, caseId);
     const job = {
       id: `job_${ulid()}`,
       tenantId: context.tenantId,
       caseId,
+      targetType: 'case' as const,
+      targetId: caseId,
+      enqueuedByUserId: context.userId,
+      correlationId: context.correlationId,
+      queueJobId: null,
       status: 'queued',
       progress: 0,
+      attempts: 0,
+      errorCode: null,
       kind: 'process_case',
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
     this.idempotency.set(key, job);
     this.jobs.set(job.id, job);
+    this.appendDemoEvent(
+      job,
+      context.userId,
+      'job.created',
+      'intake',
+      'Processing request created.',
+    );
+    this.appendDemoEvent(
+      job,
+      context.userId,
+      'queue.enqueue_requested',
+      'queue',
+      'Sending the request to the processing queue.',
+    );
+    this.appendDemoEvent(job, context.userId, 'queue.enqueued', 'queue', 'Request queued.');
     this.touch(item, context, 'processing.queued', `Processing job ${job.id} queued`);
     return job;
   }
@@ -231,15 +284,130 @@ export class CasesService {
         : `Awaiting classification; sha256:${sha256}`,
     };
     item.documents.push(document);
+    this.documentContent.set(`${item.tenantId}:${caseId}:${document.id}`, {
+      body: Uint8Array.from(file.buffer),
+      mediaType: file.mimetype,
+      fileName: file.originalname,
+    });
     this.touch(item, context, 'document.uploaded', `${file.originalname} accepted for processing`);
     this.idempotency.set(key, document);
     return structuredClone(document);
   }
 
+  getDocumentContent(context: RequestContext, caseId: string, documentId: string) {
+    const item = this.get(context, caseId);
+    const document = item.documents.find((candidate) => candidate.id === documentId);
+    if (!document) {
+      throw new NotFoundException({
+        code: 'DOCUMENT_NOT_FOUND',
+        message: 'Document not found.',
+      });
+    }
+    const source = this.documentContent.get(`${item.tenantId}:${caseId}:${documentId}`);
+    if (!source) {
+      throw new NotFoundException({
+        code: 'DOCUMENT_CONTENT_NOT_FOUND',
+        message: 'The original document content is not available in this demo session.',
+      });
+    }
+    return { ...source, body: Uint8Array.from(source.body) };
+  }
+
   getJob(context: RequestContext | string, id: string) {
     const job = this.jobs.get(id);
-    if (!job || !this.tenantIds(context).includes(job.tenantId))
+    if (!job || !this.canSeeJob(context, job))
       throw new NotFoundException({ code: 'JOB_NOT_FOUND', message: 'Job not found.' });
+    return structuredClone(job);
+  }
+
+  listJobs(context: RequestContext, limit = 30) {
+    const items = [...this.jobs.values()]
+      .filter((job) => this.canSeeJob(context, job))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id))
+      .slice(0, Math.min(100, Math.max(1, limit)))
+      .map((job) => ({
+        ...structuredClone(job),
+        latestEvent: structuredClone(this.jobEvents.get(job.id)?.at(-1) ?? null),
+      }));
+    return { items, nextCursor: null };
+  }
+
+  getJobEvents(context: RequestContext, id: string) {
+    this.getJob(context, id);
+    return { items: structuredClone(this.jobEvents.get(id) ?? []), nextCursor: null };
+  }
+
+  markJobEventsRead(context: RequestContext, eventIds: readonly string[]) {
+    if (context.platformAdmin) return { updated: 0 };
+    let updated = 0;
+    const timestamp = new Date().toISOString();
+    for (const events of this.jobEvents.values()) {
+      for (const event of events) {
+        if (
+          eventIds.includes(event.id) &&
+          event.recipientUserId === context.userId &&
+          event.readAt === null
+        ) {
+          event.readAt = timestamp;
+          updated += 1;
+        }
+      }
+    }
+    return { updated };
+  }
+
+  cancelJob(context: RequestContext, id: string) {
+    const job = this.jobs.get(id);
+    if (!job || !this.canSeeJob(context, job)) {
+      throw new NotFoundException({ code: 'JOB_NOT_FOUND', message: 'Job not found.' });
+    }
+    if (job.status !== 'queued') {
+      throw new ConflictException({
+        code: 'JOB_NOT_CANCELLABLE',
+        message: 'Only a queued request can be cancelled.',
+      });
+    }
+    this.appendDemoEvent(
+      job,
+      context.userId,
+      'job.cancel_requested',
+      'queue',
+      'Cancellation requested.',
+    );
+    job.status = 'cancelled';
+    job.updatedAt = new Date().toISOString();
+    this.appendDemoEvent(job, context.userId, 'job.cancelled', 'queue', 'Request cancelled.');
+    this.appendDemoEvent(
+      job,
+      null,
+      'queue.record_removed',
+      'queue',
+      'Queue record removed after cancellation.',
+    );
+    return structuredClone(job);
+  }
+
+  retryJob(context: RequestContext, id: string) {
+    const job = this.jobs.get(id);
+    if (!job || !this.canSeeJob(context, job)) {
+      throw new NotFoundException({ code: 'JOB_NOT_FOUND', message: 'Job not found.' });
+    }
+    if (job.status !== 'failed') {
+      throw new ConflictException({
+        code: 'JOB_NOT_RETRYABLE',
+        message: 'Only a failed request can be retried.',
+      });
+    }
+    job.status = 'queued';
+    job.progress = 0;
+    job.updatedAt = new Date().toISOString();
+    this.appendDemoEvent(
+      job,
+      context.userId,
+      'job.retry_scheduled',
+      'queue',
+      'Retry scheduled and waiting for a worker.',
+    );
     return structuredClone(job);
   }
 
@@ -297,7 +465,7 @@ export class CasesService {
           ? 'approved'
           : 'rejected';
     this.touch(item, context, 'decision.recorded', `${input.outcome}: ${input.reason}`);
-    return structuredClone(item.decision);
+    return { ...structuredClone(item.decision), caseVersion: item.version };
   }
 
   export(context: RequestContext, caseId: string) {
@@ -374,5 +542,50 @@ export class CasesService {
     if (!allowed.includes(context.role)) {
       throw new ForbiddenException({ code: 'ROLE_FORBIDDEN', message });
     }
+  }
+
+  private canSeeJob(
+    context: RequestContext | string,
+    job: { tenantId: string; enqueuedByUserId: string },
+  ): boolean {
+    if (typeof context === 'string') return context === job.tenantId;
+    return (
+      context.platformAdmin ||
+      (context.tenantIds.includes(job.tenantId) && context.userId === job.enqueuedByUserId)
+    );
+  }
+
+  private appendDemoEvent(
+    job: {
+      id: string;
+      tenantId: string;
+      enqueuedByUserId: string;
+      status: string;
+      progress: number;
+    },
+    actorUserId: string | null,
+    type: string,
+    stage: string,
+    message: string,
+  ): void {
+    const events = this.jobEvents.get(job.id) ?? [];
+    const sequence = events.length + 1;
+    events.push({
+      id: `${job.id}:event:${sequence}`,
+      jobId: job.id,
+      tenantId: job.tenantId,
+      recipientUserId: job.enqueuedByUserId,
+      actorUserId,
+      sequence,
+      type,
+      stage,
+      status: job.status,
+      progress: job.progress,
+      message,
+      metadata: {},
+      occurredAt: new Date().toISOString(),
+      readAt: null,
+    });
+    this.jobEvents.set(job.id, events);
   }
 }

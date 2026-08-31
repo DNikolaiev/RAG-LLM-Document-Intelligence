@@ -1,18 +1,22 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
   CheckCircle2,
   ClipboardCheck,
+  Copy,
   Download,
   FileSearch,
   History,
   ListChecks,
+  Mail,
   PencilLine,
   Send,
+  X,
 } from 'lucide-react';
 
-import type { AuditEvent, Fact, Finding } from '@/lib/demo-data';
+import type { AuditEvent, CaseContact, EvidenceAnchor, Fact, Finding } from '@/lib/demo-data';
+import { buildFollowUpDraft } from '@/lib/follow-up';
 
 type ReviewSection = 'findings' | 'facts' | 'audit';
 
@@ -24,6 +28,12 @@ export function ReviewPanel({
   caseReference,
   caseVersion,
   authoritative,
+  evidence = [],
+  onOpenEvidence,
+  selectedEvidenceId,
+  contact,
+  subjectName,
+  senderName,
 }: {
   initialFindings: Finding[];
   initialFacts: Fact[];
@@ -32,6 +42,12 @@ export function ReviewPanel({
   caseReference: string;
   caseVersion: number;
   authoritative: boolean;
+  evidence?: EvidenceAnchor[];
+  onOpenEvidence?: (evidenceId: string) => void;
+  selectedEvidenceId?: string | undefined;
+  contact?: CaseContact | undefined;
+  subjectName?: string | undefined;
+  senderName?: string | undefined;
 }) {
   const [section, setSection] = useState<ReviewSection>('findings');
   const [findings, setFindings] = useState(initialFindings);
@@ -41,12 +57,86 @@ export function ReviewPanel({
   const [reason, setReason] = useState('');
   const [notice, setNotice] = useState('');
   const [currentCaseVersion, setCurrentCaseVersion] = useState(caseVersion);
+  const [followUpOpen, setFollowUpOpen] = useState(false);
+  const [requestSaving, setRequestSaving] = useState(false);
+  const [followUpOutcome, setFollowUpOutcome] = useState('');
+  const requestTriggerRef = useRef<HTMLButtonElement>(null);
+  const followUpDialogRef = useRef<HTMLElement>(null);
   const openFindings = findings.filter((finding) => finding.state === 'open').length;
+  const followUpFindings = findings.filter((finding) => finding.state === 'accepted');
+  const followUpDraft = useMemo(
+    () =>
+      buildFollowUpDraft({
+        caseReference,
+        subjectName: subjectName ?? caseReference,
+        findings,
+        contact,
+        senderName,
+      }),
+    [caseReference, contact, findings, senderName, subjectName],
+  );
   const sectionIcons = {
     findings: ListChecks,
     facts: FileSearch,
     audit: History,
   } as const;
+  const evidenceById = useMemo(
+    () => new Map(evidence.map((anchor) => [anchor.id, anchor])),
+    [evidence],
+  );
+
+  useEffect(() => {
+    if (!followUpOpen) return;
+    const dialog = followUpDialogRef.current;
+    if (!dialog) return;
+    const firstControl = dialog.querySelector<HTMLElement>('button, input, textarea, [href]');
+    firstControl?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setFollowUpOpen(false);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const controls = Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href]',
+        ),
+      );
+      if (!controls.length) return;
+      const first = controls[0]!;
+      const last = controls.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    dialog.addEventListener('keydown', onKeyDown);
+    return () => {
+      dialog.removeEventListener('keydown', onKeyDown);
+      requestTriggerRef.current?.focus();
+    };
+  }, [followUpOpen]);
+
+  function evidenceHref(evidenceId: string): string {
+    const anchor = evidenceById.get(evidenceId);
+    if (!anchor) return `#evidence-${encodeURIComponent(evidenceId)}`;
+    const params = new URLSearchParams({
+      document: anchor.documentId,
+      evidence: anchor.id,
+      page: String(anchor.page),
+    });
+    return `/cases/${encodeURIComponent(caseId)}?${params.toString()}`;
+  }
+
+  function handleEvidenceClick(event: MouseEvent<HTMLAnchorElement>, evidenceId: string) {
+    if (!onOpenEvidence) return;
+    event.preventDefault();
+    onOpenEvidence(evidenceId);
+  }
 
   async function persist<T>(
     path: string,
@@ -72,7 +162,9 @@ export function ReviewPanel({
       current.map((finding) => (finding.id === id ? { ...finding, state } : finding)),
     );
     setNotice(
-      state === 'resolved' ? 'Finding marked resolved.' : 'Finding accepted for follow-up.',
+      state === 'resolved'
+        ? 'Finding marked resolved.'
+        : 'Finding added to the information request.',
     );
     if (finding?.version) {
       void persist<{ version: number; caseVersion: number }>(
@@ -100,6 +192,47 @@ export function ReviewPanel({
         setNotice('The finding was not changed because the API request failed.');
       });
     }
+  }
+
+  async function copyFollowUp(): Promise<boolean> {
+    try {
+      await navigator.clipboard.writeText(`${followUpDraft.subject}\n\n${followUpDraft.body}`);
+      setNotice('Information request copied to the clipboard.');
+      setFollowUpOutcome('Information request copied to the clipboard.');
+      return true;
+    } catch {
+      setNotice('Copy failed. Select the request text and copy it manually.');
+      setFollowUpOutcome('Copy failed. Select the request text and copy it manually.');
+      return false;
+    }
+  }
+
+  async function recordInformationRequest(): Promise<boolean> {
+    setRequestSaving(true);
+    const saved = await persist<{ caseVersion: number }>('/decisions', 'POST', {
+      outcome: 'request_information',
+      reason: `Requested follow-up for ${followUpFindings.length} accepted finding(s).`,
+      version: currentCaseVersion,
+    });
+    setRequestSaving(false);
+    if (!saved) {
+      setNotice('The information request was not recorded because the API request failed.');
+      return false;
+    }
+    setCurrentCaseVersion(saved.caseVersion);
+    setNotice('Information request recorded and ready to send.');
+    return true;
+  }
+
+  async function completeInformationRequest(mode: 'email' | 'copy') {
+    const saved = await recordInformationRequest();
+    if (!saved) return;
+    if (mode === 'copy') {
+      await copyFollowUp();
+      return;
+    }
+    setFollowUpOutcome('Information request recorded. Opening your email client…');
+    if (followUpDraft.mailto) window.location.href = followUpDraft.mailto;
   }
 
   function saveCorrection() {
@@ -219,16 +352,20 @@ export function ReviewPanel({
           <ol className="findings-list">
             {findings.map((finding) => (
               <li
-                className={`finding finding-${finding.severity}`}
+                className={`finding finding-${finding.severity}${finding.evidenceIds.includes(selectedEvidenceId ?? '') ? ' finding-selected' : ''}`}
                 id={`finding-${finding.evidenceIds[0]}`}
                 key={finding.id}
               >
                 <div className="finding-index" aria-hidden="true">
                   {finding.evidenceIds.map((evidenceId) => {
-                    const match = initialFindings
-                      .flatMap((item) => item.evidenceIds)
-                      .indexOf(evidenceId);
-                    return <span key={evidenceId}>E{String(match + 1).padStart(2, '0')}</span>;
+                    const anchor = evidenceById.get(evidenceId);
+                    const fallbackIndex =
+                      initialFindings.flatMap((item) => item.evidenceIds).indexOf(evidenceId) + 1;
+                    return (
+                      <span key={evidenceId}>
+                        E{String(anchor?.index ?? fallbackIndex).padStart(2, '0')}
+                      </span>
+                    );
                   })}
                 </div>
                 <div className="finding-body">
@@ -242,8 +379,13 @@ export function ReviewPanel({
                   <p>{finding.detail}</p>
                   <div className="finding-actions">
                     {finding.evidenceIds.map((evidenceId, index) => (
-                      <a href={`#evidence-${evidenceId}`} key={evidenceId}>
-                        <FileSearch aria-hidden="true" size={12} /> Open evidence {index + 1}
+                      <a
+                        aria-current={selectedEvidenceId === evidenceId ? 'location' : undefined}
+                        href={evidenceHref(evidenceId)}
+                        key={evidenceId}
+                        onClick={(event) => handleEvidenceClick(event, evidenceId)}
+                      >
+                        <FileSearch aria-hidden="true" size={12} /> Open source {index + 1}
                       </a>
                     ))}
                     {finding.state === 'open' ? (
@@ -252,7 +394,7 @@ export function ReviewPanel({
                           type="button"
                           onClick={() => setFindingState(finding.id, 'accepted')}
                         >
-                          <Send aria-hidden="true" size={12} /> Accept follow-up
+                          <Send aria-hidden="true" size={12} /> Add to follow-up
                         </button>
                         <button
                           type="button"
@@ -262,7 +404,9 @@ export function ReviewPanel({
                         </button>
                       </>
                     ) : (
-                      <span className="resolution-state">{finding.state}</span>
+                      <span className="resolution-state">
+                        {finding.state === 'accepted' ? 'Included in follow-up' : finding.state}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -279,27 +423,49 @@ export function ReviewPanel({
             <h2>Material facts</h2>
           </div>
           <dl className="facts-list">
-            {facts.map((fact) => (
-              <div className={`fact-row fact-${fact.state}`} key={fact.id}>
-                <dt>{fact.label}</dt>
-                <dd>
-                  <code>{fact.value}</code>
-                  <span>{Math.round(fact.confidence * 100)}% confidence</span>
-                </dd>
-                <div className="fact-actions">
-                  <a href={`#evidence-${fact.evidenceId}`}>Open source</a>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingFact(fact);
-                      setCorrection(fact.value);
-                    }}
-                  >
-                    <PencilLine aria-hidden="true" size={12} /> Correct value
-                  </button>
+            {facts.map((fact) => {
+              const anchor = evidenceById.get(fact.evidenceId);
+              return (
+                <div
+                  className={`fact-row fact-${fact.state}${selectedEvidenceId === fact.evidenceId ? ' fact-selected' : ''}`}
+                  key={fact.id}
+                >
+                  <dt>{fact.label}</dt>
+                  <dd>
+                    <code>{fact.value}</code>
+                    <span>{Math.round(fact.confidence * 100)}% confidence</span>
+                    {anchor ? (
+                      <div className="fact-source">
+                        <span>
+                          {anchor.label} · page {anchor.page}
+                        </span>
+                        <q>{anchor.excerpt}</q>
+                      </div>
+                    ) : null}
+                    <div className="fact-actions">
+                      <a
+                        aria-current={
+                          selectedEvidenceId === fact.evidenceId ? 'location' : undefined
+                        }
+                        href={evidenceHref(fact.evidenceId)}
+                        onClick={(event) => handleEvidenceClick(event, fact.evidenceId)}
+                      >
+                        <FileSearch aria-hidden="true" size={12} /> Open in document
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingFact(fact);
+                          setCorrection(fact.value);
+                        }}
+                      >
+                        <PencilLine aria-hidden="true" size={12} /> Correct value
+                      </button>
+                    </div>
+                  </dd>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </dl>
         </div>
       ) : null}
@@ -328,24 +494,25 @@ export function ReviewPanel({
         <div>
           <button
             className="button button-primary"
+            disabled={followUpFindings.length === 0}
+            title={
+              followUpFindings.length === 0
+                ? 'Add at least one finding to the follow-up first.'
+                : undefined
+            }
             type="button"
             onClick={() => {
-              setNotice('Recording information request…');
-              void persist('/decisions', 'POST', {
-                outcome: 'request_information',
-                reason:
-                  'Required evidence and remediation for material findings remain outstanding.',
-                version: currentCaseVersion,
-              }).then((saved) => {
-                setNotice(
-                  saved
-                    ? 'Information request recorded.'
-                    : 'The information request was not recorded because the API request failed.',
-                );
-              });
+              setFollowUpOutcome('');
+              setFollowUpOpen(true);
             }}
+            ref={requestTriggerRef}
           >
             <Send aria-hidden="true" size={14} /> Request information
+            {followUpFindings.length > 0 ? (
+              <span className="follow-up-count" aria-label={`${followUpFindings.length} selected`}>
+                {followUpFindings.length}
+              </span>
+            ) : null}
           </button>
           <button
             className="button button-secondary"
@@ -418,6 +585,83 @@ export function ReviewPanel({
                 onClick={saveCorrection}
               >
                 Save correction
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {followUpOpen ? (
+        <div className="dialog-backdrop">
+          <section
+            aria-labelledby="follow-up-title"
+            aria-modal="true"
+            className="correction-dialog follow-up-dialog"
+            ref={followUpDialogRef}
+            role="dialog"
+          >
+            <button
+              aria-label="Close information request"
+              className="dialog-close"
+              type="button"
+              onClick={() => setFollowUpOpen(false)}
+            >
+              <X aria-hidden="true" size={17} />
+            </button>
+            <p className="eyebrow">Supplier follow-up</p>
+            <h2 id="follow-up-title">Review the information request</h2>
+            <div className="follow-up-recipient">
+              <Mail aria-hidden="true" size={16} />
+              <span>
+                <strong>{contact?.name ?? 'No document contact found'}</strong>
+                <small>{contact?.email ?? 'Copy the request and address it manually'}</small>
+              </span>
+            </div>
+            <label>
+              Subject
+              <input readOnly value={followUpDraft.subject} />
+            </label>
+            <label>
+              Message covering {followUpFindings.length} follow-up point
+              {followUpFindings.length === 1 ? '' : 's'}
+              <textarea className="follow-up-body" readOnly value={followUpDraft.body} />
+            </label>
+            <p className="follow-up-privacy">
+              The draft was created locally from the findings you selected. Review it before
+              sending.
+            </p>
+            {followUpOutcome ? (
+              <p className="follow-up-outcome" role="status">
+                {followUpOutcome}
+              </p>
+            ) : null}
+            <div className="dialog-actions follow-up-actions">
+              <button
+                className="button button-secondary"
+                type="button"
+                onClick={() => void copyFollowUp()}
+              >
+                <Copy aria-hidden="true" size={14} /> Copy request
+              </button>
+              <button
+                className="button button-primary"
+                disabled={requestSaving}
+                type="button"
+                onClick={() =>
+                  void completeInformationRequest(followUpDraft.mailto ? 'email' : 'copy')
+                }
+              >
+                {followUpDraft.mailto ? (
+                  <>
+                    <Mail aria-hidden="true" size={14} />{' '}
+                    {requestSaving ? 'Recording…' : 'Record and open email'}
+                  </>
+                ) : (
+                  <>
+                    <Copy aria-hidden="true" size={14} />{' '}
+                    {requestSaving ? 'Recording…' : 'Record and copy'}
+                  </>
+                )}
               </button>
             </div>
           </section>

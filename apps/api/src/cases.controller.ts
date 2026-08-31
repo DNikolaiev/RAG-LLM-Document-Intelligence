@@ -4,15 +4,20 @@ import {
   Controller,
   Get,
   Headers,
+  HttpException,
+  HttpStatus,
   Inject,
   Param,
   Patch,
   Post,
   Query,
+  Res,
+  StreamableFile,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response as ExpressResponse } from 'express';
 import { z } from 'zod';
 import { CASES_RUNTIME, type CasesRuntime } from './cases-runtime.js';
 import type { CaseStatus } from './demo-data.js';
@@ -88,6 +93,46 @@ export class CasesController {
     return this.cases.export(context, id);
   }
 
+  @Get(':id/documents/:documentId/content')
+  async documentContent(
+    @Context() context: RequestContext,
+    @Param('id') id: string,
+    @Param('documentId') documentId: string,
+    @Headers('range') rangeHeader: string | undefined,
+    @Res({ passthrough: true }) response: ExpressResponse,
+  ) {
+    const source = await this.cases.getDocumentContent(context, id, documentId);
+    const body = Buffer.from(source.body);
+    const range = rangeHeader ? parseByteRange(rangeHeader, body.byteLength) : undefined;
+    response.setHeader('Accept-Ranges', 'bytes');
+    response.setHeader('Cache-Control', 'private, no-store');
+
+    if (rangeHeader && !range) {
+      response.setHeader('Content-Range', `bytes */${body.byteLength}`);
+      throw new HttpException(
+        { code: 'INVALID_BYTE_RANGE', message: 'The requested document byte range is invalid.' },
+        HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE,
+      );
+    }
+
+    if (range) {
+      const partial = body.subarray(range.start, range.end + 1);
+      response.status(HttpStatus.PARTIAL_CONTENT);
+      response.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${body.byteLength}`);
+      return new StreamableFile(partial, {
+        type: source.mediaType,
+        disposition: `inline; filename="${safeHeaderFileName(source.fileName)}"`,
+        length: partial.byteLength,
+      });
+    }
+
+    return new StreamableFile(body, {
+      type: source.mediaType,
+      disposition: `inline; filename="${safeHeaderFileName(source.fileName)}"`,
+      length: body.byteLength,
+    });
+  }
+
   @Patch(':id/facts/:factId')
   correctFact(
     @Context() context: RequestContext,
@@ -146,4 +191,32 @@ export class CasesController {
   decide(@Context() context: RequestContext, @Param('id') id: string, @Body() body: unknown) {
     return this.cases.decide(context, id, parseBody(decisionSchema, body));
   }
+}
+
+function safeHeaderFileName(fileName: string): string {
+  return fileName.replaceAll(/[^\x20-\x7e]|[\r\n"\\]/g, '_').slice(0, 180) || 'document';
+}
+
+function parseByteRange(value: string, length: number): { start: number; end: number } | undefined {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
+  if (!match || length < 1 || (!match[1] && !match[2])) return undefined;
+
+  if (!match[1]) {
+    const suffixLength = Number.parseInt(match[2]!, 10);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength < 1) return undefined;
+    return { start: Math.max(0, length - suffixLength), end: length - 1 };
+  }
+
+  const start = Number.parseInt(match[1], 10);
+  const requestedEnd = match[2] ? Number.parseInt(match[2], 10) : length - 1;
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(requestedEnd) ||
+    start < 0 ||
+    start >= length ||
+    requestedEnd < start
+  ) {
+    return undefined;
+  }
+  return { start, end: Math.min(requestedEnd, length - 1) };
 }

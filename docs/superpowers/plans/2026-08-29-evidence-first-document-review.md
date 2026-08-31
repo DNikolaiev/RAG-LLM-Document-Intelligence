@@ -22,6 +22,7 @@
 ### Task 1: Authorized document source endpoint
 
 **Files:**
+
 - Modify: `apps/api/src/cases.controller.ts`
 - Modify: `apps/api/src/production-cases.service.ts`
 - Modify: `apps/api/src/cases.service.ts`
@@ -36,6 +37,7 @@
 ### Task 2: Evidence geometry and API projection
 
 **Files:**
+
 - Modify: `packages/contracts/src/core.ts`
 - Modify: `packages/workflow/src/state.ts`
 - Modify: `apps/worker/src/production-runtime.ts`
@@ -52,6 +54,7 @@
 ### Task 3: Original PDF viewer
 
 **Files:**
+
 - Replace: `apps/web/components/document-surface.tsx`
 - Modify: `apps/web/components/document-surface-loader.tsx`
 - Create: `apps/web/components/pdf-document-viewer.tsx`
@@ -68,6 +71,7 @@
 ### Task 4: Coordinated evidence navigation
 
 **Files:**
+
 - Modify: `apps/web/app/cases/[caseId]/page.tsx`
 - Modify: `apps/web/components/dossier-nav.tsx`
 - Modify: `apps/web/components/review-panel.tsx`
@@ -82,4 +86,3 @@
 - [ ] Keep correction as an explicit secondary action.
 - [ ] Verify responsive tabs, keyboard order, reduced motion, 200% zoom, and no overflow.
 - [ ] Run component/Playwright tests and commit.
-

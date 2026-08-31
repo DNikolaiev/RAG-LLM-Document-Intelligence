@@ -6,9 +6,13 @@ Uploads, extracted text, OCR output, retrieved policy passages, and model respon
 
 Document content is delimited as evidence in prompts. It cannot redefine system instructions, select tools, or change a domain pack. Model output must satisfy a versioned schema and include evidence for material facts. Policy thresholds and final decision gates remain deterministic. Final decisions require an approver.
 
+Policy PDFs have the same untrusted status. Generated proposals are restricted to an allowlisted condition DSL and installed fact paths, require exact page quotations, and must pass match, no-match, missing-value, and boundary fixtures. They are stored as proposals, never activated by the model. Local test-profile mode may permit proposer self-approval so the portfolio stack is testable; the review reason records that exception, and public deployments must disable the identity switcher.
+
 ## Tenant isolation and authorization
 
 Every application command carries tenant, user, role, and correlation context. The service layer checks role invariants. PostgreSQL enables and forces RLS on tenant tables, with indexed tenant columns and least-privilege runtime/auditor roles. Production deployments must use a non-owner, non-superuser runtime account and set `app.tenant_id` on every checked-out transaction.
+
+Queue notifications have a narrower boundary than tenant data: normal users may select only jobs/events whose enqueueing or recipient user ID matches `app.user_id`, including when two users share a tenant. Worker writes use a separately asserted system-actor transaction context. The browser receives no Redis password and no direct queue access.
 
 ## Data minimization
 

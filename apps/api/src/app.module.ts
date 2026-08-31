@@ -8,10 +8,19 @@ import { HealthController } from './health.controller.js';
 import { JobsController } from './jobs.controller.js';
 import { loadConfig } from '@caselens/config';
 import { ProductionCasesService } from './production-cases.service.js';
+import { PoliciesController } from './policies/policies.controller.js';
+import { PoliciesService } from './policies/policies.service.js';
 
 @Module({
-  controllers: [HealthController, DomainPacksController, CasesController, JobsController],
+  controllers: [
+    HealthController,
+    DomainPacksController,
+    CasesController,
+    JobsController,
+    PoliciesController,
+  ],
   providers: [
+    PoliciesService,
     {
       provide: CASES_RUNTIME,
       useFactory: () =>
