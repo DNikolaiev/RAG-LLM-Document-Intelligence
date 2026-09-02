@@ -32,6 +32,7 @@ const reviewSchema = z.object({
   decision: z.enum(['approve', 'reject']),
   reason: z.string().trim().min(8).max(1_000),
   version: z.number().int().positive(),
+  severity: z.enum(['info', 'minor', 'major', 'critical']).optional(),
 });
 const activateSchema = z.object({
   version: z.number().int().positive(),
@@ -71,6 +72,11 @@ export class PoliciesController {
     return this.policies.upload(context, file, parseBody(uploadSchema, body), key);
   }
 
+  @Get('domain-pack')
+  domainPack(@Context() context: RequestContext, @Query('tenantId') tenantId?: string) {
+    return this.policies.domainPackConfiguration(context, tenantId);
+  }
+
   @Get(':id')
   get(@Context() context: RequestContext, @Param('id') id: string) {
     return this.policies.get(context, id);
@@ -86,6 +92,15 @@ export class PoliciesController {
     });
   }
 
+  @Post(':id/reprocess')
+  reprocess(
+    @Context() context: RequestContext,
+    @Param('id') id: string,
+    @Headers('idempotency-key') key = `reprocess-${context.correlationId}`,
+  ) {
+    return this.policies.reprocess(context, id, key);
+  }
+
   @Patch(':id/proposals/:proposalId')
   review(
     @Context() context: RequestContext,
@@ -93,7 +108,13 @@ export class PoliciesController {
     @Param('proposalId') proposalId: string,
     @Body() body: unknown,
   ) {
-    return this.policies.reviewProposal(context, id, proposalId, parseBody(reviewSchema, body));
+    const input = parseBody(reviewSchema, body);
+    return this.policies.reviewProposal(context, id, proposalId, {
+      decision: input.decision,
+      reason: input.reason,
+      version: input.version,
+      ...(input.severity ? { severity: input.severity } : {}),
+    });
   }
 
   @Post(':id/activate')

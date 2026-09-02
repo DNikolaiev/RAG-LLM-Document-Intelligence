@@ -134,6 +134,42 @@ describe('policy rule proposal governance', () => {
     );
   });
 
+  it('accepts absence as the boundary of an explicit missing-value rule', () => {
+    const proposal = validProposal();
+    proposal.when = { operator: 'exists', path: 'facts.dpa.signed', value: false };
+    proposal.tests = [
+      {
+        kind: 'match',
+        name: 'DPA is absent',
+        input: { facts: { dpa: {} } },
+        expected: true,
+      },
+      {
+        kind: 'no_match',
+        name: 'DPA is present',
+        input: { facts: { dpa: { signed: true } } },
+        expected: false,
+      },
+      {
+        kind: 'missing_value',
+        name: 'DPA remains absent',
+        input: { facts: { dpa: {} } },
+        expected: true,
+      },
+      {
+        kind: 'boundary',
+        name: 'Absence is the policy boundary',
+        input: { facts: { dpa: {} } },
+        expected: true,
+      },
+    ];
+
+    expect(validateRuleProposal(proposal, pharmacySupplierPack)).toEqual({
+      valid: true,
+      issues: [],
+    });
+  });
+
   it('blocks self-approval unless the local-demo exception is explicitly enabled', () => {
     const proposal = validProposal();
     expect(

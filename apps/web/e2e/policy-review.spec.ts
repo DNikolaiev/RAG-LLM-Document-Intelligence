@@ -52,6 +52,7 @@ const policy = {
           id: 'test-match',
           kind: 'match',
           name: 'Below-threshold match',
+          input: { facts: { insurance: { liabilityLimitEur: 1_500_000 } } },
           expected: true,
           actual: false,
           passed: false,
@@ -60,6 +61,7 @@ const policy = {
           id: 'test-no-match',
           kind: 'no_match',
           name: 'Compliant supplier',
+          input: { facts: { insurance: { liabilityLimitEur: 2_500_000 } } },
           expected: false,
           actual: false,
           passed: true,
@@ -86,6 +88,7 @@ test('policy review explains blocked rules, highlights citations, and allows dis
 }) => {
   const failures = monitorRuntimeFailures(page);
   let reviewBody: unknown;
+  let approvalBody: unknown;
   let dismissed = false;
   await page.route('**/api/policies/policy-test/content', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/pdf', body: policyPdf });
@@ -93,6 +96,10 @@ test('policy review explains blocked rules, highlights citations, and allows dis
   await page.route('**/api/policies/policy-test/proposals/proposal-blocked', async (route) => {
     reviewBody = route.request().postDataJSON();
     dismissed = true;
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+  });
+  await page.route('**/api/policies/policy-test/proposals/proposal-ready', async (route) => {
+    approvalBody = route.request().postDataJSON();
     await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
   });
   await page.route('**/api/policies/policy-test', async (route) => {
@@ -120,11 +127,40 @@ test('policy review explains blocked rules, highlights citations, and allows dis
 
   await page.goto('/policies/policy-test');
   await expect(page.getByRole('heading', { name: 'All generated rules' })).toBeVisible();
+  const documentScrollRegion = page.getByTestId('document-scroll-region');
+  await expect(documentScrollRegion).toBeVisible();
+  const policyDocumentCanScroll = await documentScrollRegion.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    return {
+      canScroll: element.scrollHeight > element.clientHeight,
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      scrollTop: element.scrollTop,
+    };
+  });
+  expect(
+    policyDocumentCanScroll.canScroll,
+    'The policy source must retain a vertical scroll area.',
+  ).toBe(true);
+  expect(
+    policyDocumentCanScroll.scrollTop,
+    'The policy source must scroll downward.',
+  ).toBeGreaterThan(0);
+  await documentScrollRegion.evaluate((element) => {
+    element.scrollTop = 0;
+  });
   await expect(
     page.getByRole('heading', { name: 'Minimum product liability cover' }),
   ).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Insurance evidence required' })).toBeVisible();
   await expect(page.getByText('Why approval is blocked')).toBeVisible();
+  await expect(page.getByText('Test value: €1,500,000.00')).toBeVisible();
+  await expect(
+    page
+      .getByRole('article')
+      .filter({ has: page.getByRole('heading', { name: 'Minimum product liability cover' }) })
+      .getByText('Rule logic'),
+  ).toBeVisible();
   await expect(
     page.getByText(/Failed — expected the rule to trigger; it did not trigger/),
   ).toBeVisible();
@@ -132,6 +168,13 @@ test('policy review explains blocked rules, highlights citations, and allows dis
     page.getByText(/Passed — expected the rule to not trigger; it did not trigger/),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Approve proposal' })).toBeVisible();
+  const severity = page.getByLabel('Finding severity for Insurance evidence required');
+  await severity.selectOption('minor');
+  await expect(severity).toHaveValue('minor');
+  page.once('dialog', (dialog) => dialog.accept('The risk is material but not critical.'));
+  await page.getByRole('button', { name: 'Approve proposal' }).click();
+  await expect(page.locator('.policy-message')).toHaveText('Proposal approved.');
+  expect(approvalBody).toMatchObject({ decision: 'approve', severity: 'minor', version: 1 });
 
   await page.getByRole('button', { name: /Show highlighted clause · page 1/ }).click();
   await expect(page.locator('.evidence-locator')).toContainText('Minimum product liability cover');

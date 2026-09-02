@@ -102,6 +102,91 @@ export class PoliciesService implements OnModuleDestroy {
     };
   }
 
+  async domainPackConfiguration(context: RequestContext, requestedTenantId?: string) {
+    this.requireAdministrator(context);
+    const tenantId = this.resolveTenant(context, requestedTenantId);
+    const domainPackId = `pack_${tenantId}`;
+    const pack = resolvePersistedDomainPackId(domainPackId);
+    if (!pack) {
+      throw new NotFoundException({
+        code: 'DOMAIN_PACK_NOT_FOUND',
+        message: 'No domain pack is installed for the selected workspace.',
+      });
+    }
+    const documentTypes = new Map(
+      pack.documentTypes.map((documentType) => [documentType.id, documentType]),
+    );
+    const store = this.runtime().store;
+    const [activePolicies, activePolicyRules] = await Promise.all([
+      store.list(this.scopeForTenant(tenantId, context.userId), {
+        domainPackId,
+        status: 'active',
+      }),
+      store.listActiveRules(tenantId, domainPackId),
+    ]);
+    const collectionByPolicyId = new Map(
+      activePolicies.map((policy) => [policy.id, policy.collectionId]),
+    );
+    const baselineRules = pack.rules.map((rule) => ({
+      id: rule.id,
+      title: rule.title,
+      description: rule.description,
+      severity: rule.severity,
+    }));
+    const approvedPolicyRules = activePolicyRules.flatMap((rule) => {
+      const collectionId = collectionByPolicyId.get(rule.policyDocumentId);
+      if (!collectionId) return [];
+      return [
+        {
+          id: rule.id,
+          title: rule.title,
+          description: rule.description,
+          severity: rule.severity,
+          collectionId,
+          policyVersion: rule.policyVersion,
+        },
+      ];
+    });
+
+    return {
+      tenantId,
+      domainPack: {
+        id: domainPackId,
+        key: pack.id,
+        name: pack.name,
+        version: pack.version,
+        terminology: pack.terminology,
+        collections: pack.policyCollections.map((collection) => ({
+          id: collection.id,
+          label: collection.label,
+        })),
+        requiredDocuments: pack.requiredDocuments.map((requirement) => ({
+          id: requirement.id,
+          documentType: requirement.documentType,
+          documentLabel:
+            documentTypes.get(requirement.documentType)?.label ?? requirement.documentType,
+          severity: requirement.severity,
+          message: requirement.message,
+          conditional: Boolean(requirement.when),
+        })),
+        documentTypes: pack.documentTypes.map((documentType) => ({
+          id: documentType.id,
+          label: documentType.label,
+          description: documentType.description,
+          fields: documentType.extractionFields.map((field) => ({
+            path: field.path,
+            label: field.label,
+            type: field.type,
+            required: field.required,
+            aliases: field.aliases,
+          })),
+        })),
+        baselineRules,
+        policyRules: approvedPolicyRules,
+      },
+    };
+  }
+
   async get(context: RequestContext, policyId: string) {
     this.requireAdministrator(context);
     const store = this.runtime().store;
@@ -289,11 +374,109 @@ export class PoliciesService implements OnModuleDestroy {
     return { ...policy, jobId: job.id };
   }
 
+  async reprocess(context: RequestContext, policyId: string, idempotencyKey: string) {
+    this.requireAdministrator(context);
+    const { store, jobs, queue } = this.runtime();
+    const policy = await store.getDetail(this.scope(context), policyId);
+    if (!policy)
+      throw new NotFoundException({ code: 'POLICY_NOT_FOUND', message: 'Policy not found.' });
+    if (['processing', 'active', 'superseded', 'revoked'].includes(policy.status)) {
+      throw new ConflictException({
+        code: 'POLICY_NOT_REPROCESSABLE',
+        message: `A ${policy.status.replaceAll('_', ' ')} policy cannot be regenerated.`,
+      });
+    }
+    if (policy.proposals.some((proposal) => ['approved', 'activated'].includes(proposal.status))) {
+      throw new ConflictException({
+        code: 'APPROVED_RULES_PRESERVED',
+        message: 'This policy has approved rules and cannot be regenerated in place.',
+      });
+    }
+    const durableKey = `${policy.tenantId}:${policy.id}:reprocess:${idempotencyKey}`;
+    const job = await jobs.createJob({
+      id: stableId('job', durableKey),
+      tenantId: policy.tenantId,
+      caseId: null,
+      targetType: 'policy_version',
+      targetId: policy.id,
+      enqueuedByUserId: context.userId,
+      correlationId: context.correlationId,
+      queueJobId: null,
+      status: 'queued',
+      progress: 0,
+      attempts: 0,
+      errorCode: null,
+      kind: 'process_policy',
+      idempotencyKey: durableKey,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    if (job.status !== 'queued' || job.queueJobId) return { policyId: policy.id, jobId: job.id };
+
+    const processing = await store.updateStatus({
+      tenantId: policy.tenantId,
+      id: policy.id,
+      expectedVersion: policy.version,
+      status: 'processing',
+      processingError: null,
+    });
+    const enqueued = await queue.enqueue(
+      'process_policy',
+      {
+        databaseJobId: job.id,
+        tenantId: policy.tenantId,
+        targetType: 'policy_version',
+        targetId: policy.id,
+        policyDocumentId: policy.id,
+        idempotencyKey: durableKey,
+      },
+      { idempotencyKey: job.id, maxAttempts: 3 },
+    );
+    if (!enqueued.ok) {
+      await store.updateStatus({
+        tenantId: policy.tenantId,
+        id: policy.id,
+        expectedVersion: processing.version,
+        status: policy.status,
+        processingError: null,
+      });
+      await jobs.updateJob(job.id, policy.tenantId, {
+        status: 'failed',
+        progress: 0,
+        errorCode: 'QUEUE_UNAVAILABLE',
+        eventType: 'job.failed',
+        stage: 'queue',
+        message: 'The policy regeneration request could not be added to the queue.',
+      });
+      throw new ServiceUnavailableException({
+        code: 'QUEUE_UNAVAILABLE',
+        message: enqueued.error.message,
+      });
+    }
+    await jobs.updateJob(job.id, policy.tenantId, {
+      status: 'queued',
+      progress: 0,
+      queueJobId: enqueued.value.jobId,
+      eventType: enqueued.value.duplicate ? 'queue.duplicate_suppressed' : 'queue.enqueued',
+      stage: 'queue',
+      message: enqueued.value.duplicate
+        ? 'This policy regeneration request was already queued.'
+        : 'Policy regeneration queued and waiting for a worker.',
+      actorUserId: context.userId,
+    });
+    return { policyId: policy.id, jobId: job.id };
+  }
+
   async reviewProposal(
     context: RequestContext,
     policyId: string,
     proposalId: string,
-    input: { decision: 'approve' | 'reject'; reason: string; version: number },
+    input: {
+      decision: 'approve' | 'reject';
+      reason: string;
+      version: number;
+      severity?: 'info' | 'minor' | 'major' | 'critical';
+    },
   ) {
     this.requireAdministrator(context);
     const store = this.runtime().store;
@@ -326,7 +509,10 @@ export class PoliciesService implements OnModuleDestroy {
     );
     if (input.decision === 'approve') {
       const domainPack = resolvePersistedDomainPackId(policy.domainPackId);
-      const candidate = toGovernanceProposal(policy.id, proposal);
+      const candidate = toGovernanceProposal(policy.id, {
+        ...proposal,
+        severity: input.severity ?? proposal.severity,
+      });
       const result = validateRuleProposal(candidate, domainPack, {
         approverUserId: context.userId,
         allowSelfApproval: this.#allowSelfApproval,
@@ -345,6 +531,10 @@ export class PoliciesService implements OnModuleDestroy {
       this.#allowSelfApproval
         ? ' [Local test-profile mode: proposer self-approval was permitted and audited.]'
         : '';
+    const severityDisclosure =
+      input.severity && input.severity !== proposal.severity
+        ? ` [Finding severity changed from ${proposal.severity} to ${input.severity}.]`
+        : '';
     return store.reviewProposal({
       tenantId: policy.tenantId,
       policyDocumentId: policy.id,
@@ -352,7 +542,8 @@ export class PoliciesService implements OnModuleDestroy {
       expectedVersion: input.version,
       reviewerUserId: context.userId,
       status: input.decision === 'approve' ? 'approved' : 'rejected',
-      reason: `${input.reason.trim()}${selfApprovalDisclosure}`,
+      reason: `${input.reason.trim()}${severityDisclosure}${selfApprovalDisclosure}`,
+      ...(input.severity ? { severity: input.severity } : {}),
     });
   }
 

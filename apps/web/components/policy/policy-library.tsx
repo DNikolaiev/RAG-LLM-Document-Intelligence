@@ -1,8 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { BookOpenCheck, FileUp, ShieldCheck } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import {
+  BadgeCheck,
+  BookOpenCheck,
+  Braces,
+  FileCheck2,
+  FileUp,
+  ListChecks,
+  X,
+  ShieldCheck,
+} from 'lucide-react';
 import type { TestTenant } from '@caselens/contracts';
 
 interface PolicySummary {
@@ -14,6 +23,61 @@ interface PolicySummary {
   status: string;
   pageCount: number | null;
   updatedAt: string;
+}
+
+interface DomainPackConfiguration {
+  tenantId: string;
+  domainPack: {
+    id: string;
+    key: string;
+    name: string;
+    version: string;
+    terminology: { case: string; subject: string; decision: string };
+    collections: Array<{ id: string; label: string }>;
+    requiredDocuments: Array<{
+      id: string;
+      documentType: string;
+      documentLabel: string;
+      severity: string;
+      message: string;
+      conditional: boolean;
+    }>;
+    documentTypes: Array<{
+      id: string;
+      label: string;
+      description: string;
+      fields: Array<{
+        path: string;
+        label: string;
+        type: string;
+        required: boolean;
+        aliases: string[];
+      }>;
+    }>;
+    baselineRules: Array<{
+      id: string;
+      title: string;
+      description: string;
+      severity: string;
+    }>;
+    policyRules: Array<{
+      id: string;
+      title: string;
+      description: string;
+      severity: string;
+      collectionId: string;
+      policyVersion: string;
+    }>;
+  };
+}
+
+type RuleDialogState = { kind: 'baseline' } | { kind: 'collection'; collectionId: string } | null;
+
+interface DomainPackLoad {
+  tenantId: string;
+  state: 'ready' | 'error';
+  domainPack: DomainPackConfiguration | null;
+  error: string;
 }
 
 const COLLECTIONS: Record<string, ReadonlyArray<{ id: string; label: string }>> = {
@@ -37,6 +101,25 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
   const [tenantId, setTenantId] = useState(tenants[0]?.id ?? '');
   const [state, setState] = useState<'loading' | 'ready' | 'submitting'>('loading');
   const [message, setMessage] = useState('');
+  const [domainPackLoad, setDomainPackLoad] = useState<DomainPackLoad | null>(null);
+  const [ruleDialog, setRuleDialog] = useState<RuleDialogState>(null);
+  const ruleDialogRef = useRef<HTMLDialogElement>(null);
+  const currentDomainPackLoad = domainPackLoad?.tenantId === tenantId ? domainPackLoad : null;
+  const domainPack = currentDomainPackLoad?.domainPack ?? null;
+  const domainPackState: 'loading' | 'ready' | 'error' = !tenantId
+    ? 'ready'
+    : (currentDomainPackLoad?.state ?? 'loading');
+  const domainPackError = currentDomainPackLoad?.error ?? '';
+  const selectedTenant = tenants.find((tenant) => tenant.id === tenantId);
+  const tenantItems = items.filter((item) => item.tenantId === tenantId);
+  const selectedCollection = domainPack?.domainPack.collections.find(
+    (collection) => ruleDialog?.kind === 'collection' && collection.id === ruleDialog.collectionId,
+  );
+  const selectedCollectionRules = selectedCollection
+    ? (domainPack?.domainPack.policyRules.filter(
+        (rule) => rule.collectionId === selectedCollection.id,
+      ) ?? [])
+    : [];
   const load = useCallback(async () => {
     const response = await fetch('/api/policies', { cache: 'no-store' });
     const body = await response.json().catch(() => ({ items: [] }));
@@ -53,6 +136,52 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
     }, 0);
     return () => clearTimeout(timer);
   }, [load]);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    let cancelled = false;
+    void fetch(`/api/policies/domain-pack?tenantId=${encodeURIComponent(tenantId)}`, {
+      cache: 'no-store',
+    })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.message ?? 'Could not load the domain pack.');
+        if (!cancelled) {
+          setDomainPackLoad({
+            tenantId,
+            state: 'ready',
+            domainPack: body as DomainPackConfiguration,
+            error: '',
+          });
+        }
+      })
+      .catch((error: Error) => {
+        if (!cancelled) {
+          setDomainPackLoad({
+            tenantId,
+            state: 'error',
+            domainPack: null,
+            error: error.message,
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId]);
+
+  useEffect(() => {
+    const dialog = ruleDialogRef.current;
+    if (!dialog) return;
+    if (!ruleDialog) {
+      if (dialog.open) dialog.close();
+      return;
+    }
+    if (!dialog.open) dialog.showModal();
+    const onClose = () => setRuleDialog(null);
+    dialog.addEventListener('close', onClose);
+    return () => dialog.removeEventListener('close', onClose);
+  }, [ruleDialog]);
 
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -92,10 +221,285 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
         </div>
         <div className="policy-hero-mark" aria-hidden="true">
           <BookOpenCheck />
-          <strong>{items.length}</strong>
+          <strong>{tenantItems.length}</strong>
           <span>policy versions</span>
         </div>
       </section>
+      <section className="policy-rule-guide" aria-labelledby="policy-rule-guide-title">
+        <div className="policy-rule-guide-mark" aria-hidden="true">
+          <Braces size={22} />
+        </div>
+        <div>
+          <span className="policy-eyebrow">Rule coverage</span>
+          <h2 id="policy-rule-guide-title">What can become a rule</h2>
+          <p>
+            The engine turns cited policy language into conditions for values, presence, dates,
+            amounts, allowed values, text or list content, and all/any/not combinations.
+          </p>
+        </div>
+        <ul aria-label="Supported policy condition categories">
+          <li>
+            <strong>Evidence</strong>
+            <span>Present, missing, or contains required content</span>
+          </li>
+          <li>
+            <strong>Values</strong>
+            <span>Equals, differs, or belongs to an allowed set</span>
+          </li>
+          <li>
+            <strong>Time &amp; limits</strong>
+            <span>Before/after dates and numeric thresholds</span>
+          </li>
+          <li>
+            <strong>Combinations</strong>
+            <span>All, any, and explicit exceptions</span>
+          </li>
+        </ul>
+        <p className="policy-rule-guide-gate">
+          <BadgeCheck size={16} aria-hidden="true" /> Exact PDF citation + four deterministic checks
+          are required before approval.
+        </p>
+      </section>
+      <section
+        className="domain-pack-panel"
+        aria-labelledby="domain-pack-title"
+        data-testid="domain-pack-configuration"
+      >
+        <header className="domain-pack-heading">
+          <div className="domain-pack-mark" aria-hidden="true">
+            <FileCheck2 size={22} />
+          </div>
+          <div>
+            <span className="policy-eyebrow">Fixed review vocabulary</span>
+            <h2 id="domain-pack-title">What a policy may become</h2>
+            <p>
+              This setup names the evidence and facts a policy may constrain. It does not create
+              policy-derived rules; each new rule must come from a cited source clause.
+            </p>
+          </div>
+          <div className="domain-pack-identity" aria-live="polite">
+            <strong>{selectedTenant?.name ?? 'Workspace'}</strong>
+            <span>
+              {domainPack
+                ? `${domainPack.domainPack.name} · v${domainPack.domainPack.version}`
+                : 'Loading baseline…'}
+            </span>
+          </div>
+        </header>
+        {domainPackState === 'loading' ? (
+          <p className="domain-pack-loading">Loading the tenant-specific evidence contract…</p>
+        ) : domainPackState === 'error' ? (
+          <p className="domain-pack-loading domain-pack-error" role="alert">
+            {domainPackError}
+          </p>
+        ) : domainPack ? (
+          <>
+            <ol className="domain-pack-flow" aria-label="How policy text becomes an active rule">
+              <li>
+                <span>01</span>
+                <div>
+                  <strong>Read source policy</strong>
+                  <p>Extract clauses from the uploaded PDF.</p>
+                </div>
+              </li>
+              <li>
+                <span>02</span>
+                <div>
+                  <strong>Propose new condition</strong>
+                  <p>Use the vocabulary below and exact citations.</p>
+                </div>
+              </li>
+              <li>
+                <span>03</span>
+                <div>
+                  <strong>Review and activate</strong>
+                  <p>Only approved proposals affect case reviews.</p>
+                </div>
+              </li>
+            </ol>
+            <div className="domain-pack-grid">
+              <article className="domain-pack-section">
+                <div className="domain-pack-section-heading">
+                  <ShieldCheck aria-hidden="true" size={16} />
+                  <div>
+                    <h3>Evidence gates</h3>
+                    <p>Missing-document checks. They are not extracted policy rules.</p>
+                  </div>
+                </div>
+                <ul className="domain-requirements">
+                  {domainPack.domainPack.requiredDocuments.map((requirement) => (
+                    <li key={requirement.id}>
+                      <span className={`policy-status policy-status-${requirement.severity}`}>
+                        {requirement.conditional ? 'conditional' : 'mandatory'}
+                      </span>
+                      <div>
+                        <strong>{requirement.documentLabel}</strong>
+                        <p>{requirement.message}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+              <details className="domain-pack-section domain-fact-vocabulary">
+                <summary>
+                  <div className="domain-pack-section-heading">
+                    <Braces aria-hidden="true" size={16} />
+                    <div>
+                      <h3>Fact vocabulary</h3>
+                      <p>Fields a cited clause may constrain. A field is not a rule by itself.</p>
+                    </div>
+                  </div>
+                  <span className="domain-fact-toggle">
+                    <span className="domain-fact-toggle-show">Show fields</span>
+                    <span className="domain-fact-toggle-hide">Hide fields</span>
+                  </span>
+                </summary>
+                <div className="domain-document-types">
+                  {domainPack.domainPack.documentTypes.map((documentType) => (
+                    <section key={documentType.id}>
+                      <strong>{documentType.label}</strong>
+                      <p>{documentType.description}</p>
+                      <ul>
+                        {documentType.fields.map((field) => (
+                          <li key={field.path}>
+                            <code>{field.path}</code>
+                            <span>
+                              {field.required ? 'required' : 'optional'} · {field.type}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ))}
+                </div>
+              </details>
+              <article className="domain-pack-section domain-pack-rules">
+                <div className="domain-pack-section-heading">
+                  <ListChecks aria-hidden="true" size={16} />
+                  <div>
+                    <h3>Installed controls</h3>
+                    <p>Known checks that already run before any policy is uploaded.</p>
+                  </div>
+                </div>
+                <p className="domain-pack-rule-summary">
+                  {domainPack.domainPack.baselineRules.length} fixed controls are active in this
+                  workspace.
+                </p>
+                <button
+                  type="button"
+                  className="domain-pack-rule-action"
+                  onClick={() => setRuleDialog({ kind: 'baseline' })}
+                >
+                  View installed controls
+                </button>
+              </article>
+              <article className="domain-pack-section domain-pack-collections">
+                <div className="domain-pack-section-heading">
+                  <BookOpenCheck aria-hidden="true" size={16} />
+                  <div>
+                    <h3>Policy collections</h3>
+                    <p>Source-policy channels. Open one to see rules discovered from its PDFs.</p>
+                  </div>
+                </div>
+                <div className="domain-collection-list">
+                  {domainPack.domainPack.collections.map((collection) => (
+                    <button
+                      type="button"
+                      key={collection.id}
+                      onClick={() =>
+                        setRuleDialog({ kind: 'collection', collectionId: collection.id })
+                      }
+                    >
+                      <span>{collection.label}</span>
+                      <small>
+                        {
+                          domainPack.domainPack.policyRules.filter(
+                            (rule) => rule.collectionId === collection.id,
+                          ).length
+                        }{' '}
+                        policy rules
+                      </small>
+                    </button>
+                  ))}
+                </div>
+              </article>
+            </div>
+          </>
+        ) : null}
+      </section>
+      <dialog
+        ref={ruleDialogRef}
+        aria-labelledby="collection-rule-dialog-title"
+        className="domain-rule-dialog"
+        onCancel={(event) => {
+          event.preventDefault();
+          setRuleDialog(null);
+        }}
+      >
+        <header>
+          <div>
+            <span className="policy-eyebrow">Collection rulebook</span>
+            <h2 id="collection-rule-dialog-title">
+              {ruleDialog?.kind === 'baseline'
+                ? 'Installed controls'
+                : selectedCollection
+                  ? `Rules discovered from ${selectedCollection.label}`
+                  : 'Policy-derived rules'}
+            </h2>
+            <p>
+              {ruleDialog?.kind === 'baseline'
+                ? 'These fixed checks are part of the workspace configuration. Uploading a policy does not recreate them.'
+                : 'Every rule here originated in an uploaded policy PDF, has an exact citation, and was approved before activation.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            aria-label="Close collection rules"
+            onClick={() => setRuleDialog(null)}
+          >
+            <X size={17} aria-hidden="true" />
+          </button>
+        </header>
+        {ruleDialog?.kind === 'baseline' && domainPack ? (
+          <ul className="domain-rule-dialog-list">
+            {domainPack.domainPack.baselineRules.map((rule) => (
+              <li key={rule.id}>
+                <span className={`policy-status policy-status-${rule.severity}`}>
+                  {rule.severity}
+                </span>
+                <div>
+                  <strong>{rule.title}</strong>
+                  <p>{rule.description}</p>
+                  <small>Fixed workspace control</small>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : selectedCollectionRules.length ? (
+          <ul className="domain-rule-dialog-list">
+            {selectedCollectionRules.map((rule) => (
+              <li key={rule.id}>
+                <span className={`policy-status policy-status-${rule.severity}`}>
+                  {rule.severity}
+                </span>
+                <div>
+                  <strong>{rule.title}</strong>
+                  <p>{rule.description}</p>
+                  <small>Approved policy · v{rule.policyVersion}</small>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="domain-rule-dialog-empty">
+            <strong>No policy-derived rules are active in this collection yet.</strong>
+            <p>
+              Upload a policy version, then review its cited proposals. An approved proposal only
+              appears here after its policy version is activated.
+            </p>
+          </div>
+        )}
+      </dialog>
       <div className="policy-grid">
         <section className="policy-card policy-upload-card">
           <header>
@@ -111,7 +515,10 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
               <select
                 name="tenantId"
                 value={tenantId}
-                onChange={(event) => setTenantId(event.target.value)}
+                onChange={(event) => {
+                  setRuleDialog(null);
+                  setTenantId(event.target.value);
+                }}
               >
                 {tenants.map((tenant) => (
                   <option key={tenant.id} value={tenant.id}>
@@ -188,9 +595,9 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
           </header>
           {state === 'loading' ? (
             <p className="policy-empty">Loading policy register…</p>
-          ) : items.length ? (
+          ) : tenantItems.length ? (
             <div className="policy-list">
-              {items.map((policy) => (
+              {tenantItems.map((policy) => (
                 <Link href={`/policies/${policy.id}`} key={policy.id} className="policy-row">
                   <span className={`policy-status policy-status-${policy.status}`}>
                     {policy.status.replaceAll('_', ' ')}
@@ -207,7 +614,8 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
             </div>
           ) : (
             <p className="policy-empty">
-              No policy sources yet. Upload the first version to start the governed workflow.
+              No policy sources for {selectedTenant?.name ?? 'this workspace'} yet. Upload the first
+              version to start the governed workflow.
             </p>
           )}
         </section>

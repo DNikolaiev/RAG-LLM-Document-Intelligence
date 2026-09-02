@@ -438,6 +438,7 @@ export class PostgresPolicyStore {
     reviewerUserId: string;
     status: 'approved' | 'rejected';
     reason: string;
+    severity?: 'info' | 'minor' | 'major' | 'critical';
   }): Promise<StoredPolicyRuleProposal> {
     return this.withScope({ tenantIds: [input.tenantId], platformAdmin: false }, async (tx) => {
       const currentRows = await tx<Array<Record<string, unknown>>>`
@@ -453,6 +454,7 @@ export class PostgresPolicyStore {
       const reviewState = current.status === 'invalid' ? 'invalid' : 'under_review';
       const rows = await tx<Array<Record<string, unknown>>>`
         update policy_rule_proposals set status = ${input.status},
+          severity = coalesce(${input.severity ?? null}::text, severity),
           reviewed_by_user_id = ${input.reviewerUserId}, review_reason = ${input.reason},
           reviewed_at = now(), updated_at = now(), version = version + 1
         where id = ${input.proposalId} and policy_document_id = ${input.policyDocumentId}

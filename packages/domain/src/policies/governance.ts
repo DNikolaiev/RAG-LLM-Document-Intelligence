@@ -65,6 +65,9 @@ export type ProposalValidationCode =
   | 'test_missing_value_input'
   | 'test_boundary_input'
   | 'test_result_mismatch'
+  | 'numeric_requirement_missing'
+  | 'citation_condition_mismatch'
+  | 'condition_too_weak'
   | 'self_approval_forbidden';
 
 export interface ProposalValidationIssue {
@@ -249,8 +252,8 @@ function hasBoundaryValue(
   const candidates = valuePredicates.length ? valuePredicates : predicates;
   return candidates.some((predicate) => {
     const actual = getPathValue(input, predicate.path);
-    if (actual === undefined) return false;
-    if (predicate.operator === 'exists') return true;
+    if (actual === undefined) return predicate.operator === 'exists' && predicate.value === false;
+    if (predicate.operator === 'exists') return predicate.value === true;
     if (predicate.operator === 'in') {
       return (
         Array.isArray(predicate.value) && predicate.value.some((value) => Object.is(actual, value))
@@ -269,14 +272,52 @@ function hasBoundaryValue(
 
 type FieldType = DomainPack['documentTypes'][number]['extractionFields'][number]['type'];
 
+export interface PolicyRuleFact {
+  path: string;
+  type: FieldType;
+  label: string;
+  aliases: readonly string[];
+}
+
+export function reconciliationConflictPath(canonicalPath: string): string {
+  const segments = canonicalPath.split('.');
+  const [first = 'entity', ...rest] = segments;
+  return `reconciliation.${first}${rest
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join('')}Conflict`;
+}
+
+export function policyRuleFacts(pack: DomainPack): PolicyRuleFact[] {
+  const documentFacts = pack.documentTypes.flatMap((documentType) =>
+    documentType.extractionFields.map((field) => ({
+      path: `facts.${field.path}`,
+      type: field.type,
+      label: field.label,
+      aliases: field.aliases,
+    })),
+  );
+  const factsByPath = new Map(documentFacts.map((fact) => [fact.path, fact]));
+  return [
+    ...documentFacts,
+    ...pack.reconciliation.map((rule) => ({
+      path: reconciliationConflictPath(rule.canonicalPath),
+      type: 'boolean' as const,
+      label: `${rule.canonicalPath.replaceAll('.', ' ')} conflict`,
+      aliases: [
+        'identity mismatch',
+        'name matching',
+        'does not match',
+        ...rule.candidatePaths.flatMap((path) => {
+          const fact = factsByPath.get(path);
+          return fact ? [fact.label, ...fact.aliases] : [];
+        }),
+      ],
+    })),
+  ];
+}
+
 function buildFactCatalog(pack: DomainPack): Map<string, FieldType> {
-  const catalog = new Map<string, FieldType>();
-  for (const documentType of pack.documentTypes) {
-    for (const field of documentType.extractionFields) {
-      catalog.set(`facts.${field.path}`, field.type);
-    }
-  }
-  return catalog;
+  return new Map(policyRuleFacts(pack).map((field) => [field.path, field.type]));
 }
 
 function validateCondition(

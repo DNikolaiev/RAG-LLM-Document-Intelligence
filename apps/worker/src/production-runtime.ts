@@ -3,7 +3,12 @@ import { Worker, type Job } from 'bullmq';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { AppConfig } from '@caselens/config';
-import { parseDomainPack, resolvePersistedDomainPack, type DomainPack } from '@caselens/domain';
+import {
+  parseDomainPack,
+  reconcileFacts,
+  resolvePersistedDomainPack,
+  type DomainPack,
+} from '@caselens/domain';
 import { PostgresCaseStore, PostgresPolicyStore } from '@caselens/persistence';
 import {
   HttpDocumentTextProvider,
@@ -114,7 +119,7 @@ export async function runProductionWorker(config: AppConfig): Promise<void> {
         retriever,
       );
     },
-    { connection, concurrency: 2 },
+    { connection, concurrency: config.WORKER_JOB_CONCURRENCY },
   );
   worker.on('completed', (job) => {
     void store
@@ -306,7 +311,7 @@ async function processJob(
                   `Return data, never the schema itself. Evidence:\n[${chunk.documentId} page ${chunk.page}]\n${chunk.text}`,
                 schema: extractionSchema,
                 schemaName: 'document_extraction',
-                timeoutMs: 120_000,
+                timeoutMs: config.WORKER_MODEL_TIMEOUT_MS,
               });
               if (!result.ok) throw new Error(result.error.message);
               await reportProgress();
@@ -396,7 +401,7 @@ async function processJob(
                   `Return data, never a schema. Evidence:\n${evidence}`,
                 schema: documentClassificationSchema,
                 schemaName: 'document_classification',
-                timeoutMs: 120_000,
+                timeoutMs: config.WORKER_MODEL_TIMEOUT_MS,
               });
               if (!result.ok) throw new Error(result.error.message);
               if (result.value.documentId !== document.id) {
@@ -470,7 +475,32 @@ async function processJob(
             reviewReasons: outcomes.flatMap((outcome) => outcome.reviewReasons),
           };
         },
-        reconcile: async () => ({ identityConflict: false, reviewReasons: [] }),
+        reconcile: async (state) => {
+          const results = domainPack.reconciliation.map((rule) => {
+            const candidates = rule.candidatePaths.flatMap((path) => {
+              const value = getDottedValue({ facts: state.facts }, path);
+              const evidence = state.factEvidence[path.replace(/^facts\./, '')];
+              return value === undefined || !evidence
+                ? []
+                : [
+                    {
+                      path,
+                      value,
+                      confidence: evidence.confidence,
+                      documentId: evidence.documentId,
+                    },
+                  ];
+            });
+            return reconcileFacts(rule.canonicalPath, candidates, rule.normalizer);
+          });
+          const conflicts = results.filter((result) => result.conflict);
+          return {
+            identityConflict: conflicts.length > 0,
+            reviewReasons: conflicts.map(
+              (result) => `Conflicting values for ${result.canonicalPath.replaceAll('.', ' ')}.`,
+            ),
+          };
+        },
         retrieve: async (state) => {
           await store.updateJob(databaseJobId, tenantId, {
             status: 'processing',
@@ -503,7 +533,7 @@ async function processJob(
               }).slice(0, 8_000)}`,
             schema: summarySchema,
             schemaName: 'review_summary',
-            timeoutMs: 120_000,
+            timeoutMs: config.WORKER_MODEL_TIMEOUT_MS,
           });
           return result.ok
             ? result.value.summary
@@ -1047,6 +1077,13 @@ function setDottedValue(target: Record<string, unknown>, path: string, value: un
     current = current[segment] as Record<string, unknown>;
   }
   current[segments.at(-1)!] = value;
+}
+
+function getDottedValue(source: Record<string, unknown>, path: string): unknown {
+  return path.split('.').reduce<unknown>((current, segment) => {
+    if (!current || typeof current !== 'object' || !(segment in current)) return undefined;
+    return (current as Record<string, unknown>)[segment];
+  }, source);
 }
 
 function collectFactPaths(condition: unknown): string[] {

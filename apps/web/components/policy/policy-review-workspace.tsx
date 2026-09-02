@@ -47,6 +47,7 @@ interface PolicyDetail {
       id: string;
       kind: string;
       name: string;
+      input: Record<string, unknown>;
       expected: boolean;
       actual: boolean | null;
       passed: boolean | null;
@@ -57,6 +58,8 @@ interface PolicyDetail {
 export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
   const [policy, setPolicy] = useState<PolicyDetail | null>(null);
   const [message, setMessage] = useState('');
+  const [regenerating, setRegenerating] = useState(false);
+  const [severityEdits, setSeverityEdits] = useState<Record<string, string>>({});
   const [page, setPage] = useState(1);
   const [selectedCitationId, setSelectedCitationId] = useState<string>();
   const load = useCallback(async () => {
@@ -64,6 +67,7 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
     const body = await response.json();
     if (!response.ok) throw new Error(body.message ?? 'Policy could not be loaded.');
     setPolicy(body);
+    setSeverityEdits({});
   }, [policyId]);
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -107,7 +111,12 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
         : null,
     [citations, policy],
   );
-  async function review(proposalId: string, version: number, decision: 'approve' | 'reject') {
+  async function review(
+    proposalId: string,
+    version: number,
+    decision: 'approve' | 'reject',
+    severity?: string,
+  ) {
     const reason = window.prompt(
       decision === 'approve'
         ? 'Record why this validated rule should be approved'
@@ -117,7 +126,7 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
     const response = await fetch(`/api/policies/${policyId}/proposals/${proposalId}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ decision, reason, version }),
+      body: JSON.stringify({ decision, reason, version, ...(severity ? { severity } : {}) }),
     });
     const body = await response.json().catch(() => ({}));
     setMessage(
@@ -139,6 +148,22 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
       response.ok ? 'Policy and approved rules activated.' : (body.message ?? 'Activation failed.'),
     );
     if (response.ok) await load();
+  }
+  async function reprocess() {
+    if (!policy || regenerating) return;
+    setRegenerating(true);
+    const response = await fetch(`/api/policies/${policyId}/reprocess`, {
+      method: 'POST',
+      headers: { 'idempotency-key': `regenerate-${policyId}-${policy.version}` },
+    });
+    const body = await response.json().catch(() => ({}));
+    setMessage(
+      response.ok
+        ? 'Policy regeneration is queued. The refreshed rules will replace the blocked proposals.'
+        : (body.message ?? 'Policy regeneration could not be queued.'),
+    );
+    if (response.ok) await load();
+    setRegenerating(false);
   }
   if (!policy || !sourceDocument)
     return (
@@ -214,6 +239,22 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
               </div>
             </dl>
           </header>
+          {canRegenerate(policy) ? (
+            <div className="policy-regenerate">
+              <div>
+                <strong>Repair this policy</strong>
+                <span>Regenerate deterministic rule proposals from the original evidence.</span>
+              </div>
+              <button
+                className="policy-secondary"
+                type="button"
+                disabled={regenerating}
+                onClick={() => void reprocess()}
+              >
+                {regenerating ? 'Queuing regeneration…' : 'Regenerate rules'}
+              </button>
+            </div>
+          ) : null}
           {policy.proposals.length ? (
             policy.proposals.map((proposal) => (
               <article className="proposal-card" key={proposal.id}>
@@ -229,6 +270,27 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
                     <p>{proposal.description}</p>
                   </div>
                 </div>
+                {['proposed', 'under_review'].includes(proposal.status) ? (
+                  <label className="proposal-severity-control">
+                    Finding severity
+                    <select
+                      aria-label={`Finding severity for ${proposal.title}`}
+                      value={severityEdits[proposal.id] ?? proposal.severity}
+                      onChange={(event) =>
+                        setSeverityEdits((current) => ({
+                          ...current,
+                          [proposal.id]: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="info">Info</option>
+                      <option value="minor">Minor</option>
+                      <option value="major">Major</option>
+                      <option value="critical">Critical</option>
+                    </select>
+                    <small>Saved with the approval record and used for future findings.</small>
+                  </label>
+                ) : null}
                 {proposal.validationIssues.length ? (
                   <section className="proposal-validation" aria-label="Approval blockers">
                     <h4>
@@ -257,7 +319,8 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
                   </p>
                 ) : null}
                 <details>
-                  <summary>Structured condition</summary>
+                  <summary>Rule logic</summary>
+                  <p className="proposal-rule-meaning">{describeCondition(proposal.condition)}</p>
                   <pre>{JSON.stringify(proposal.condition, null, 2)}</pre>
                 </details>
                 <div className="proposal-evidence">
@@ -310,6 +373,7 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
                         <strong>
                           {humanize(test.kind)} · {test.name}
                         </strong>
+                        <small>Test value: {formatTestInput(test.input)}</small>
                         <small>{testMeaning(test)}</small>
                       </span>
                     </div>
@@ -325,7 +389,14 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
                       Reject
                     </button>
                     <button
-                      onClick={() => void review(proposal.id, proposal.version, 'approve')}
+                      onClick={() =>
+                        void review(
+                          proposal.id,
+                          proposal.version,
+                          'approve',
+                          severityEdits[proposal.id] ?? proposal.severity,
+                        )
+                      }
                       className="policy-primary"
                     >
                       Approve proposal
@@ -373,4 +444,71 @@ function testMeaning(test: PolicyDetail['proposals'][number]['tests'][number]): 
   const expected = test.expected ? 'trigger' : 'not trigger';
   const actual = test.actual ? 'triggered' : 'did not trigger';
   return `${test.passed ? 'Passed' : 'Failed'} — expected the rule to ${expected}; it ${actual}.`;
+}
+
+function canRegenerate(policy: PolicyDetail): boolean {
+  return (
+    ['under_review', 'failed'].includes(policy.status) &&
+    policy.proposals.some((proposal) => proposal.status === 'invalid') &&
+    !policy.proposals.some((proposal) => ['approved', 'activated'].includes(proposal.status))
+  );
+}
+
+function describeCondition(value: unknown): string {
+  const predicates = collectConditionPredicates(value);
+  const numeric = predicates.find(
+    (predicate) => predicate.operator === 'lte' && typeof predicate.value === 'number',
+  );
+  if (numeric && typeof numeric.value === 'number') {
+    return `Flag when ${humanizePath(numeric.path)} is below ${formatAmount(numeric.value + 0.01)}.`;
+  }
+  const exists = predicates.find((predicate) => predicate.operator === 'exists');
+  return exists
+    ? `Flag when ${humanizePath(exists.path)} is ${exists.value === false ? 'missing' : 'available'}.`
+    : 'This proposal uses the structured condition shown below.';
+}
+
+function formatTestInput(input: Record<string, unknown>): string {
+  const value = firstLeafValue(input);
+  if (value === undefined) return 'No value supplied';
+  return typeof value === 'number' ? formatAmount(value) : String(value);
+}
+
+function collectConditionPredicates(
+  value: unknown,
+): Array<{ operator: string; path: string; value?: unknown }> {
+  if (!value || typeof value !== 'object') return [];
+  const condition = value as Record<string, unknown>;
+  if (Array.isArray(condition.conditions)) {
+    return condition.conditions.flatMap((item) => collectConditionPredicates(item));
+  }
+  if (condition.condition) return collectConditionPredicates(condition.condition);
+  return typeof condition.operator === 'string' && typeof condition.path === 'string'
+    ? [{ operator: condition.operator, path: condition.path, value: condition.value }]
+    : [];
+}
+
+function firstLeafValue(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value;
+  for (const child of Object.values(value as Record<string, unknown>)) {
+    const leaf = firstLeafValue(child);
+    if (leaf !== undefined) return leaf;
+  }
+  return undefined;
+}
+
+function humanizePath(path: string): string {
+  return path
+    .replace(/^facts\./, '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replaceAll('.', ' ')
+    .replace(/\s*Eur$/i, ' EUR');
+}
+
+function formatAmount(value: number): string {
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: 'EUR',
+    maximumFractionDigits: 2,
+  }).format(value);
 }
