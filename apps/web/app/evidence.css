@@ -175,12 +175,37 @@
   width: fit-content;
   min-width: 300px;
   min-height: 420px;
-  overflow: hidden;
+  overflow: auto;
+  overscroll-behavior: contain;
   border-radius: 3px;
   background: #fff;
   box-shadow:
     0 22px 55px rgb(24 30 61 / 18%),
     0 0 0 1px rgb(113 119 143 / 15%);
+  scrollbar-color: rgb(105 112 148 / 58%) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.pdf-canvas-shell:focus-visible {
+  outline: 3px solid rgb(84 87 214 / 30%);
+  outline-offset: 3px;
+}
+
+.pdf-canvas-shell::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.pdf-canvas-shell::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgb(105 112 148 / 58%);
+  background-clip: padding-box;
+}
+
+.pdf-canvas-shell::-webkit-scrollbar-track {
+  background: rgb(105 112 148 / 7%);
 }
 
 .pdf-canvas-shell .react-pdf__Document,
@@ -543,8 +568,10 @@
 
 .document-viewer {
   height: 100%;
+  min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .toolbar-kicker {
@@ -743,10 +770,17 @@
 }
 
 .document-pane {
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
   background:
     radial-gradient(circle at 50% 12%, rgb(255 255 255 / 70%), transparent 25rem),
     linear-gradient(145deg, #e9ecf3, #dfe4ed);
   position: relative;
+}
+
+.document-pane > .document-viewer {
+  flex: 1 1 auto;
 }
 
 .document-pane::before {
@@ -956,10 +990,36 @@
 }
 
 .document-stage {
+  min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 36px max(28px, calc((100% - 620px) / 2));
   position: relative;
+  scrollbar-color: rgb(105 112 148 / 58%) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
   z-index: 1;
+}
+
+.document-stage:focus-visible {
+  outline: 3px solid rgb(84 87 214 / 30%);
+  outline-offset: -3px;
+}
+
+.document-stage::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.document-stage::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgb(105 112 148 / 58%);
+  background-clip: padding-box;
+}
+
+.document-stage::-webkit-scrollbar-track {
+  background: rgb(105 112 148 / 7%);
 }
 
 .paper-page {

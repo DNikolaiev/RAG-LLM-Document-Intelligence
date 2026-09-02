@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -37,6 +37,11 @@ interface CitationHighlight {
   top: string;
   width: string;
   height: string;
+}
+
+interface CitationHighlightResult {
+  key: string;
+  highlights: CitationHighlight[];
 }
 
 const documentCopy: Record<string, { heading: string; lines: string[] }> = {
@@ -112,7 +117,11 @@ export function DocumentSurface({
   const [loadFailed, setLoadFailed] = useState(false);
   const [pageWidth, setPageWidth] = useState(560);
   const [pdf, setPdf] = useState<PdfProxy | null>(null);
-  const [citationHighlights, setCitationHighlights] = useState<CitationHighlight[]>([]);
+  const [highlightResult, setHighlightResult] = useState<CitationHighlightResult | null>(null);
+  const citationExcerpt = selectedEvidence?.excerpt ?? '';
+  const highlightKey = pdf && citationExcerpt ? `${page}::${citationExcerpt}` : '';
+  const citationHighlights =
+    highlightKey && highlightResult?.key === highlightKey ? highlightResult.highlights : [];
   const stageRef = useRef<HTMLDivElement>(null);
   const locatorRef = useRef<HTMLElement>(null);
   const copy = documentCopy[document.id] ?? {
@@ -143,11 +152,8 @@ export function DocumentSurface({
   }, [page, selectedEvidence]);
 
   useEffect(() => {
+    if (!pdf || !highlightKey) return;
     let cancelled = false;
-    if (!pdf || !selectedEvidence?.excerpt) {
-      setCitationHighlights([]);
-      return;
-    }
     void pdf
       .getPage(page)
       .then(async (pdfPage) => {
@@ -168,11 +174,12 @@ export function DocumentSurface({
         );
         const indexes = findCitationSpanIndexes(
           items.map((item) => item.str),
-          selectedEvidence.excerpt,
+          citationExcerpt,
         );
         if (cancelled) return;
-        setCitationHighlights(
-          indexes.map((index) => {
+        setHighlightResult({
+          key: highlightKey,
+          highlights: indexes.map((index) => {
             const item = items[index]!;
             const x = item.transform[4] ?? 0;
             const y = item.transform[5] ?? 0;
@@ -183,15 +190,15 @@ export function DocumentSurface({
               height: `${Math.max((item.height / viewport.height) * 100, 1.8)}%`,
             };
           }),
-        );
+        });
       })
       .catch(() => {
-        if (!cancelled) setCitationHighlights([]);
+        if (!cancelled) setHighlightResult({ key: highlightKey, highlights: [] });
       });
     return () => {
       cancelled = true;
     };
-  }, [page, pdf, selectedEvidence?.excerpt]);
+  }, [citationExcerpt, highlightKey, page, pdf]);
 
   function changePage(nextPage: number) {
     onPageChange(Math.min(Math.max(1, nextPage), pageCount));
@@ -302,9 +309,12 @@ export function DocumentSurface({
             </p>
           )}
           <section
+            aria-label={`Scrollable original document: ${document.label}, page ${page}`}
             className="pdf-canvas-shell"
-            aria-label={`${document.label}, original PDF page ${page}`}
+            data-testid="document-scroll-region"
+            role="region"
             style={{ '--document-zoom': zoom / 100 } as React.CSSProperties}
+            tabIndex={0}
           >
             <Document
               error={null}
@@ -365,7 +375,13 @@ export function DocumentSurface({
           </a>
         </div>
       ) : (
-        <div className="document-stage extracted-document-stage">
+        <div
+          aria-label="Scrollable extracted document"
+          className="document-stage extracted-document-stage"
+          data-testid="document-scroll-region"
+          role="region"
+          tabIndex={0}
+        >
           <div className="extracted-copy-warning">
             <ScanText aria-hidden="true" size={15} />
             <span>

@@ -709,6 +709,32 @@ code {
   overflow-y: auto;
 }
 
+.job-event-context {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  gap: 4px;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--rule);
+  background: rgb(255 255 255 / 97%);
+  box-shadow: 0 7px 14px rgb(31 38 78 / 4%);
+}
+
+.job-event-context strong {
+  overflow-wrap: anywhere;
+  color: var(--blueprint-deep);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.job-event-context span {
+  color: var(--ink-muted);
+  font: 500 8px/1.35 var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .notification-list {
   border-right: 1px solid var(--rule);
   background: #fafbfe;
@@ -879,10 +905,14 @@ code {
 
 .job-toast {
   position: fixed;
-  right: 24px;
-  bottom: 24px;
+  top: auto;
+  right: clamp(12px, 3vw, 24px);
+  bottom: max(16px, env(safe-area-inset-bottom));
+  left: auto;
   z-index: 80;
-  width: min(410px, calc(100vw - 32px));
+  box-sizing: border-box;
+  width: min(410px, calc(100dvw - 24px));
+  max-width: calc(100dvw - 24px);
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) 30px;
   align-items: center;
@@ -911,6 +941,7 @@ code {
 
 .job-toast strong {
   display: block;
+  overflow-wrap: anywhere;
   color: var(--ink);
   font-size: 12px;
 }
@@ -918,6 +949,7 @@ code {
 .job-toast small {
   display: block;
   margin-top: 3px;
+  overflow-wrap: anywhere;
   color: var(--ink-muted);
   font: 500 8px/1.2 var(--mono);
   text-transform: uppercase;
@@ -1078,8 +1110,10 @@ code {
   }
 
   .job-toast {
-    right: 16px;
-    bottom: 16px;
+    right: 12px;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    width: calc(100dvw - 24px);
+    max-width: calc(100dvw - 24px);
   }
 }
 

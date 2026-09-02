@@ -78,6 +78,30 @@ test.describe('case review workspace', () => {
     expect(pdfResponse.ok()).toBe(true);
     expect(pdfResponse.headers()['content-type']).toContain('application/pdf');
 
+    const documentScrollRegion = page.getByTestId('document-scroll-region');
+    await expect(documentScrollRegion).toBeVisible();
+    const documentCanScroll = await documentScrollRegion.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      return {
+        canScroll: element.scrollHeight > element.clientHeight,
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        scrollTop: element.scrollTop,
+      };
+    });
+    expect(
+      documentCanScroll.canScroll,
+      'The document canvas must keep its vertical scroll area.',
+    ).toBe(true);
+    expect(
+      documentCanScroll.scrollTop,
+      'The document canvas must scroll downward.',
+    ).toBeGreaterThan(0);
+    await documentScrollRegion.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await expect.poll(() => documentScrollRegion.evaluate((element) => element.scrollTop)).toBe(0);
+
     await selectWorkspaceTabIfVisible(page, 'Dossier');
     const dossier = page.getByRole('navigation', { name: 'Case dossier' });
     await expect(dossier).toBeVisible();
