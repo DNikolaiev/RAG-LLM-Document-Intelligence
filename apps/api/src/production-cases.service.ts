@@ -81,8 +81,18 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
       doc_dpa: 'pharmacy-supplier/05_data_processing_agreement.pdf',
       doc_contract: 'pharmacy-supplier/06_supply_contract.pdf',
       doc_case_legal_001: 'legal-contract/01_nordstern_distribution_agreement.pdf',
+      doc_case_legal_register: 'legal-contract/02_nordstern_commercial_register_extract.pdf',
+      doc_case_legal_dpa: 'legal-contract/03_nordstern_data-processing-annex.pdf',
+      doc_case_legal_authority: 'legal-contract/04_nordstern_signature_authority_confirmation.pdf',
       doc_case_insurance_001: 'insurance-claim/01_kronenberg_water_damage_claim.pdf',
+      doc_case_insurance_estimate: 'insurance-claim/02_kronenberg_repair_estimate.pdf',
+      doc_case_insurance_report: 'insurance-claim/03_kronenberg_contractor_report.pdf',
+      doc_case_insurance_settlement: 'insurance-claim/04_kronenberg_settlement_instruction.pdf',
       doc_case_manufacturing_001: 'manufacturing-supplier/01_vektor_material_certificate.pdf',
+      doc_case_manufacturing_specification:
+        'manufacturing-supplier/02_vektor_purchase_specification.pdf',
+      doc_case_manufacturing_pmi: 'manufacturing-supplier/03_vektor_pmi_inspection_report.pdf',
+      doc_case_manufacturing_release: 'manufacturing-supplier/04_vektor_release_note.pdf',
     };
 
     for (const item of cases) {
@@ -124,6 +134,22 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
           processingStatus: document.status === 'needs_review' ? 'needs_review' : 'ready',
         });
       }
+
+      // Existing local volumes retain their case projection between image upgrades.
+      // Add newly introduced fixture documents to that projection after materializing
+      // them, so the dossier UI and the worker see the same evidence set.
+      const persisted = await this.#store.get(
+        { tenantIds: [item.tenantId], platformAdmin: true },
+        item.id,
+      );
+      if (!persisted) continue;
+      const persistedDocuments = persisted.documents as DemoCase['documents'];
+      const additions = item.documents.filter(
+        (document) => !persistedDocuments.some((candidate) => candidate.id === document.id),
+      );
+      if (!additions.length) continue;
+      persisted.documents = [...persistedDocuments, ...additions];
+      await this.#store.save(persisted, persisted.version);
     }
   }
 

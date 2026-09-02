@@ -40,9 +40,22 @@ docker compose --env-file infra/.env.production-local -f infra/docker-compose.pr
 docker compose --env-file infra/.env.production-local -f infra/docker-compose.production-local.yml logs -f ollama-models api worker
 ```
 
+For the CPU-local default, the worker processes one case and one model request at a time, with a five-minute request limit. This is deliberate: it is slower but avoids competing requests causing local-model timeouts. Deployments with dedicated model capacity can raise `WORKER_JOB_CONCURRENCY` and `WORKER_MODEL_CONCURRENCY` in the environment file.
+
 Select a fictional identity from the profile menu. Lena, Jonas, Amara, and Mateo each administer one tenant in a different business domain. Mara Stein is the platform administrator and sees the cross-tenant queue. This is intentionally a local test impersonation mechanism, not authentication.
 
 Stop the stack without losing data using `docker compose ... down`. To intentionally erase all local CaseLens data and downloaded models, use the same command with `down --volumes`.
+
+### Seed the expanded multi-tenant fixture pack
+
+The production-local stack includes seven pharmacy documents and four documents each for the legal, insurance, and manufacturing tenants. The companion evidence and the three policy PDFs are synthetic, repeatable fixtures:
+
+```powershell
+npm run fixtures:generate:multi-tenant
+npm run fixtures:seed:multi-tenant
+```
+
+The seed command uses the public API: it uploads each policy, extracts and indexes its clauses, approves the already-valid synthetic proposal, activates the policy, then queues the matching tenant case. The local-only `FIXTURE_POLICY_CATALOG_ENABLED=true` setting makes the three marked policy proposals deterministic; it does not bypass PDF extraction, MinIO, pgvector embeddings, BullMQ, review/activation, or case processing. Keep this flag disabled outside the local synthetic demo.
 
 ## Components and why they exist
 

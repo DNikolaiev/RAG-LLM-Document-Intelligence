@@ -4,6 +4,7 @@ import {
   OpenAiCompatibleProvider,
   type ModelProvider,
 } from '@caselens/providers';
+import { FixturePolicyModelProvider } from './fixture-policy-model.js';
 
 export interface WorkerModelRuntime {
   chat: ModelProvider;
@@ -11,7 +12,10 @@ export interface WorkerModelRuntime {
 }
 
 export function createWorkerModelRuntime(config: AppConfig): WorkerModelRuntime {
-  const chat = createChatProvider(config);
+  const configuredChat = createChatProvider(config);
+  const chat = config.FIXTURE_POLICY_CATALOG_ENABLED
+    ? new FixturePolicyModelProvider(configuredChat)
+    : configuredChat;
   const embeddings = createEmbeddingProvider(config);
   return { chat, embeddings };
 }

@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "1.0.0",
+  "fixtureSet": "caselens-multi-tenant-policy-evidence",
+  "generatedOn": "2026-08-31",
+  "synthetic": true,
+  "documents": [
+    {
+      "filename": "legal-contract/05_contract-approval-control-policy.pdf",
+      "sha256": "a9abeab6605d8ee0c0d152d69f60e80892e805ab6f4193277899156f360be79f",
+      "bytes": 74199
+    },
+    {
+      "filename": "insurance-claim/05_claim-cost-escalation-policy.pdf",
+      "sha256": "63f4f0b688a6990ac3e59e7a59da49ad367ca8fdea81050dc0bbe7c98f49efba",
+      "bytes": 74186
+    },
+    {
+      "filename": "manufacturing-supplier/05_material-grade-control-policy.pdf",
+      "sha256": "1a3f26e53fc48801aab04d7b880fa7f85cd49d80f7984932264d13fa2101786d",
+      "bytes": 74204
+    },
+    {
+      "filename": "legal-contract/02_nordstern_commercial_register_extract.pdf",
+      "sha256": "d6725e8aef64b7491c577f57e852dac3cd3760e888545a2f008a78d4a83b5661",
+      "bytes": 74400
+    },
+    {
+      "filename": "legal-contract/03_nordstern_data-processing-annex.pdf",
+      "sha256": "59b4be5785603d7b1f5f0524f989141e22047ab49289fcac16f6421877936930",
+      "bytes": 74237
+    },
+    {
+      "filename": "legal-contract/04_nordstern_signature_authority_confirmation.pdf",
+      "sha256": "176909e72dd2bc07fd8ba614e1b1923f1c82728686d32837587ee32c6bf40e4a",
+      "bytes": 74150
+    },
+    {
+      "filename": "insurance-claim/02_kronenberg_repair_estimate.pdf",
+      "sha256": "2929eaa2c419bba5112fd5b68f56e7d444be45d2b3822de1e57f29efd7e71f12",
+      "bytes": 74103
+    },
+    {
+      "filename": "insurance-claim/03_kronenberg_contractor_report.pdf",
+      "sha256": "8a875cffe47f1c0b80028a65e3feaa146f76953ca9d3cc9a45f4a83b5a6b1c3a",
+      "bytes": 74126
+    },
+    {
+      "filename": "insurance-claim/04_kronenberg_settlement_instruction.pdf",
+      "sha256": "f41bccb9e7106863a1329d956a98bc8c9aac92b17dae6cda9807231f73bbe909",
+      "bytes": 74140
+    },
+    {
+      "filename": "manufacturing-supplier/02_vektor_purchase_specification.pdf",
+      "sha256": "2005169350340202b800d83a9b9eee1fc908c983690663041e90f25eec082015",
+      "bytes": 74087
+    },
+    {
+      "filename": "manufacturing-supplier/03_vektor_pmi_inspection_report.pdf",
+      "sha256": "81f54c8726fbff4716e92521a1a030477d01b43bf659a345762481e875adcfc4",
+      "bytes": 74071
+    },
+    {
+      "filename": "manufacturing-supplier/04_vektor_release_note.pdf",
+      "sha256": "f7743e0f369f2bfadd0a62cae495227edf5211a000d10a9b03d416daa62e1cd1",
+      "bytes": 74085
+    }
+  ]
+}

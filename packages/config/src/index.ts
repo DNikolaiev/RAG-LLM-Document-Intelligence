@@ -52,11 +52,16 @@ export const appConfigSchema = z
     DEMO_TENANT_ID: z.string().min(1).default('tenant_demo'),
     AUTH_MODE: z.enum(['demo', 'test-profiles', 'oidc']).default('demo'),
     ENABLE_TEST_IDENTITY_SWITCHER: environmentBoolean.default(false),
+    FIXTURE_POLICY_CATALOG_ENABLED: environmentBoolean.default(false),
     WORKER_CHUNK_CHARACTERS: z.coerce.number().int().min(1_000).max(20_000).default(6_000),
     WORKER_CHUNK_OVERLAP: z.coerce.number().int().min(0).max(2_000).default(300),
     WORKER_MAX_EXTRACTION_CHUNKS: z.coerce.number().int().min(1).max(512).default(48),
     WORKER_MAX_DOCUMENTS: z.coerce.number().int().min(1).max(256).default(32),
-    WORKER_MODEL_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
+    // CPU-local models are usually fastest and most reliable with one request at a time.
+    // Deployments with dedicated model capacity may raise these independently.
+    WORKER_JOB_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(1),
+    WORKER_MODEL_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(1),
+    WORKER_MODEL_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(600_000).default(300_000),
     WORKER_POLICY_MODEL_TIMEOUT_MS: z.coerce
       .number()
       .int()

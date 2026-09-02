@@ -4,6 +4,7 @@ x-app-environment: &app-environment
   APP_MODE: production
   AUTH_MODE: test-profiles
   ENABLE_TEST_IDENTITY_SWITCHER: 'true'
+  FIXTURE_POLICY_CATALOG_ENABLED: 'true'
   PUBLIC_API_URL: http://localhost:4100
   DATABASE_URL: postgresql://caselens_app:${APP_DATABASE_PASSWORD:?Set APP_DATABASE_PASSWORD}@postgres:5432/caselens
   REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD}@redis:6379
@@ -31,6 +32,11 @@ x-app-environment: &app-environment
   EMBEDDING_API_KEY: ollama-local
   EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-embeddinggemma:300m-qat-q4_0}
   EMBEDDING_DIMENSIONS: 768
+  # Keep the CPU-local Ollama model saturated but never contended: one case,
+  # one document/chunk request at a time. Raise only with dedicated capacity.
+  WORKER_JOB_CONCURRENCY: '1'
+  WORKER_MODEL_CONCURRENCY: '1'
+  WORKER_MODEL_TIMEOUT_MS: '300000'
   OCR_PROVIDER: http
   OCR_BASE_URL: http://ocr:8000/v1/ocr
   SCANNER_PROVIDER: deterministic

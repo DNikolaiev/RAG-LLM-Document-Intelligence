@@ -332,6 +332,36 @@ export function createDemoCases(): DemoCase[] {
       findingDetail:
         'The master agreement and schedule specify different termination notice periods.',
       evidenceQuote: 'Either party may terminate with thirty (30) days written notice.',
+      primaryFileName: '01_nordstern_distribution_agreement.pdf',
+      documents: [
+        {
+          id: 'doc_case_legal_register',
+          name: 'Commercial register extract',
+          type: 'commercial_register',
+          status: 'ready',
+          pages: 1,
+          confidence: 0.97,
+          fileName: '02_nordstern_commercial_register_extract.pdf',
+        },
+        {
+          id: 'doc_case_legal_dpa',
+          name: 'Data processing annex',
+          type: 'data_processing_annex',
+          status: 'ready',
+          pages: 1,
+          confidence: 0.96,
+          fileName: '03_nordstern_data-processing-annex.pdf',
+        },
+        {
+          id: 'doc_case_legal_authority',
+          name: 'Signature authority confirmation',
+          type: 'signature_authority',
+          status: 'ready',
+          pages: 1,
+          confidence: 0.95,
+          fileName: '04_nordstern_signature_authority_confirmation.pdf',
+        },
+      ],
     }),
     createDomainCase({
       id: 'case_insurance_001',
@@ -349,6 +379,36 @@ export function createDemoCases(): DemoCase[] {
       findingDetail:
         'The submitted repair estimate requires senior review under the active claims policy.',
       evidenceQuote: 'Total estimated restoration cost: EUR 28,740.00 including VAT.',
+      primaryFileName: '01_kronenberg_water_damage_claim.pdf',
+      documents: [
+        {
+          id: 'doc_case_insurance_estimate',
+          name: 'Property repair estimate',
+          type: 'repair_estimate',
+          status: 'ready',
+          pages: 1,
+          confidence: 0.97,
+          fileName: '02_kronenberg_repair_estimate.pdf',
+        },
+        {
+          id: 'doc_case_insurance_report',
+          name: 'Contractor service report',
+          type: 'contractor_report',
+          status: 'ready',
+          pages: 1,
+          confidence: 0.96,
+          fileName: '03_kronenberg_contractor_report.pdf',
+        },
+        {
+          id: 'doc_case_insurance_settlement',
+          name: 'Settlement preparation instruction',
+          type: 'settlement_instruction',
+          status: 'ready',
+          pages: 1,
+          confidence: 0.95,
+          fileName: '04_kronenberg_settlement_instruction.pdf',
+        },
+      ],
     }),
     createDomainCase({
       id: 'case_manufacturing_001',
@@ -366,6 +426,36 @@ export function createDemoCases(): DemoCase[] {
       findingDetail:
         'The certificate does not connect the delivered batch to a verified material heat number.',
       evidenceQuote: 'Batch VP-4421 — material grade 1.4301; heat number not recorded.',
+      primaryFileName: '01_vektor_material_certificate.pdf',
+      documents: [
+        {
+          id: 'doc_case_manufacturing_specification',
+          name: 'Purchase specification',
+          type: 'purchase_specification',
+          status: 'ready',
+          pages: 1,
+          confidence: 0.97,
+          fileName: '02_vektor_purchase_specification.pdf',
+        },
+        {
+          id: 'doc_case_manufacturing_pmi',
+          name: 'PMI inspection report',
+          type: 'pmi_inspection_report',
+          status: 'ready',
+          pages: 1,
+          confidence: 0.96,
+          fileName: '03_vektor_pmi_inspection_report.pdf',
+        },
+        {
+          id: 'doc_case_manufacturing_release',
+          name: 'Supplier quality release note',
+          type: 'quality_release_note',
+          status: 'ready',
+          pages: 1,
+          confidence: 0.95,
+          fileName: '04_vektor_release_note.pdf',
+        },
+      ],
     }),
   ];
 }
@@ -381,6 +471,8 @@ function createDomainCase(input: {
   findingTitle: string;
   findingDetail: string;
   evidenceQuote: string;
+  primaryFileName?: string;
+  documents?: DemoDocument[];
 }): DemoCase {
   return {
     id: input.id,
@@ -406,8 +498,9 @@ function createDomainCase(input: {
         status: 'ready',
         pages: 4,
         confidence: 0.94,
-        fileName: `${input.reference.toLocaleLowerCase()}.pdf`,
+        fileName: input.primaryFileName ?? `${input.reference.toLocaleLowerCase()}.pdf`,
       },
+      ...(input.documents ?? []),
     ],
     facts: [
       {
