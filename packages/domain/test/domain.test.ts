@@ -171,6 +171,21 @@ describe('pharmacy supplier pack', () => {
     ).toBe('approve');
   });
 
+  it('assigns every baseline rule to a declared policy collection', () => {
+    const declared = new Set(pharmacySupplierPack.policyCollections.map((item) => item.id));
+    expect(
+      Object.fromEntries(pharmacySupplierPack.rules.map((rule) => [rule.id, rule.collectionId])),
+    ).toEqual({
+      'insurance-minimum': 'insurance',
+      'legal-name-conflict': 'supplier-qualification',
+      'iso-expired': 'supplier-qualification',
+      'dpa-unsigned': 'data-protection',
+    });
+    for (const rule of pharmacySupplierPack.rules) {
+      expect(declared.has(rule.collectionId!)).toBe(true);
+    }
+  });
+
   it('rejects malformed packs and duplicate or unknown references', () => {
     expect(() => parseDomainPack({ ...pharmacySupplierPack, schemaVersion: 2 })).toThrow();
     expect(() =>
@@ -187,5 +202,11 @@ describe('pharmacy supplier pack', () => {
         rules: [pharmacySupplierPack.rules[0], pharmacySupplierPack.rules[0]],
       }),
     ).toThrow('Duplicate rule');
+    expect(() =>
+      parseDomainPack({
+        ...pharmacySupplierPack,
+        rules: [{ ...pharmacySupplierPack.rules[0], collectionId: 'made-up-collection' }],
+      }),
+    ).toThrow('Unknown rule collection: made-up-collection');
   });
 });

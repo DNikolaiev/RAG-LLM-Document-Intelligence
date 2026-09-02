@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
   BadgeCheck,
   BookOpenCheck,
@@ -9,7 +9,6 @@ import {
   FileCheck2,
   FileUp,
   ListChecks,
-  X,
   ShieldCheck,
 } from 'lucide-react';
 import type { TestTenant } from '@caselens/contracts';
@@ -23,6 +22,27 @@ interface PolicySummary {
   status: string;
   pageCount: number | null;
   updatedAt: string;
+}
+
+type RuleSeverity = 'info' | 'minor' | 'major' | 'critical';
+
+type RuleOrigin =
+  | { kind: 'domain_pack'; domainPackName: string; domainPackVersion: string }
+  | { kind: 'policy_document'; policyId: string; policyTitle: string; policyVersion: string };
+
+interface RegistryRule {
+  id: string;
+  title: string;
+  description: string;
+  severity: RuleSeverity;
+  collectionId: string;
+  origin: RuleOrigin;
+}
+
+interface RuleCollectionGroup {
+  id: string;
+  label: string;
+  rules: RegistryRule[];
 }
 
 interface DomainPackConfiguration {
@@ -54,30 +74,40 @@ interface DomainPackConfiguration {
         aliases: string[];
       }>;
     }>;
-    baselineRules: Array<{
-      id: string;
-      title: string;
-      description: string;
-      severity: string;
-    }>;
-    policyRules: Array<{
-      id: string;
-      title: string;
-      description: string;
-      severity: string;
-      collectionId: string;
-      policyVersion: string;
-    }>;
+    rules: RegistryRule[];
   };
 }
-
-type RuleDialogState = { kind: 'baseline' } | { kind: 'collection'; collectionId: string } | null;
 
 interface DomainPackLoad {
   tenantId: string;
   state: 'ready' | 'error';
   domainPack: DomainPackConfiguration | null;
   error: string;
+}
+
+function groupRulesByCollection(
+  collections: ReadonlyArray<{ id: string; label: string }>,
+  rules: readonly RegistryRule[],
+): RuleCollectionGroup[] {
+  const groups = new Map<string, RuleCollectionGroup>(
+    collections.map((collection) => [
+      collection.id,
+      { id: collection.id, label: collection.label, rules: [] },
+    ]),
+  );
+  for (const rule of rules) {
+    const group = groups.get(rule.collectionId);
+    if (group) {
+      group.rules.push(rule);
+      continue;
+    }
+    groups.set(rule.collectionId, {
+      id: rule.collectionId,
+      label: rule.collectionId,
+      rules: [rule],
+    });
+  }
+  return [...groups.values()];
 }
 
 const COLLECTIONS: Record<string, ReadonlyArray<{ id: string; label: string }>> = {
@@ -102,8 +132,6 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
   const [state, setState] = useState<'loading' | 'ready' | 'submitting'>('loading');
   const [message, setMessage] = useState('');
   const [domainPackLoad, setDomainPackLoad] = useState<DomainPackLoad | null>(null);
-  const [ruleDialog, setRuleDialog] = useState<RuleDialogState>(null);
-  const ruleDialogRef = useRef<HTMLDialogElement>(null);
   const currentDomainPackLoad = domainPackLoad?.tenantId === tenantId ? domainPackLoad : null;
   const domainPack = currentDomainPackLoad?.domainPack ?? null;
   const domainPackState: 'loading' | 'ready' | 'error' = !tenantId
@@ -112,13 +140,9 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
   const domainPackError = currentDomainPackLoad?.error ?? '';
   const selectedTenant = tenants.find((tenant) => tenant.id === tenantId);
   const tenantItems = items.filter((item) => item.tenantId === tenantId);
-  const selectedCollection = domainPack?.domainPack.collections.find(
-    (collection) => ruleDialog?.kind === 'collection' && collection.id === ruleDialog.collectionId,
-  );
-  const selectedCollectionRules = selectedCollection
-    ? (domainPack?.domainPack.policyRules.filter(
-        (rule) => rule.collectionId === selectedCollection.id,
-      ) ?? [])
+  const registryRules = domainPack?.domainPack.rules ?? [];
+  const registryGroups = domainPack
+    ? groupRulesByCollection(domainPack.domainPack.collections, registryRules)
     : [];
   const load = useCallback(async () => {
     const response = await fetch('/api/policies', { cache: 'no-store' });
@@ -169,19 +193,6 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
       cancelled = true;
     };
   }, [tenantId]);
-
-  useEffect(() => {
-    const dialog = ruleDialogRef.current;
-    if (!dialog) return;
-    if (!ruleDialog) {
-      if (dialog.open) dialog.close();
-      return;
-    }
-    if (!dialog.open) dialog.showModal();
-    const onClose = () => setRuleDialog(null);
-    dialog.addEventListener('close', onClose);
-    return () => dialog.removeEventListener('close', onClose);
-  }, [ruleDialog]);
 
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -318,14 +329,99 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
               </li>
             </ol>
             <div className="domain-pack-grid">
-              <article className="domain-pack-section">
+              <section className="domain-pack-section domain-rule-registry">
                 <div className="domain-pack-section-heading">
-                  <ShieldCheck aria-hidden="true" size={16} />
+                  <ListChecks aria-hidden="true" size={16} />
                   <div>
-                    <h3>Evidence gates</h3>
-                    <p>Missing-document checks. They are not extracted policy rules.</p>
+                    <h3>Rule registry</h3>
+                    <p>
+                      Every rule active in this workspace, grouped by policy collection and labelled
+                      with the source it came from.
+                    </p>
                   </div>
                 </div>
+                <p className="domain-pack-rule-summary">
+                  {registryRules.length} active {registryRules.length === 1 ? 'rule' : 'rules'} in{' '}
+                  {registryGroups.length}{' '}
+                  {registryGroups.length === 1 ? 'collection' : 'collections'}.
+                </p>
+                {registryGroups.length ? (
+                  <div className="domain-registry-groups">
+                    {registryGroups.map((group) => (
+                      <section
+                        key={group.id}
+                        className="domain-registry-group"
+                        aria-label={`${group.label} rules`}
+                      >
+                        <div className="domain-registry-group-heading">
+                          <h4>{group.label}</h4>
+                          <span className="domain-registry-count">
+                            {group.rules.length} {group.rules.length === 1 ? 'rule' : 'rules'}
+                          </span>
+                        </div>
+                        {group.rules.length === 0 ? (
+                          <p className="domain-registry-group-empty">
+                            No rules yet. Upload and approve a policy in this collection to add one.
+                          </p>
+                        ) : null}
+                        <ul className="domain-registry-rules">
+                          {group.rules.map((rule) => (
+                            <li key={rule.id}>
+                              <div className="domain-registry-tags">
+                                <span className={`policy-status policy-status-${rule.severity}`}>
+                                  {rule.severity}
+                                </span>
+                                {rule.origin.kind === 'domain_pack' ? (
+                                  <span className="domain-origin domain-origin-system">
+                                    SYSTEM DEFAULT
+                                  </span>
+                                ) : (
+                                  <span className="domain-origin domain-origin-policy">
+                                    FROM POLICY REGISTER
+                                  </span>
+                                )}
+                              </div>
+                              <strong>{rule.title}</strong>
+                              <p>{rule.description}</p>
+                              {rule.origin.kind === 'domain_pack' ? (
+                                <span className="domain-registry-source">
+                                  {rule.origin.domainPackName} v{rule.origin.domainPackVersion}
+                                </span>
+                              ) : (
+                                <Link
+                                  className="domain-registry-source domain-registry-source-link"
+                                  href={`/policies/${rule.origin.policyId}`}
+                                >
+                                  {rule.origin.policyTitle} · {rule.origin.policyVersion}
+                                </Link>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="domain-registry-empty">
+                    No rules are active in this workspace yet. Upload a policy version, then approve
+                    its cited proposals to fill the registry.
+                  </p>
+                )}
+              </section>
+              <details className="domain-pack-section domain-pack-disclosure domain-evidence-gates">
+                <summary>
+                  <div className="domain-pack-section-heading">
+                    <ShieldCheck aria-hidden="true" size={16} />
+                    <div>
+                      <h3>Evidence gates</h3>
+                      <p>Missing-document checks. They are not extracted policy rules.</p>
+                    </div>
+                  </div>
+                  <span className="domain-pack-toggle">
+                    <span className="domain-pack-toggle-show">Show gates</span>
+                    <span className="domain-pack-toggle-hide">Hide gates</span>
+                  </span>
+                </summary>
                 <ul className="domain-requirements">
                   {domainPack.domainPack.requiredDocuments.map((requirement) => (
                     <li key={requirement.id}>
@@ -339,8 +435,8 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
                     </li>
                   ))}
                 </ul>
-              </article>
-              <details className="domain-pack-section domain-fact-vocabulary">
+              </details>
+              <details className="domain-pack-section domain-pack-disclosure domain-fact-vocabulary">
                 <summary>
                   <div className="domain-pack-section-heading">
                     <Braces aria-hidden="true" size={16} />
@@ -349,9 +445,9 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
                       <p>Fields a cited clause may constrain. A field is not a rule by itself.</p>
                     </div>
                   </div>
-                  <span className="domain-fact-toggle">
-                    <span className="domain-fact-toggle-show">Show fields</span>
-                    <span className="domain-fact-toggle-hide">Hide fields</span>
+                  <span className="domain-pack-toggle">
+                    <span className="domain-pack-toggle-show">Show fields</span>
+                    <span className="domain-pack-toggle-hide">Hide fields</span>
                   </span>
                 </summary>
                 <div className="domain-document-types">
@@ -373,133 +469,10 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
                   ))}
                 </div>
               </details>
-              <article className="domain-pack-section domain-pack-rules">
-                <div className="domain-pack-section-heading">
-                  <ListChecks aria-hidden="true" size={16} />
-                  <div>
-                    <h3>Installed controls</h3>
-                    <p>Known checks that already run before any policy is uploaded.</p>
-                  </div>
-                </div>
-                <p className="domain-pack-rule-summary">
-                  {domainPack.domainPack.baselineRules.length} fixed controls are active in this
-                  workspace.
-                </p>
-                <button
-                  type="button"
-                  className="domain-pack-rule-action"
-                  onClick={() => setRuleDialog({ kind: 'baseline' })}
-                >
-                  View installed controls
-                </button>
-              </article>
-              <article className="domain-pack-section domain-pack-collections">
-                <div className="domain-pack-section-heading">
-                  <BookOpenCheck aria-hidden="true" size={16} />
-                  <div>
-                    <h3>Policy collections</h3>
-                    <p>Source-policy channels. Open one to see rules discovered from its PDFs.</p>
-                  </div>
-                </div>
-                <div className="domain-collection-list">
-                  {domainPack.domainPack.collections.map((collection) => (
-                    <button
-                      type="button"
-                      key={collection.id}
-                      onClick={() =>
-                        setRuleDialog({ kind: 'collection', collectionId: collection.id })
-                      }
-                    >
-                      <span>{collection.label}</span>
-                      <small>
-                        {
-                          domainPack.domainPack.policyRules.filter(
-                            (rule) => rule.collectionId === collection.id,
-                          ).length
-                        }{' '}
-                        policy rules
-                      </small>
-                    </button>
-                  ))}
-                </div>
-              </article>
             </div>
           </>
         ) : null}
       </section>
-      <dialog
-        ref={ruleDialogRef}
-        aria-labelledby="collection-rule-dialog-title"
-        className="domain-rule-dialog"
-        onCancel={(event) => {
-          event.preventDefault();
-          setRuleDialog(null);
-        }}
-      >
-        <header>
-          <div>
-            <span className="policy-eyebrow">Collection rulebook</span>
-            <h2 id="collection-rule-dialog-title">
-              {ruleDialog?.kind === 'baseline'
-                ? 'Installed controls'
-                : selectedCollection
-                  ? `Rules discovered from ${selectedCollection.label}`
-                  : 'Policy-derived rules'}
-            </h2>
-            <p>
-              {ruleDialog?.kind === 'baseline'
-                ? 'These fixed checks are part of the workspace configuration. Uploading a policy does not recreate them.'
-                : 'Every rule here originated in an uploaded policy PDF, has an exact citation, and was approved before activation.'}
-            </p>
-          </div>
-          <button
-            type="button"
-            aria-label="Close collection rules"
-            onClick={() => setRuleDialog(null)}
-          >
-            <X size={17} aria-hidden="true" />
-          </button>
-        </header>
-        {ruleDialog?.kind === 'baseline' && domainPack ? (
-          <ul className="domain-rule-dialog-list">
-            {domainPack.domainPack.baselineRules.map((rule) => (
-              <li key={rule.id}>
-                <span className={`policy-status policy-status-${rule.severity}`}>
-                  {rule.severity}
-                </span>
-                <div>
-                  <strong>{rule.title}</strong>
-                  <p>{rule.description}</p>
-                  <small>Fixed workspace control</small>
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : selectedCollectionRules.length ? (
-          <ul className="domain-rule-dialog-list">
-            {selectedCollectionRules.map((rule) => (
-              <li key={rule.id}>
-                <span className={`policy-status policy-status-${rule.severity}`}>
-                  {rule.severity}
-                </span>
-                <div>
-                  <strong>{rule.title}</strong>
-                  <p>{rule.description}</p>
-                  <small>Approved policy · v{rule.policyVersion}</small>
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <div className="domain-rule-dialog-empty">
-            <strong>No policy-derived rules are active in this collection yet.</strong>
-            <p>
-              Upload a policy version, then review its cited proposals. An approved proposal only
-              appears here after its policy version is activated.
-            </p>
-          </div>
-        )}
-      </dialog>
       <div className="policy-grid">
         <section className="policy-card policy-upload-card">
           <header>
@@ -515,10 +488,7 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
               <select
                 name="tenantId"
                 value={tenantId}
-                onChange={(event) => {
-                  setRuleDialog(null);
-                  setTenantId(event.target.value);
-                }}
+                onChange={(event) => setTenantId(event.target.value)}
               >
                 {tenants.map((tenant) => (
                   <option key={tenant.id} value={tenant.id}>

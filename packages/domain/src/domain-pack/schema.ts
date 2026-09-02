@@ -99,6 +99,7 @@ export const DomainPackSchema = z.object({
       severity: SeveritySchema,
       when: ConditionSchema,
       policyTags: z.array(z.string()).default([]),
+      collectionId: z.string().min(1).optional(),
     }),
   ),
   decisions: z
@@ -129,10 +130,13 @@ export function parseDomainPack(value: unknown): DomainPack {
     if (!types.has(requirement.documentType))
       throw new Error(`Unknown required document type: ${requirement.documentType}`);
   }
+  const collections = new Set(pack.policyCollections.map((collection) => collection.id));
   const ruleIds = new Set<string>();
   for (const rule of pack.rules) {
     if (ruleIds.has(rule.id)) throw new Error(`Duplicate rule: ${rule.id}`);
     ruleIds.add(rule.id);
+    if (rule.collectionId && !collections.has(rule.collectionId))
+      throw new Error(`Unknown rule collection: ${rule.collectionId}`);
   }
   return pack;
 }

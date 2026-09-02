@@ -10,12 +10,14 @@ import type { OnModuleDestroy } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { ulid } from 'ulid';
 import { loadConfig } from '@caselens/config';
+import type { Severity } from '@caselens/contracts';
 import { validateFile } from '@caselens/document-pipeline';
 import {
   assertPolicyTransition,
   assertProposalTransition,
   resolvePersistedDomainPack,
   validateRuleProposal,
+  type DomainPack,
   type PolicyRuleProposal,
 } from '@caselens/domain';
 import {
@@ -30,6 +32,142 @@ import {
   S3CompatibleStorageProvider,
 } from '@caselens/providers';
 import type { RequestContext } from '../request-context.js';
+
+export const GENERAL_CONTROLS_COLLECTION = {
+  id: 'general-controls',
+  label: 'General controls',
+} as const;
+
+export type RuleOrigin =
+  | { kind: 'domain_pack'; domainPackName: string; domainPackVersion: string }
+  | { kind: 'policy_document'; policyId: string; policyTitle: string; policyVersion: string };
+
+export interface RegistryRule {
+  id: string;
+  title: string;
+  description: string;
+  severity: Severity;
+  collectionId: string;
+  origin: RuleOrigin;
+}
+
+export interface RegistryCollection {
+  id: string;
+  label: string;
+}
+
+/**
+ * The domain-pack endpoint response. Declared explicitly so renaming or dropping a field the
+ * review console reads is a compile error rather than a runtime surprise: the Policy Library
+ * only runs under the production-local profile, so no unit test can exercise this handler.
+ */
+export interface DomainPackConfigurationResponse {
+  tenantId: string;
+  domainPack: {
+    id: string;
+    key: string;
+    name: string;
+    version: string;
+    terminology: { case: string; subject: string; decision: string };
+    collections: RegistryCollection[];
+    requiredDocuments: Array<{
+      id: string;
+      documentType: string;
+      documentLabel: string;
+      severity: Severity;
+      message: string;
+      conditional: boolean;
+    }>;
+    documentTypes: Array<{
+      id: string;
+      label: string;
+      description: string;
+      fields: Array<{
+        path: string;
+        label: string;
+        type: string;
+        required: boolean;
+        aliases: string[];
+      }>;
+    }>;
+    rules: RegistryRule[];
+  };
+}
+
+export interface RegistryPolicySource {
+  id: string;
+  title: string;
+  collectionId: string;
+}
+
+export interface RegistryPolicyRule {
+  id: string;
+  title: string;
+  description: string;
+  severity: Severity;
+  policyDocumentId: string;
+  policyVersion: string;
+}
+
+/**
+ * Builds the tenant rule registry: one array in which every active rule declares the collection it
+ * belongs to and the origin it came from. A domain-pack rule without a declared collection falls
+ * into the synthetic `general-controls` collection, which is appended to the collection list only
+ * when at least one rule lands in it.
+ */
+export function buildRuleRegistry(
+  pack: DomainPack,
+  activePolicies: readonly RegistryPolicySource[],
+  activePolicyRules: readonly RegistryPolicyRule[],
+): { collections: RegistryCollection[]; rules: RegistryRule[] } {
+  const policyById = new Map(activePolicies.map((policy) => [policy.id, policy]));
+  const domainPackRules: RegistryRule[] = pack.rules.map((rule) => ({
+    id: rule.id,
+    title: rule.title,
+    description: rule.description,
+    severity: rule.severity,
+    collectionId: rule.collectionId ?? GENERAL_CONTROLS_COLLECTION.id,
+    origin: {
+      kind: 'domain_pack',
+      domainPackName: pack.name,
+      domainPackVersion: pack.version,
+    },
+  }));
+  const policyDerivedRules: RegistryRule[] = activePolicyRules.flatMap((rule) => {
+    const policy = policyById.get(rule.policyDocumentId);
+    if (!policy) return [];
+    return [
+      {
+        id: rule.id,
+        title: rule.title,
+        description: rule.description,
+        severity: rule.severity,
+        collectionId: policy.collectionId,
+        origin: {
+          kind: 'policy_document',
+          policyId: policy.id,
+          policyTitle: policy.title,
+          policyVersion: rule.policyVersion,
+        },
+      },
+    ];
+  });
+  const rules = [...domainPackRules, ...policyDerivedRules];
+  const collections: RegistryCollection[] = pack.policyCollections.map((collection) => ({
+    id: collection.id,
+    label: collection.label,
+  }));
+  const usesGeneralControls = rules.some(
+    (rule) => rule.collectionId === GENERAL_CONTROLS_COLLECTION.id,
+  );
+  const declaresGeneralControls = collections.some(
+    (collection) => collection.id === GENERAL_CONTROLS_COLLECTION.id,
+  );
+  if (usesGeneralControls && !declaresGeneralControls) {
+    collections.push({ ...GENERAL_CONTROLS_COLLECTION });
+  }
+  return { collections, rules };
+}
 
 export interface PolicyUploadInput {
   tenantId?: string | undefined;
@@ -102,7 +240,10 @@ export class PoliciesService implements OnModuleDestroy {
     };
   }
 
-  async domainPackConfiguration(context: RequestContext, requestedTenantId?: string) {
+  async domainPackConfiguration(
+    context: RequestContext,
+    requestedTenantId?: string,
+  ): Promise<DomainPackConfigurationResponse> {
     this.requireAdministrator(context);
     const tenantId = this.resolveTenant(context, requestedTenantId);
     const domainPackId = `pack_${tenantId}`;
@@ -124,29 +265,7 @@ export class PoliciesService implements OnModuleDestroy {
       }),
       store.listActiveRules(tenantId, domainPackId),
     ]);
-    const collectionByPolicyId = new Map(
-      activePolicies.map((policy) => [policy.id, policy.collectionId]),
-    );
-    const baselineRules = pack.rules.map((rule) => ({
-      id: rule.id,
-      title: rule.title,
-      description: rule.description,
-      severity: rule.severity,
-    }));
-    const approvedPolicyRules = activePolicyRules.flatMap((rule) => {
-      const collectionId = collectionByPolicyId.get(rule.policyDocumentId);
-      if (!collectionId) return [];
-      return [
-        {
-          id: rule.id,
-          title: rule.title,
-          description: rule.description,
-          severity: rule.severity,
-          collectionId,
-          policyVersion: rule.policyVersion,
-        },
-      ];
-    });
+    const registry = buildRuleRegistry(pack, activePolicies, activePolicyRules);
 
     return {
       tenantId,
@@ -156,10 +275,7 @@ export class PoliciesService implements OnModuleDestroy {
         name: pack.name,
         version: pack.version,
         terminology: pack.terminology,
-        collections: pack.policyCollections.map((collection) => ({
-          id: collection.id,
-          label: collection.label,
-        })),
+        collections: registry.collections,
         requiredDocuments: pack.requiredDocuments.map((requirement) => ({
           id: requirement.id,
           documentType: requirement.documentType,
@@ -181,8 +297,7 @@ export class PoliciesService implements OnModuleDestroy {
             aliases: field.aliases,
           })),
         })),
-        baselineRules,
-        policyRules: approvedPolicyRules,
+        rules: registry.rules,
       },
     };
   }

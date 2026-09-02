@@ -236,6 +236,7 @@ export const pharmacySupplierPack = parseDomainPack({
         ],
       },
       policyTags: ['insurance', 'coverage'],
+      collectionId: 'insurance',
     },
     {
       id: 'legal-name-conflict',
@@ -244,6 +245,7 @@ export const pharmacySupplierPack = parseDomainPack({
       severity: 'major',
       when: { operator: 'eq', path: 'reconciliation.supplierLegalNameConflict', value: true },
       policyTags: ['identity', 'supplier-qualification'],
+      collectionId: 'supplier-qualification',
     },
     {
       id: 'iso-expired',
@@ -256,6 +258,7 @@ export const pharmacySupplierPack = parseDomainPack({
         value: '2026-08-26',
       },
       policyTags: ['quality', 'certificate', 'supplier-qualification'],
+      collectionId: 'supplier-qualification',
     },
     {
       id: 'dpa-unsigned',
@@ -264,6 +267,7 @@ export const pharmacySupplierPack = parseDomainPack({
       severity: 'major',
       when: { operator: 'eq', path: 'facts.dpa.signed', value: false },
       policyTags: ['data-protection'],
+      collectionId: 'data-protection',
     },
   ],
   decisions: [
