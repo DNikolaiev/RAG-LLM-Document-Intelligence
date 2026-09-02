@@ -49,6 +49,10 @@ export interface StoredJob {
   idempotencyKey: string;
   createdAt: string;
   updatedAt: string;
+  caseReference?: string | null;
+  caseSubjectName?: string | null;
+  targetName?: string | null;
+  enqueuedByName?: string | null;
 }
 
 export interface StoredJobEvent {
@@ -350,10 +354,22 @@ export class PostgresCaseStore {
   async listJobs(scope: AccessScope, limit = 30): Promise<StoredJob[]> {
     return this.withScope(scope, async (tx) => {
       const rows = await tx<Array<Record<string, unknown>>>`
-        select id, tenant_id, case_id, target_type, target_id, enqueued_by_user_id, correlation_id, queue_job_id, status, progress, attempts, error, kind, idempotency_key, created_at, updated_at
-        from jobs
-        where (${scope.platformAdmin} or enqueued_by_user_id = ${scope.userId ?? ''})
-        order by updated_at desc, id desc limit ${limit}`;
+        select job.id, job.tenant_id, job.case_id, job.target_type, job.target_id,
+          job.enqueued_by_user_id, job.correlation_id, job.queue_job_id, job.status,
+          job.progress, job.attempts, job.error, job.kind, job.idempotency_key,
+          job.created_at, job.updated_at, case_item.reference as case_reference,
+          case_item.subject_name as case_subject_name,
+          coalesce(document_item.original_name, policy_item.title, case_item.subject_name) as target_name,
+          enqueuer.display_name as enqueued_by_name
+        from jobs job
+        left join cases case_item on case_item.id = job.case_id
+        left join documents document_item
+          on job.target_type = 'case_document' and document_item.id = job.target_id
+        left join policy_documents policy_item
+          on job.target_type = 'policy_version' and policy_item.id = job.target_id
+        left join users enqueuer on enqueuer.id = job.enqueued_by_user_id
+        where (${scope.platformAdmin} or job.enqueued_by_user_id = ${scope.userId ?? ''})
+        order by job.updated_at desc, job.id desc limit ${limit}`;
       return rows.map(mapJob);
     });
   }
@@ -534,6 +550,20 @@ function mapJob(row: Record<string, unknown>): StoredJob {
     idempotencyKey: String(row.idempotency_key),
     createdAt: new Date(row.created_at as string | Date).toISOString(),
     updatedAt: new Date(row.updated_at as string | Date).toISOString(),
+    caseReference:
+      row.case_reference === null || row.case_reference === undefined
+        ? null
+        : String(row.case_reference),
+    caseSubjectName:
+      row.case_subject_name === null || row.case_subject_name === undefined
+        ? null
+        : String(row.case_subject_name),
+    targetName:
+      row.target_name === null || row.target_name === undefined ? null : String(row.target_name),
+    enqueuedByName:
+      row.enqueued_by_name === null || row.enqueued_by_name === undefined
+        ? null
+        : String(row.enqueued_by_name),
   };
 }
 

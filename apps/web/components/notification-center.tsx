@@ -2,10 +2,16 @@
 
 import { Bell, CheckCircle2, Clock3, LoaderCircle, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { JobLifecycleEvent, JobNotification } from '@caselens/contracts';
 
 interface JobPage {
   items: JobNotification[];
+}
+
+interface ToastNotice {
+  event: JobLifecycleEvent;
+  job: JobNotification;
 }
 
 const toastEvents = new Set([
@@ -28,7 +34,7 @@ export function NotificationCenter({
   const [events, setEvents] = useState<JobLifecycleEvent[]>([]);
   const [open, setOpen] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
-  const [toast, setToast] = useState<JobLifecycleEvent | null>(null);
+  const [toast, setToast] = useState<ToastNotice | null>(null);
   const [connectionState, setConnectionState] = useState<'live' | 'polling' | 'offline'>('live');
   const knownEventIds = useRef(new Set<string>());
   const initialized = useRef(false);
@@ -56,7 +62,8 @@ export function NotificationCenter({
       const latestEvents = page.items.flatMap((job) => (job.latestEvent ? [job.latestEvent] : []));
       if (initialized.current) {
         const fresh = latestEvents.find((event) => !knownEventIds.current.has(event.id));
-        if (fresh && toastEvents.has(fresh.type)) setToast(fresh);
+        const job = fresh ? page.items.find((item) => item.id === fresh.jobId) : undefined;
+        if (fresh && job && toastEvents.has(fresh.type)) setToast({ event: fresh, job });
       }
       for (const event of latestEvents) knownEventIds.current.add(event.id);
       initialized.current = true;
@@ -241,7 +248,7 @@ export function NotificationCenter({
                         <span>
                           <strong>{event?.message ?? 'Processing request created.'}</strong>
                           <small>
-                            {formatTarget(job.targetType)} · {job.progress}% ·{' '}
+                            {formatJobContext(job)} · {job.progress}% ·{' '}
                             {formatRelative(job.updatedAt)}
                           </small>
                         </span>
@@ -259,6 +266,14 @@ export function NotificationCenter({
               </div>
               {selectedJobId ? (
                 <div className="job-event-detail">
+                  {selectedJob ? (
+                    <div className="job-event-context">
+                      <strong>{formatJobContext(selectedJob)}</strong>
+                      <span>
+                        Enqueued by {selectedJob.enqueuedByName ?? selectedJob.enqueuedByUserId}
+                      </span>
+                    </div>
+                  ) : null}
                   <ol className="job-event-timeline" aria-label="Job processing timeline">
                     {events.map((event) => (
                       <li key={event.id} className={`event-${event.status}`}>
@@ -300,22 +315,27 @@ export function NotificationCenter({
           </section>
         ) : null}
       </div>
-      {toast ? (
-        <div className={`job-toast toast-${toast.status}`} role="status">
-          <JobIcon status={toast.status} />
-          <span>
-            <strong>{toast.message}</strong>
-            <small>{toast.stage ?? 'Processing update'}</small>
-          </span>
-          <button
-            type="button"
-            aria-label="Dismiss processing update"
-            onClick={() => setToast(null)}
-          >
-            <X aria-hidden="true" size={15} />
-          </button>
-        </div>
-      ) : null}
+      {toast && typeof document !== 'undefined'
+        ? createPortal(
+            <div className={`job-toast toast-${toast.event.status}`} role="status">
+              <JobIcon status={toast.event.status} />
+              <span>
+                <strong>{toast.event.message}</strong>
+                <small>
+                  {formatJobContext(toast.job)} · {toast.event.stage ?? 'Processing update'}
+                </small>
+              </span>
+              <button
+                type="button"
+                aria-label="Dismiss processing update"
+                onClick={() => setToast(null)}
+              >
+                <X aria-hidden="true" size={15} />
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }
@@ -334,6 +354,13 @@ function formatTarget(value: JobNotification['targetType']): string {
   if (value === 'policy_version') return 'Policy';
   if (value === 'case_document') return 'Document';
   return 'Case';
+}
+
+function formatJobContext(job: JobNotification): string {
+  const target = job.targetName ?? job.caseSubjectName ?? formatTarget(job.targetType);
+  return job.caseReference
+    ? `${job.caseReference} · ${target}`
+    : `${formatTarget(job.targetType)} · ${target}`;
 }
 
 function formatRelative(value: string): string {

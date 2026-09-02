@@ -210,6 +210,10 @@ export const JobNotificationSchema = z.object({
   errorCode: z.string().nullable(),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
+  caseReference: z.string().min(1).nullable().optional(),
+  caseSubjectName: z.string().min(1).nullable().optional(),
+  targetName: z.string().min(1).nullable().optional(),
+  enqueuedByName: z.string().min(1).nullable().optional(),
   latestEvent: JobLifecycleEventSchema.nullable(),
 });
 

@@ -11,7 +11,7 @@ import { validateFile } from '@caselens/document-pipeline';
 import { DeterministicVirusScanner } from '@caselens/providers';
 import type { RequestContext } from './request-context.js';
 import { createDemoCases, type CaseStatus, type DemoCase } from './demo-data.js';
-import { resolveTestTenant } from '@caselens/contracts';
+import { resolveTestProfile, resolveTestTenant } from '@caselens/contracts';
 
 export interface DemoJob {
   id: string;
@@ -325,10 +325,23 @@ export class CasesService {
       .filter((job) => this.canSeeJob(context, job))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id))
       .slice(0, Math.min(100, Math.max(1, limit)))
-      .map((job) => ({
-        ...structuredClone(job),
-        latestEvent: structuredClone(this.jobEvents.get(job.id)?.at(-1) ?? null),
-      }));
+      .map((job) => {
+        const item = this.cases.find((candidate) => candidate.id === job.caseId) ?? null;
+        const targetName =
+          job.targetType === 'case_document'
+            ? (item?.documents.find((document) => document.id === job.targetId)?.fileName ?? null)
+            : job.targetType === 'case'
+              ? (item?.subjectName ?? null)
+              : null;
+        return {
+          ...structuredClone(job),
+          caseReference: item?.reference ?? null,
+          caseSubjectName: item?.subjectName ?? null,
+          targetName,
+          enqueuedByName: resolveTestProfile(job.enqueuedByUserId).displayName,
+          latestEvent: structuredClone(this.jobEvents.get(job.id)?.at(-1) ?? null),
+        };
+      });
     return { items, nextCursor: null };
   }
 
