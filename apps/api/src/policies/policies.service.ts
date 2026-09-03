@@ -10,11 +10,18 @@ import type { OnModuleDestroy } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { ulid } from 'ulid';
 import { loadConfig } from '@caselens/config';
-import type { Severity } from '@caselens/contracts';
+import type {
+  DomainPackConfiguration,
+  FieldProposal,
+  RegistryCollection,
+  RegistryRule,
+  Severity,
+} from '@caselens/contracts';
 import { validateFile } from '@caselens/document-pipeline';
 import {
   assertPolicyTransition,
   assertProposalTransition,
+  parseDomainPack,
   resolvePersistedDomainPack,
   validateRuleProposal,
   type DomainPack,
@@ -23,7 +30,11 @@ import {
 import {
   PostgresCaseStore,
   PostgresPolicyStore,
+  nextMinorVersion,
   type AccessScope,
+  type FieldProposalStatus,
+  type SavePackVersionInput,
+  type StoredFieldProposal,
   type StoredPolicyProposalDetail,
 } from '@caselens/persistence';
 import {
@@ -37,62 +48,6 @@ export const GENERAL_CONTROLS_COLLECTION = {
   id: 'general-controls',
   label: 'General controls',
 } as const;
-
-export type RuleOrigin =
-  | { kind: 'domain_pack'; domainPackName: string; domainPackVersion: string }
-  | { kind: 'policy_document'; policyId: string; policyTitle: string; policyVersion: string };
-
-export interface RegistryRule {
-  id: string;
-  title: string;
-  description: string;
-  severity: Severity;
-  collectionId: string;
-  origin: RuleOrigin;
-}
-
-export interface RegistryCollection {
-  id: string;
-  label: string;
-}
-
-/**
- * The domain-pack endpoint response. Declared explicitly so renaming or dropping a field the
- * review console reads is a compile error rather than a runtime surprise: the Policy Library
- * only runs under the production-local profile, so no unit test can exercise this handler.
- */
-export interface DomainPackConfigurationResponse {
-  tenantId: string;
-  domainPack: {
-    id: string;
-    key: string;
-    name: string;
-    version: string;
-    terminology: { case: string; subject: string; decision: string };
-    collections: RegistryCollection[];
-    requiredDocuments: Array<{
-      id: string;
-      documentType: string;
-      documentLabel: string;
-      severity: Severity;
-      message: string;
-      conditional: boolean;
-    }>;
-    documentTypes: Array<{
-      id: string;
-      label: string;
-      description: string;
-      fields: Array<{
-        path: string;
-        label: string;
-        type: string;
-        required: boolean;
-        aliases: string[];
-      }>;
-    }>;
-    rules: RegistryRule[];
-  };
-}
 
 export interface RegistryPolicySource {
   id: string;
@@ -169,6 +124,288 @@ export function buildRuleRegistry(
   return { collections, rules };
 }
 
+/**
+ * Administrator gate shared by every policy-governance mutation. Extracted to module scope (the
+ * class method below just delegates to it) so the field-proposal approve/reject logic can be
+ * unit tested against a plain `RequestContext` object without instantiating `PoliciesService` -
+ * whose constructor otherwise composes real Postgres/S3/BullMQ clients under the production-local
+ * profile.
+ */
+export function requireAdministrator(context: RequestContext): void {
+  if (context.role !== 'admin') {
+    throw new ForbiddenException({
+      code: 'POLICY_ADMIN_REQUIRED',
+      message: 'Only tenant or platform administrators can manage policies.',
+    });
+  }
+}
+
+/**
+ * The narrow slice of `FieldDictionaryStore` (`@caselens/persistence`) that field-proposal
+ * approval and rejection need. A `PostgresPolicyStore` satisfies this structurally, but tests can
+ * hand in a minimal in-memory stand-in instead of implementing the whole dictionary surface
+ * (embedding search, fingerprint listing, proposal batch-save) that approval never touches.
+ */
+export interface FieldProposalGovernanceStore {
+  getFieldProposal(tenantId: string, id: string): Promise<StoredFieldProposal | null>;
+  getActivePackDefinition(tenantId: string, domainPackId: string): Promise<DomainPack | null>;
+  savePackVersion(input: SavePackVersionInput): Promise<{ semanticVersion: string }>;
+  setFieldProposalStatus(
+    tenantId: string,
+    id: string,
+    status: FieldProposalStatus,
+    actorUserId: string,
+    reason?: string,
+  ): Promise<void>;
+}
+
+/**
+ * Maps a stored proposal (which carries review bookkeeping and a 768-float embedding) down to
+ * the `FieldProposal` contract shared with the review console.
+ */
+export function toFieldProposalResponse(stored: StoredFieldProposal): FieldProposal {
+  return {
+    id: stored.id,
+    tenantId: stored.tenantId,
+    domainPackId: stored.domainPackId,
+    policyDocumentId: stored.policyDocumentId,
+    kind: stored.kind,
+    documentTypeId: stored.documentTypeId,
+    path: stored.path,
+    label: stored.label,
+    fieldType: stored.fieldType,
+    aliases: [...stored.aliases],
+    citation: { ...stored.citation },
+    dedup: { ...stored.dedup },
+    status: stored.status,
+    issues: stored.issues.map((issue) => ({ ...issue })),
+  };
+}
+
+/**
+ * Builds the next pack definition for one proposal, then re-validates the WHOLE pack through
+ * `parseDomainPack` before anything is persisted. Pure and synchronous: no store is touched, so a
+ * proposal that no longer applies - its document type is gone, its field vanished, or a new field
+ * now collides on path - throws before a single byte is written, never leaving a partial pack.
+ *
+ * `kind: 'new_field'` appends a field to the named document type's `extractionFields`.
+ * `kind: 'alias'` appends only the wording the proposal carries to the *existing* field's
+ * aliases (wording already present is not duplicated).
+ */
+export function applyFieldProposal(pack: DomainPack, proposal: StoredFieldProposal): DomainPack {
+  const documentTypeIndex = pack.documentTypes.findIndex(
+    (documentType) => documentType.id === proposal.documentTypeId,
+  );
+  if (documentTypeIndex === -1) {
+    throw new ConflictException({
+      code: 'FIELD_PROPOSAL_DOCUMENT_TYPE_NOT_FOUND',
+      message: `The "${proposal.documentTypeId}" document type no longer exists in this domain pack.`,
+    });
+  }
+  const documentType = pack.documentTypes[documentTypeIndex]!;
+  let nextDocumentType: DomainPack['documentTypes'][number];
+  if (proposal.kind === 'new_field') {
+    if (documentType.extractionFields.some((field) => field.path === proposal.path)) {
+      throw new ConflictException({
+        code: 'FIELD_PROPOSAL_PATH_COLLISION',
+        message: `A field already exists at path "${proposal.path}" on "${proposal.documentTypeId}".`,
+      });
+    }
+    nextDocumentType = {
+      ...documentType,
+      extractionFields: [
+        ...documentType.extractionFields,
+        {
+          path: proposal.path,
+          label: proposal.label,
+          type: proposal.fieldType,
+          required: false,
+          aliases: [...proposal.aliases],
+        },
+      ],
+    };
+  } else {
+    const fieldIndex = documentType.extractionFields.findIndex(
+      (field) => field.path === proposal.path,
+    );
+    if (fieldIndex === -1) {
+      throw new ConflictException({
+        code: 'FIELD_PROPOSAL_FIELD_NOT_FOUND',
+        message: `The field at path "${proposal.path}" no longer exists on "${proposal.documentTypeId}".`,
+      });
+    }
+    const field = documentType.extractionFields[fieldIndex]!;
+    const existingAliases = new Set(field.aliases);
+    const newAliases = proposal.aliases.filter((alias) => !existingAliases.has(alias));
+    nextDocumentType = {
+      ...documentType,
+      extractionFields: documentType.extractionFields.map((candidate, index) =>
+        index === fieldIndex ? { ...field, aliases: [...field.aliases, ...newAliases] } : candidate,
+      ),
+    };
+  }
+  const nextPack = {
+    ...pack,
+    documentTypes: pack.documentTypes.map((candidate, index) =>
+      index === documentTypeIndex ? nextDocumentType : candidate,
+    ),
+  };
+  try {
+    return parseDomainPack(nextPack);
+  } catch {
+    throw new ConflictException({
+      code: 'FIELD_PROPOSAL_PACK_INVALID',
+      message: 'Applying this proposal would produce an invalid domain pack; it no longer applies.',
+    });
+  }
+}
+
+/**
+ * Approve semantics for one field proposal: mint the next pack version and mark the proposal
+ * approved, or - if it is already approved - return the version already minted without touching
+ * the store again. Administrator-only, tenant-scoped by the caller-supplied `tenantId`, and safe
+ * to call twice: the second call is a no-op that returns the same version, because the pack has
+ * not moved since the first call minted it.
+ *
+ * Exported as a pure(ish) function over an injected store (rather than a `PoliciesService`
+ * method) so it can be unit tested directly - `PoliciesService.runtime()` throws
+ * `POLICY_LIBRARY_REQUIRES_PRODUCTION_LOCAL` outside the production-local profile, which the
+ * demo-mode Nest test harness never composes.
+ */
+export async function approveFieldProposal(
+  store: FieldProposalGovernanceStore,
+  context: RequestContext,
+  tenantId: string,
+  proposalId: string,
+  reason?: string,
+): Promise<{ semanticVersion: string }> {
+  requireAdministrator(context);
+  const proposal = await store.getFieldProposal(tenantId, proposalId);
+  if (!proposal) {
+    throw new NotFoundException({
+      code: 'FIELD_PROPOSAL_NOT_FOUND',
+      message: 'Field proposal not found.',
+    });
+  }
+  if (proposal.status === 'invalid') {
+    throw new BadRequestException({
+      code: 'INVALID_FIELD_PROPOSAL',
+      message: 'A blocked field proposal cannot be approved until its validation issues are fixed.',
+      issues: proposal.issues,
+    });
+  }
+  if (proposal.status === 'rejected') {
+    throw new ConflictException({
+      code: 'FIELD_PROPOSAL_STATE_CONFLICT',
+      message: 'This field proposal was already rejected and cannot be approved.',
+    });
+  }
+  const activePack = await store.getActivePackDefinition(tenantId, proposal.domainPackId);
+  if (!activePack) {
+    throw new NotFoundException({
+      code: 'DOMAIN_PACK_NOT_FOUND',
+      message: 'No active domain pack is installed for this tenant.',
+    });
+  }
+  if (proposal.status === 'approved') {
+    // Idempotent replay: the field is already live in the active pack from the first approval.
+    return { semanticVersion: activePack.version };
+  }
+  const nextDefinition = applyFieldProposal(activePack, proposal);
+  const semanticVersion = nextMinorVersion(activePack.version);
+  let minted: { semanticVersion: string };
+  try {
+    minted = await store.savePackVersion({
+      tenantId,
+      domainPackId: proposal.domainPackId,
+      definition: nextDefinition,
+      semanticVersion,
+      supersedes: activePack.version,
+      actorUserId: context.userId,
+    });
+  } catch (error) {
+    throw translateFieldDictionaryError(error);
+  }
+  try {
+    await store.setFieldProposalStatus(tenantId, proposal.id, 'approved', context.userId, reason);
+  } catch (error) {
+    throw translateFieldDictionaryError(error);
+  }
+  return minted;
+}
+
+/**
+ * Reject semantics: records the actor and reason, and never touches the pack. Idempotent -
+ * rejecting an already-rejected proposal is a no-op via `setFieldProposalStatus`. Exported for
+ * the same direct-unit-test reason as `approveFieldProposal`.
+ */
+export async function rejectFieldProposal(
+  store: FieldProposalGovernanceStore,
+  context: RequestContext,
+  tenantId: string,
+  proposalId: string,
+  reason?: string,
+): Promise<{ status: 'rejected' }> {
+  requireAdministrator(context);
+  const proposal = await store.getFieldProposal(tenantId, proposalId);
+  if (!proposal) {
+    throw new NotFoundException({
+      code: 'FIELD_PROPOSAL_NOT_FOUND',
+      message: 'Field proposal not found.',
+    });
+  }
+  if (proposal.status === 'approved') {
+    throw new ConflictException({
+      code: 'FIELD_PROPOSAL_STATE_CONFLICT',
+      message: 'This field proposal was already approved and cannot be rejected.',
+    });
+  }
+  try {
+    await store.setFieldProposalStatus(tenantId, proposal.id, 'rejected', context.userId, reason);
+  } catch (error) {
+    throw translateFieldDictionaryError(error);
+  }
+  return { status: 'rejected' };
+}
+
+/**
+ * Translates the raw, colon-tagged `Error`s that `domain-pack-store.ts`'s transaction functions
+ * throw (never `HttpException`s - that module has no Nest dependency) into problem-details
+ * responses. Anything unrecognized passes through unchanged.
+ */
+function translateFieldDictionaryError(error: unknown): unknown {
+  if (error instanceof Error) {
+    if (error.message.startsWith('FIELD_PROPOSAL_STATE_CONFLICT:')) {
+      return new ConflictException({
+        code: 'FIELD_PROPOSAL_STATE_CONFLICT',
+        message: 'This field proposal was already reviewed with a different outcome.',
+      });
+    }
+    if (error.message.startsWith('FIELD_PROPOSAL_NOT_FOUND:')) {
+      return new NotFoundException({
+        code: 'FIELD_PROPOSAL_NOT_FOUND',
+        message: 'Field proposal not found.',
+      });
+    }
+    if (
+      error.message.startsWith('PACK_VERSION_CONFLICT:') ||
+      error.message.startsWith('PACK_SUPERSEDES_NOT_FOUND:')
+    ) {
+      return new ConflictException({
+        code: 'PACK_VERSION_CONFLICT',
+        message: 'The domain pack changed concurrently. Retry the approval.',
+      });
+    }
+    if (error.message.startsWith('DOMAIN_PACK_NOT_FOUND:')) {
+      return new NotFoundException({
+        code: 'DOMAIN_PACK_NOT_FOUND',
+        message: 'No active domain pack is installed for this tenant.',
+      });
+    }
+  }
+  return error;
+}
+
 export interface PolicyUploadInput {
   tenantId?: string | undefined;
   title: string;
@@ -240,10 +477,59 @@ export class PoliciesService implements OnModuleDestroy {
     };
   }
 
+  /**
+   * The tenant's field-proposal queue: candidate extraction fields an uploaded policy proposed,
+   * deduplicated by `apps/worker`'s embedding-recall stage before ever reaching an administrator.
+   * Requires the production-local profile like every other durable policy endpoint - there is no
+   * demo-mode fallback, because there is no persisted field dictionary to list in demo mode.
+   */
+  async fieldProposals(
+    context: RequestContext,
+    filters: { tenantId?: string; status?: FieldProposalStatus },
+  ): Promise<{ items: FieldProposal[] }> {
+    this.requireAdministrator(context);
+    const store = this.runtime().store;
+    const tenantId = this.resolveTenant(context, filters.tenantId);
+    const domainPackId = `pack_${tenantId}`;
+    const proposals = await store.listFieldProposals(tenantId, domainPackId, filters.status);
+    return { items: proposals.map(toFieldProposalResponse) };
+  }
+
+  /**
+   * Thin wrapper delegating to the exported `approveFieldProposal`: resolves the tenant and hands
+   * the durable store to the pure orchestrator, which is what the tests in
+   * `policies.service.test.ts` exercise directly.
+   */
+  async approveFieldProposal(
+    context: RequestContext,
+    proposalId: string,
+    input: { tenantId?: string | undefined; reason?: string | undefined },
+  ): Promise<{ semanticVersion: string }> {
+    const store = this.runtime().store;
+    const tenantId = this.resolveTenant(context, input.tenantId);
+    return approveFieldProposal(store, context, tenantId, proposalId, input.reason);
+  }
+
+  /** Thin wrapper delegating to the exported `rejectFieldProposal` - see `approveFieldProposal`. */
+  async rejectFieldProposal(
+    context: RequestContext,
+    proposalId: string,
+    input: { tenantId?: string | undefined; reason?: string | undefined },
+  ): Promise<{ status: 'rejected' }> {
+    const store = this.runtime().store;
+    const tenantId = this.resolveTenant(context, input.tenantId);
+    return rejectFieldProposal(store, context, tenantId, proposalId, input.reason);
+  }
+
+  /**
+   * The domain-pack endpoint response. Typed as the shared `DomainPackConfiguration` contract, so
+   * renaming or dropping a field the review console reads is a compile error on both sides rather
+   * than a runtime surprise. `policies.endpoint.test.ts` asserts the emitted shape over HTTP.
+   */
   async domainPackConfiguration(
     context: RequestContext,
     requestedTenantId?: string,
-  ): Promise<DomainPackConfigurationResponse> {
+  ): Promise<DomainPackConfiguration> {
     this.requireAdministrator(context);
     const tenantId = this.resolveTenant(context, requestedTenantId);
     const domainPackId = `pack_${tenantId}`;
@@ -705,12 +991,7 @@ export class PoliciesService implements OnModuleDestroy {
   }
 
   private requireAdministrator(context: RequestContext): void {
-    if (context.role !== 'admin') {
-      throw new ForbiddenException({
-        code: 'POLICY_ADMIN_REQUIRED',
-        message: 'Only tenant or platform administrators can manage policies.',
-      });
-    }
+    requireAdministrator(context);
   }
 
   private resolveTenant(context: RequestContext, requested?: string): string {

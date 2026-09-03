@@ -15,6 +15,7 @@ import { TEST_PROFILES, TEST_TENANTS, resolveTestTenant } from '@caselens/contra
 import { validateFile } from '@caselens/document-pipeline';
 import {
   PostgresCaseStore,
+  PostgresPolicyStore,
   type AccessScope,
   type PersistedCaseProjection,
 } from '@caselens/persistence';
@@ -29,6 +30,7 @@ import type { RequestContext } from './request-context.js';
 @Injectable()
 export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
   readonly #store: PostgresCaseStore;
+  readonly #policies: PostgresPolicyStore;
   readonly #storage: S3CompatibleStorageProvider;
   readonly #queue: BullMqQueueProvider;
 
@@ -36,6 +38,7 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     const config = loadConfig();
     const redis = new URL(config.REDIS_URL!);
     this.#store = new PostgresCaseStore(config.DATABASE_URL!);
+    this.#policies = new PostgresPolicyStore(config.DATABASE_URL!);
     this.#storage = new S3CompatibleStorageProvider({
       id: 'local-minio',
       bucket: config.S3_BUCKET,
@@ -154,7 +157,7 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
-    await this.#store.close();
+    await Promise.all([this.#store.close(), this.#policies.close()]);
   }
 
   async health(): Promise<{ persistence: string; queue: string; storage: string }> {
@@ -379,6 +382,96 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
       await this.save(item, priorVersion);
     }
     return job;
+  }
+
+  /**
+   * Re-extracts one case against whatever pack version is active right now, typically after an
+   * administrator approves a field proposal and widens the catalog. Idempotent per `(caseId,
+   * packVersion)`: the durable job key is derived from those two alone, so requesting a reprocess
+   * of the same case against the same active pack version twice returns the same job rather than
+   * enqueueing a second one, and reprocessing again after a later approval mints a fresh job
+   * because the pack version in the key has moved on.
+   */
+  async reprocess(context: RequestContext, caseId: string): Promise<{ jobId: string }> {
+    this.requireRole(context, ['intake', 'reviewer', 'admin']);
+    const item = await this.mutable(context, caseId);
+    const domainPackId = item.domainPackId ?? `pack_${item.tenantId}`;
+    const pack = await this.#policies.getActivePackDefinition(item.tenantId, domainPackId);
+    if (!pack) {
+      throw new NotFoundException({
+        code: 'DOMAIN_PACK_NOT_FOUND',
+        message: 'No active domain pack is installed for this case.',
+      });
+    }
+    const timestamp = new Date().toISOString();
+    const durableKey = `${item.tenantId}:${caseId}:reprocess:${pack.version}`;
+    const job = await this.#store.createJob({
+      id: stableId('job', durableKey),
+      tenantId: item.tenantId,
+      caseId,
+      targetType: 'case',
+      targetId: caseId,
+      enqueuedByUserId: context.userId,
+      correlationId: context.correlationId,
+      queueJobId: null,
+      status: 'queued',
+      progress: 0,
+      attempts: 0,
+      errorCode: null,
+      kind: 'process_case',
+      idempotencyKey: durableKey,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    if (job.status !== 'queued' || job.queueJobId) return { jobId: job.id };
+
+    const enqueued = await this.#queue.enqueue(
+      'process_case',
+      {
+        databaseJobId: job.id,
+        tenantId: item.tenantId,
+        caseId,
+        domainPackVersion: pack.version,
+        idempotencyKey: durableKey,
+      },
+      { idempotencyKey: job.id, maxAttempts: 3 },
+    );
+    if (!enqueued.ok) {
+      await this.#store.updateJob(job.id, item.tenantId, {
+        status: 'failed',
+        progress: 0,
+        errorCode: 'QUEUE_UNAVAILABLE',
+        eventType: 'job.failed',
+        stage: 'queue',
+        message: 'The reprocessing request could not be added to the processing queue.',
+      });
+      throw new ServiceUnavailableException({
+        code: 'QUEUE_UNAVAILABLE',
+        message: enqueued.error.message,
+      });
+    }
+    await this.#store.updateJob(job.id, item.tenantId, {
+      status: 'queued',
+      progress: 0,
+      queueJobId: enqueued.value.jobId,
+      eventType: enqueued.value.duplicate ? 'queue.duplicate_suppressed' : 'queue.enqueued',
+      stage: 'queue',
+      message: enqueued.value.duplicate
+        ? 'This reprocessing request was already queued; the existing job will be used.'
+        : 'Case reprocessing queued and waiting for a worker.',
+      actorUserId: context.userId,
+    });
+    if (!enqueued.value.duplicate) {
+      const priorVersion = item.version;
+      this.touch(
+        item,
+        context,
+        'processing.reprocess_queued',
+        `Reprocessing job ${job.id} queued for pack ${pack.version}`,
+      );
+      await this.save(item, priorVersion);
+    }
+    return { jobId: job.id };
   }
 
   async uploadDocument(

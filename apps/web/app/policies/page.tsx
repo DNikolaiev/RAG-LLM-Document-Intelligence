@@ -9,5 +9,6 @@ export const metadata: Metadata = { title: 'Policy library' };
 export default async function PoliciesPage() {
   const profile = await getSelectedProfile();
   const tenants = TEST_TENANTS.filter((tenant) => profile.tenantIds.includes(tenant.id));
-  return <PolicyLibrary tenants={tenants} />;
+  const administrator = profile.platformAdmin || profile.role === 'admin';
+  return <PolicyLibrary tenants={tenants} administrator={administrator} />;
 }

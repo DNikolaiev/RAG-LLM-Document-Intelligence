@@ -38,6 +38,11 @@ const activateSchema = z.object({
   version: z.number().int().positive(),
   priority: z.number().int().min(0).max(10_000).default(0),
 });
+const fieldProposalStatusSchema = z.enum(['proposed', 'invalid', 'approved', 'rejected']);
+const fieldProposalActionSchema = z.object({
+  tenantId: z.string().min(1).optional(),
+  reason: z.string().trim().min(1).max(1_000).optional(),
+});
 
 @Controller('v1/policies')
 export class PoliciesController {
@@ -75,6 +80,47 @@ export class PoliciesController {
   @Get('domain-pack')
   domainPack(@Context() context: RequestContext, @Query('tenantId') tenantId?: string) {
     return this.policies.domainPackConfiguration(context, tenantId);
+  }
+
+  // Registered before `:id` - Nest/Express matches routes in registration order, so a literal
+  // segment like `field-proposals` must be declared ahead of the single-segment `:id` wildcard
+  // or a GET to this path would be misrouted to `get()` with `id: 'field-proposals'`.
+  @Get('field-proposals')
+  fieldProposals(
+    @Context() context: RequestContext,
+    @Query('tenantId') tenantId?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.policies.fieldProposals(context, {
+      ...(tenantId ? { tenantId } : {}),
+      ...(status ? { status: parseBody(fieldProposalStatusSchema, status) } : {}),
+    });
+  }
+
+  @Post('field-proposals/:id/approve')
+  approveFieldProposal(
+    @Context() context: RequestContext,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.policies.approveFieldProposal(
+      context,
+      id,
+      parseBody(fieldProposalActionSchema, body ?? {}),
+    );
+  }
+
+  @Post('field-proposals/:id/reject')
+  rejectFieldProposal(
+    @Context() context: RequestContext,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.policies.rejectFieldProposal(
+      context,
+      id,
+      parseBody(fieldProposalActionSchema, body ?? {}),
+    );
   }
 
   @Get(':id')

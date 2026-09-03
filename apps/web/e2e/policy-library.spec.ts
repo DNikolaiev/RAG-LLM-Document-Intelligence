@@ -87,6 +87,61 @@ const registryFixture = {
   },
 };
 
+const fieldProposalsFixture = {
+  items: [
+    {
+      id: 'fp_new_field',
+      tenantId: 'tenant_demo',
+      domainPackId: 'pack_tenant_demo',
+      policyDocumentId: 'policy-registry-fixture',
+      kind: 'new_field',
+      documentTypeId: 'insurance_certificate',
+      path: 'insurance.deductibleEur',
+      label: 'Deductible amount',
+      fieldType: 'currency',
+      aliases: ['excess amount'],
+      citation: {
+        chunkId: 'chunk_deductible',
+        page: 4,
+        quote: 'The policyholder bears a deductible of the stated amount per occurrence.',
+      },
+      dedup: {
+        verdict: 'distinct',
+        matchedPath: null,
+        similarity: null,
+        reason: 'No existing field was recalled for this wording.',
+      },
+      status: 'proposed',
+      issues: [],
+    },
+    {
+      id: 'fp_alias',
+      tenantId: 'tenant_demo',
+      domainPackId: 'pack_tenant_demo',
+      policyDocumentId: 'policy-registry-fixture',
+      kind: 'alias',
+      documentTypeId: 'insurance_certificate',
+      path: 'insurance.liabilityLimitEur',
+      label: 'Liability limit',
+      fieldType: 'number',
+      aliases: ['cover amount'],
+      citation: {
+        chunkId: 'chunk_cover_amount',
+        page: 6,
+        quote: 'The cover amount must not fall below the minimum required limit.',
+      },
+      dedup: {
+        verdict: 'duplicate',
+        matchedPath: 'insurance.liabilityLimitEur',
+        similarity: 0.82,
+        reason: 'Both describe the maximum insurer payout per occurrence.',
+      },
+      status: 'proposed',
+      issues: [],
+    },
+  ],
+};
+
 test('policy library explains what conditions can become governed rules', async ({ page }) => {
   const failures = monitorRuntimeFailures(page);
   const response = await page.goto('/policies');
@@ -183,6 +238,83 @@ test('rule registry groups rules by collection and names each origin', async ({ 
   });
   await expect(policySource).toBeVisible();
   await expect(policySource).toHaveAttribute('href', '/policies/policy-registry-fixture');
+
+  await expectHealthyLayout(page);
+  expectNoRuntimeFailures(failures);
+});
+
+test('field proposal queue names an alias match and approving removes it from view', async ({
+  page,
+}) => {
+  const failures = monitorRuntimeFailures(page);
+  await page.route(
+    (url) => url.pathname === '/api/policies/domain-pack',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(registryFixture),
+      });
+    },
+  );
+  await page.route(
+    (url) => url.pathname === '/api/policies/field-proposals',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(fieldProposalsFixture),
+      });
+    },
+  );
+  await page.route(
+    (url) => url.pathname === '/api/policies/field-proposals/fp_alias/approve',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ semanticVersion: '1.1.0' }),
+      });
+    },
+  );
+
+  const response = await page.goto('/policies');
+  expect(response?.ok()).toBe(true);
+
+  const domainPack = page.getByTestId('domain-pack-configuration');
+  const evidenceGates = domainPack.locator('.domain-evidence-gates');
+  const factVocabulary = domainPack.locator('.domain-fact-vocabulary');
+  await expect(evidenceGates).not.toHaveAttribute('open', '');
+  await expect(factVocabulary).not.toHaveAttribute('open', '');
+
+  await factVocabulary.locator('summary').click();
+  await expect(factVocabulary).toHaveAttribute('open', '');
+
+  // The plain new-field proposal renders with its own path and type.
+  const newFieldCard = factVocabulary.locator('.field-proposal-card', {
+    hasText: 'Deductible amount',
+  });
+  await expect(newFieldCard).toBeVisible();
+  await expect(newFieldCard.locator('.field-proposal-path code')).toHaveText(
+    'insurance.deductibleEur',
+  );
+
+  // The alias proposal must name the existing field it merges into and the similarity that
+  // drove the dedup verdict — the single most important thing a reviewer judges.
+  const aliasCard = factVocabulary.locator('.field-proposal-card', {
+    hasText: 'New wording for Liability limit',
+  });
+  await expect(aliasCard).toBeVisible();
+  const mergeNote = aliasCard.locator('.field-proposal-merge');
+  await expect(mergeNote).toContainText('Merges into');
+  await expect(mergeNote).toContainText('insurance.liabilityLimitEur');
+  await expect(mergeNote).toContainText('82% similarity match');
+  await expect(aliasCard.locator('.domain-origin-pending')).toHaveText('AWAITING GOVERNANCE');
+
+  await aliasCard.getByRole('button', { name: 'Approve merge' }).click();
+  await expect(aliasCard).toHaveCount(0);
+  // The rest of the queue, and the approved catalog below it, are unaffected.
+  await expect(newFieldCard).toBeVisible();
 
   await expectHealthyLayout(page);
   expectNoRuntimeFailures(failures);

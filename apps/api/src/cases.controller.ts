@@ -162,6 +162,18 @@ export class CasesController {
     return this.cases.process(context, id, key);
   }
 
+  /**
+   * Re-extracts one case against whatever pack version is active right now - typically because a
+   * field proposal was just approved and widened the catalog. Idempotent per `(caseId,
+   * packVersion)`: the durable job key is derived from those two alone, not from a client-supplied
+   * idempotency key, so re-requesting a reprocess of the same case against the same pack version
+   * always returns the same job instead of enqueueing a second one.
+   */
+  @Post(':id/reprocess')
+  reprocess(@Context() context: RequestContext, @Param('id') id: string) {
+    return this.cases.reprocess(context, id);
+  }
+
   @Post(':id/documents')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 15 * 1024 * 1024, files: 1 } }))
   upload(

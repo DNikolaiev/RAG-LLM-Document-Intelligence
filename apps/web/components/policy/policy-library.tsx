@@ -6,12 +6,21 @@ import {
   BadgeCheck,
   BookOpenCheck,
   Braces,
+  ExternalLink,
   FileCheck2,
   FileUp,
+  GitMerge,
+  Hourglass,
   ListChecks,
   ShieldCheck,
 } from 'lucide-react';
-import type { TestTenant } from '@caselens/contracts';
+import type {
+  DomainPackConfiguration,
+  FieldProposal,
+  RegistryCollection,
+  RegistryRule,
+  TestTenant,
+} from '@caselens/contracts';
 
 interface PolicySummary {
   id: string;
@@ -24,58 +33,10 @@ interface PolicySummary {
   updatedAt: string;
 }
 
-type RuleSeverity = 'info' | 'minor' | 'major' | 'critical';
-
-type RuleOrigin =
-  | { kind: 'domain_pack'; domainPackName: string; domainPackVersion: string }
-  | { kind: 'policy_document'; policyId: string; policyTitle: string; policyVersion: string };
-
-interface RegistryRule {
-  id: string;
-  title: string;
-  description: string;
-  severity: RuleSeverity;
-  collectionId: string;
-  origin: RuleOrigin;
-}
-
 interface RuleCollectionGroup {
   id: string;
   label: string;
   rules: RegistryRule[];
-}
-
-interface DomainPackConfiguration {
-  tenantId: string;
-  domainPack: {
-    id: string;
-    key: string;
-    name: string;
-    version: string;
-    terminology: { case: string; subject: string; decision: string };
-    collections: Array<{ id: string; label: string }>;
-    requiredDocuments: Array<{
-      id: string;
-      documentType: string;
-      documentLabel: string;
-      severity: string;
-      message: string;
-      conditional: boolean;
-    }>;
-    documentTypes: Array<{
-      id: string;
-      label: string;
-      description: string;
-      fields: Array<{
-        path: string;
-        label: string;
-        type: string;
-        required: boolean;
-        aliases: string[];
-      }>;
-    }>;
-    rules: RegistryRule[];
-  };
 }
 
 interface DomainPackLoad {
@@ -85,8 +46,15 @@ interface DomainPackLoad {
   error: string;
 }
 
+interface FieldProposalsLoad {
+  tenantId: string;
+  state: 'ready' | 'error';
+  items: FieldProposal[];
+  error: string;
+}
+
 function groupRulesByCollection(
-  collections: ReadonlyArray<{ id: string; label: string }>,
+  collections: readonly RegistryCollection[],
   rules: readonly RegistryRule[],
 ): RuleCollectionGroup[] {
   const groups = new Map<string, RuleCollectionGroup>(
@@ -126,18 +94,40 @@ const COLLECTIONS: Record<string, ReadonlyArray<{ id: string; label: string }>> 
   ],
 };
 
-export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
+export function PolicyLibrary({
+  tenants,
+  administrator,
+}: {
+  tenants: readonly TestTenant[];
+  administrator: boolean;
+}) {
   const [items, setItems] = useState<PolicySummary[]>([]);
   const [tenantId, setTenantId] = useState(tenants[0]?.id ?? '');
   const [state, setState] = useState<'loading' | 'ready' | 'submitting'>('loading');
   const [message, setMessage] = useState('');
+  const [fileName, setFileName] = useState('');
   const [domainPackLoad, setDomainPackLoad] = useState<DomainPackLoad | null>(null);
+  const [fieldProposalsLoad, setFieldProposalsLoad] = useState<FieldProposalsLoad | null>(null);
+  const [pendingProposalId, setPendingProposalId] = useState('');
   const currentDomainPackLoad = domainPackLoad?.tenantId === tenantId ? domainPackLoad : null;
   const domainPack = currentDomainPackLoad?.domainPack ?? null;
   const domainPackState: 'loading' | 'ready' | 'error' = !tenantId
     ? 'ready'
     : (currentDomainPackLoad?.state ?? 'loading');
   const domainPackError = currentDomainPackLoad?.error ?? '';
+  const currentFieldProposalsLoad =
+    fieldProposalsLoad?.tenantId === tenantId ? fieldProposalsLoad : null;
+  const fieldProposalsState: 'loading' | 'ready' | 'error' = !tenantId
+    ? 'ready'
+    : (currentFieldProposalsLoad?.state ?? 'loading');
+  const fieldProposalsError = currentFieldProposalsLoad?.error ?? '';
+  const reviewableProposals = (currentFieldProposalsLoad?.items ?? []).filter(
+    (proposal) => proposal.status === 'proposed' || proposal.status === 'invalid',
+  );
+  const pendingReviewCount = reviewableProposals.filter(
+    (proposal) => proposal.status === 'proposed',
+  ).length;
+  const blockedProposalCount = reviewableProposals.length - pendingReviewCount;
   const selectedTenant = tenants.find((tenant) => tenant.id === tenantId);
   const tenantItems = items.filter((item) => item.tenantId === tenantId);
   const registryRules = domainPack?.domainPack.rules ?? [];
@@ -194,6 +184,68 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
     };
   }, [tenantId]);
 
+  useEffect(() => {
+    if (!tenantId) return;
+    let cancelled = false;
+    void fetch(`/api/policies/field-proposals?tenantId=${encodeURIComponent(tenantId)}`, {
+      cache: 'no-store',
+    })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.message ?? 'Could not load field proposals.');
+        if (!cancelled) {
+          setFieldProposalsLoad({
+            tenantId,
+            state: 'ready',
+            items: (body.items ?? []) as FieldProposal[],
+            error: '',
+          });
+        }
+      })
+      .catch((error: Error) => {
+        if (!cancelled) {
+          setFieldProposalsLoad({
+            tenantId,
+            state: 'error',
+            items: [],
+            error: error.message,
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId]);
+
+  async function decideFieldProposal(proposal: FieldProposal, decision: 'approve' | 'reject') {
+    const priorLoad = currentFieldProposalsLoad;
+    if (!priorLoad || pendingProposalId) return;
+    setPendingProposalId(proposal.id);
+    setFieldProposalsLoad({
+      ...priorLoad,
+      items: priorLoad.items.filter((item) => item.id !== proposal.id),
+    });
+    const response = await fetch(`/api/policies/field-proposals/${proposal.id}/${decision}`, {
+      method: 'POST',
+      headers: { 'idempotency-key': crypto.randomUUID() },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setFieldProposalsLoad(priorLoad);
+      setMessage(body.message ?? `Could not ${decision} the field proposal.`);
+      setPendingProposalId('');
+      return;
+    }
+    setMessage(
+      decision === 'approve'
+        ? proposal.kind === 'alias'
+          ? `Wording merged into ${proposal.path} · pack v${body.semanticVersion ?? '—'}.`
+          : `Field approved · pack v${body.semanticVersion ?? '—'}.`
+        : 'Field proposal rejected.',
+    );
+    setPendingProposalId('');
+  }
+
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setState('submitting');
@@ -214,6 +266,7 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
     }
     setMessage('Policy accepted. Its private processing timeline is available in notifications.');
     event.currentTarget.reset();
+    setFileName('');
     await load();
   }
 
@@ -450,6 +503,148 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
                     <span className="domain-pack-toggle-hide">Hide fields</span>
                   </span>
                 </summary>
+                <div className="field-proposal-queue" aria-label="Field proposals awaiting review">
+                  <div className="domain-pack-section-heading">
+                    <Hourglass aria-hidden="true" size={15} />
+                    <div>
+                      <h4>Field proposals</h4>
+                      <p>
+                        Candidates a policy introduced. Nothing here changes extraction until an
+                        administrator approves it.
+                      </p>
+                    </div>
+                  </div>
+                  {fieldProposalsState === 'loading' ? (
+                    <p className="field-proposal-summary">Loading field proposals…</p>
+                  ) : fieldProposalsState === 'error' ? (
+                    <p className="field-proposal-summary field-proposal-error" role="alert">
+                      {fieldProposalsError}
+                    </p>
+                  ) : (
+                    <>
+                      <p className="field-proposal-summary">
+                        {pendingReviewCount} {pendingReviewCount === 1 ? 'proposal' : 'proposals'}{' '}
+                        awaiting review
+                        {blockedProposalCount
+                          ? `, ${blockedProposalCount} blocked by validation`
+                          : ''}
+                        .
+                      </p>
+                      {reviewableProposals.length ? (
+                        <div className="field-proposal-list">
+                          {reviewableProposals.map((proposal) => {
+                            const documentTypeLabel =
+                              domainPack.domainPack.documentTypes.find(
+                                (documentType) => documentType.id === proposal.documentTypeId,
+                              )?.label ?? proposal.documentTypeId;
+                            return (
+                              <article className="field-proposal-card" key={proposal.id}>
+                                <div className="field-proposal-heading">
+                                  <strong>
+                                    {proposal.kind === 'alias'
+                                      ? `New wording for ${proposal.label}`
+                                      : proposal.label}
+                                  </strong>
+                                  <div className="domain-registry-tags">
+                                    <span
+                                      className={`policy-status policy-status-${proposal.status}`}
+                                    >
+                                      {proposal.status.replaceAll('_', ' ')}
+                                    </span>
+                                    <span className="domain-origin domain-origin-pending">
+                                      AWAITING GOVERNANCE
+                                    </span>
+                                  </div>
+                                </div>
+                                <p className="field-proposal-path">
+                                  <code>{proposal.path}</code>
+                                  <span>{proposal.fieldType}</span>
+                                  <small>{documentTypeLabel}</small>
+                                </p>
+                                {proposal.kind === 'alias' ? (
+                                  <div className="field-proposal-merge" role="note">
+                                    <GitMerge size={14} aria-hidden="true" />
+                                    <div>
+                                      <strong>
+                                        Merges into{' '}
+                                        <code>{proposal.dedup.matchedPath ?? proposal.path}</code>
+                                      </strong>
+                                      <span>
+                                        {typeof proposal.dedup.similarity === 'number'
+                                          ? `${Math.round(proposal.dedup.similarity * 100)}% similarity match`
+                                          : 'Similarity unavailable'}
+                                        {proposal.dedup.reason ? ` — ${proposal.dedup.reason}` : ''}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {proposal.aliases.length ? (
+                                  <p className="field-proposal-aliases">
+                                    <strong>
+                                      {proposal.kind === 'alias'
+                                        ? 'Adds the wording'
+                                        : 'Also known as'}
+                                    </strong>{' '}
+                                    {proposal.aliases.join(', ')}
+                                  </p>
+                                ) : null}
+                                <blockquote className="field-proposal-quote">
+                                  “{proposal.citation.quote}”
+                                </blockquote>
+                                <div className="field-proposal-meta">
+                                  <span>Page {proposal.citation.page}</span>
+                                  <Link href={`/policies/${proposal.policyDocumentId}`}>
+                                    Open source policy
+                                    <ExternalLink size={12} aria-hidden="true" />
+                                  </Link>
+                                </div>
+                                {proposal.status === 'invalid' && proposal.issues.length ? (
+                                  <ul
+                                    className="field-proposal-issues"
+                                    aria-label="Why this proposal cannot be approved"
+                                  >
+                                    {proposal.issues.map((issue, index) => (
+                                      <li key={`${issue.code}-${index}`}>{issue.message}</li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                                {administrator && proposal.status === 'proposed' ? (
+                                  <div className="field-proposal-actions">
+                                    <button
+                                      type="button"
+                                      className="policy-secondary"
+                                      disabled={pendingProposalId !== ''}
+                                      onClick={() => void decideFieldProposal(proposal, 'reject')}
+                                    >
+                                      Reject
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="policy-primary"
+                                      disabled={pendingProposalId !== ''}
+                                      onClick={() => void decideFieldProposal(proposal, 'approve')}
+                                    >
+                                      {proposal.kind === 'alias'
+                                        ? 'Approve merge'
+                                        : 'Approve field'}
+                                    </button>
+                                  </div>
+                                ) : null}
+                              </article>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="field-proposal-empty">
+                          No field proposals are waiting on review.
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+                <p className="domain-pack-rule-summary field-proposal-catalog-label">
+                  Approved fields
+                </p>
                 <div className="domain-document-types">
                   {domainPack.domainPack.documentTypes.map((documentType) => (
                     <section key={documentType.id}>
@@ -543,7 +738,22 @@ export function PolicyLibrary({ tenants }: { tenants: readonly TestTenant[] }) {
             </div>
             <label className="policy-file">
               Original PDF
-              <input name="file" type="file" accept="application/pdf,.pdf" required />
+              <span className="policy-file-control">
+                <span className="policy-file-button" aria-hidden="true">
+                  <FileUp size={13} /> Choose PDF
+                </span>
+                <span className="policy-file-name" aria-hidden="true">
+                  {fileName || 'No file selected'}
+                </span>
+              </span>
+              <input
+                className="policy-file-input"
+                name="file"
+                type="file"
+                accept="application/pdf,.pdf"
+                required
+                onChange={(event) => setFileName(event.target.files?.[0]?.name ?? '')}
+              />
             </label>
             <button className="policy-primary" disabled={state === 'submitting'}>
               {state === 'submitting' ? 'Adding to queue…' : 'Upload and process'}

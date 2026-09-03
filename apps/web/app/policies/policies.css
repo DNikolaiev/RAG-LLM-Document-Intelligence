@@ -306,7 +306,8 @@
   color: #277d80;
 }
 
-.domain-pack-section-heading h3 {
+.domain-pack-section-heading h3,
+.domain-pack-section-heading h4 {
   margin: 0 0 3px;
   color: var(--ink);
   font-size: 12px;
@@ -548,6 +549,15 @@
   color: #8a5807;
 }
 
+/* A field proposal is not yet governed: distinct from both SYSTEM DEFAULT and FROM POLICY
+   REGISTER, whose colors are reserved for fields already active in the pack. */
+.domain-origin-pending {
+  border-color: rgb(84 87 214 / 34%);
+  border-style: dashed;
+  background: #eef0ff;
+  color: #4247a1;
+}
+
 .domain-registry-rules strong {
   display: block;
   min-width: 0;
@@ -602,6 +612,210 @@
   color: var(--ink-muted);
   font-size: 10px;
   line-height: 1.6;
+}
+
+.field-proposal-queue {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgb(84 87 214 / 14%);
+}
+
+.field-proposal-summary {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.field-proposal-error {
+  color: #a8324b;
+}
+
+.field-proposal-empty {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.field-proposal-catalog-label {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.field-proposal-list {
+  display: grid;
+  gap: 12px;
+}
+
+.field-proposal-card {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid rgb(84 87 214 / 16%);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 80%);
+}
+
+.field-proposal-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.field-proposal-heading strong {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 11px;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.field-proposal-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.field-proposal-path code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #45517d;
+  font: 600 10px/1.4 var(--mono);
+}
+
+.field-proposal-path span {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgb(84 87 214 / 9%);
+  color: #4247a1;
+  font: 700 8px/1.4 var(--mono);
+  text-transform: uppercase;
+}
+
+.field-proposal-path small {
+  flex: 0 0 auto;
+  color: #75809a;
+  font: 500 8px/1.2 var(--mono);
+  text-transform: uppercase;
+}
+
+.field-proposal-merge {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid rgb(24 130 136 / 28%);
+  border-radius: 11px;
+  background: #e9f9f7;
+  color: #146b6e;
+}
+
+.field-proposal-merge svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.field-proposal-merge > div {
+  min-width: 0;
+}
+
+.field-proposal-merge strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.field-proposal-merge strong code {
+  color: inherit;
+  font: inherit;
+}
+
+.field-proposal-merge span {
+  display: block;
+  margin-top: 3px;
+  color: #1f7a7d;
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+.field-proposal-aliases {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.field-proposal-aliases strong {
+  color: #34405a;
+}
+
+.field-proposal-quote {
+  margin: 0;
+  padding: 9px 11px;
+  border-left: 3px solid var(--evidence);
+  background: #f2fbfb;
+  color: #34405a;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.field-proposal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: #56607d;
+  font: 600 9px/1.4 var(--mono);
+}
+
+.field-proposal-meta a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #4e55b1;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.field-proposal-meta a:hover {
+  color: #363c8f;
+}
+
+.field-proposal-meta a:focus-visible {
+  outline: 3px solid rgb(84 87 214 / 28%);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.field-proposal-issues {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgb(182 64 87 / 18%);
+  border-radius: 10px;
+  background: #fff7f8;
+  color: #a8324b;
+  font-size: 9.5px;
+  line-height: 1.45;
+  list-style: none;
+}
+
+.field-proposal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .policy-grid {
@@ -750,11 +964,66 @@
   border-radius: 13px;
   background: #fafbff;
 }
-.policy-file input {
+.policy-file {
+  position: relative;
+  cursor: pointer;
+}
+
+.policy-file:focus-within {
+  border-color: var(--blueprint);
+  box-shadow: 0 0 0 3px rgb(84 87 214 / 18%);
+}
+
+/* Kept focusable and settable, so the native picker and form data still work.
+   Scoped to .policy-form to outrank its `.policy-form input` sizing. */
+.policy-form .policy-file-input {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 1px;
   min-height: 0;
+  height: 1px;
   padding: 0;
   border: 0;
-  background: transparent;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.policy-file-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.policy-file-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 9px;
+  background: white;
+  color: var(--blueprint-deep);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.policy-file:hover .policy-file-button {
+  border-color: var(--blueprint);
+  background: var(--iris-soft);
+}
+
+.policy-file-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .policy-primary,

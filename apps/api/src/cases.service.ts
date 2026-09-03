@@ -234,6 +234,61 @@ export class CasesService {
     return job;
   }
 
+  /**
+   * Demo-mode reprocess: idempotent per `(caseId, packVersion)` rather than a client-supplied
+   * idempotency key, mirroring `ProductionCasesService.reprocess`. There is no persisted field
+   * dictionary in demo mode, so "the current active pack version" is just the case's own
+   * `domainPackVersion` field.
+   */
+  reprocess(context: RequestContext, caseId: string): { jobId: string } {
+    this.requireRole(context, ['intake', 'reviewer', 'admin']);
+    const item = this.mutable(context, caseId);
+    const key = `${context.tenantId}:reprocess:${caseId}:${item.domainPackVersion}`;
+    const existing = this.idempotency.get(key);
+    if (existing) return { jobId: (existing as DemoJob).id };
+    const job = {
+      id: `job_${ulid()}`,
+      tenantId: context.tenantId,
+      caseId,
+      targetType: 'case' as const,
+      targetId: caseId,
+      enqueuedByUserId: context.userId,
+      correlationId: context.correlationId,
+      queueJobId: null,
+      status: 'queued',
+      progress: 0,
+      attempts: 0,
+      errorCode: null,
+      kind: 'process_case',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.idempotency.set(key, job);
+    this.jobs.set(job.id, job);
+    this.appendDemoEvent(
+      job,
+      context.userId,
+      'job.created',
+      'intake',
+      `Reprocessing request created against pack ${item.domainPackVersion}.`,
+    );
+    this.appendDemoEvent(
+      job,
+      context.userId,
+      'queue.enqueue_requested',
+      'queue',
+      'Sending the reprocessing request to the processing queue.',
+    );
+    this.appendDemoEvent(job, context.userId, 'queue.enqueued', 'queue', 'Request queued.');
+    this.touch(
+      item,
+      context,
+      'processing.reprocess_queued',
+      `Reprocessing job ${job.id} queued for pack ${item.domainPackVersion}`,
+    );
+    return { jobId: job.id };
+  }
+
   async uploadDocument(
     context: RequestContext,
     caseId: string,
