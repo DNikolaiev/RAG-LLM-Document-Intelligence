@@ -263,7 +263,11 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
               {filteredCases.map((item) => (
                 <tr className={`queue-row row-${item.status}`} key={item.id}>
                   <td className="case-col">
-                    <Link className="case-name" href={`/cases/${item.id}`}>
+                    <Link
+                      className="case-name"
+                      href={`/cases/${item.id}`}
+                      aria-label={`${item.supplier}, ${item.reference}`}
+                    >
                       <strong>{item.supplier}</strong>
                       <span>{item.subtitle}</span>
                       <code>{item.reference}</code>

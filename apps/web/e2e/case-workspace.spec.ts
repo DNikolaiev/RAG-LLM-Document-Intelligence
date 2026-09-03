@@ -21,14 +21,26 @@ async function mockBrowserMutations(page: Page): Promise<void> {
   });
 }
 
+/** The seeded dossier these assertions describe. Findings and decision state belong to this case. */
+const REVIEW_CASE_REFERENCE = 'SUP-2026-0142';
+
+/**
+ * Opens the seeded review case through the queue's own search, so the target does not depend on
+ * queue ordering or length. This used to prefer a supplier-name link and silently fall back to
+ * "the first Review link" — on the durable local stack, which accumulates cases across runs, that
+ * resolved to a leftover approved case with no findings, and the guarded-decision assertions below
+ * then measured the wrong dossier. A missing fixture must fail loudly here instead.
+ */
 async function openReviewCase(page: Page): Promise<void> {
   await page.goto('/');
-  const preferredCase = page.getByRole('link', { name: /MediSupply GmbH/ }).first();
-  const caseLink = (await preferredCase.count())
-    ? preferredCase
-    : page.getByRole('link', { name: 'Review', exact: true }).first();
+  await page.getByRole('searchbox', { name: 'Find a subject or case' }).fill(REVIEW_CASE_REFERENCE);
+  await page.getByRole('button', { name: 'Filter cases' }).click();
 
-  await expect(caseLink).toBeVisible();
+  const caseLink = page.getByRole('link', { name: new RegExp(REVIEW_CASE_REFERENCE) }).first();
+  await expect(
+    caseLink,
+    `The ${REVIEW_CASE_REFERENCE} dossier must be present for these assertions.`,
+  ).toBeVisible();
   await caseLink.click();
   await expect(page).toHaveURL(/\/cases\//);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
