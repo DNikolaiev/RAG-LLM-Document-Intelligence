@@ -11,6 +11,7 @@ import {
   legalContractPack,
   manufacturingQualityPack,
   reconcileFacts,
+  resolveCompiledDomainPack,
   resolveDomainPack,
   resolvePersistedDomainPack,
   resolvePath,
@@ -25,6 +26,16 @@ describe('domain pack catalog', () => {
     expect(resolveDomainPack('Supplier quality assurance')).toBe(manufacturingQualityPack);
     expect(resolvePersistedDomainPack('pack_tenant_legal')).toBe(legalContractPack);
     expect(resolvePersistedDomainPack('unknown')).toBeNull();
+  });
+
+  it('resolves the compiled fallback for persisted and minted pack identifiers', () => {
+    expect(resolveCompiledDomainPack('pack_tenant_legal')).toBe(legalContractPack);
+    expect(resolveCompiledDomainPack('pack_tenant_legal_1_2_0')).toBe(legalContractPack);
+    expect(resolveCompiledDomainPack('insurance-claims-assessment')).toBe(insuranceClaimsPack);
+    expect(resolveCompiledDomainPack('pack_insurance')).toBe(insuranceClaimsPack);
+    expect(resolveCompiledDomainPack('pack_manufacturing_1_0_0')).toBe(manufacturingQualityPack);
+    expect(resolveCompiledDomainPack('pack_tenant_demo')).toBe(pharmacySupplierPack);
+    expect(resolveCompiledDomainPack('pack_tenant_unknown')).toBeNull();
   });
 });
 

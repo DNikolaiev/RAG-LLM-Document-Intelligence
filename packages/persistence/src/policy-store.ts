@@ -1,5 +1,25 @@
+import type { DomainPack } from '@caselens/domain';
 import postgres from 'postgres';
 import type { AccessScope } from './case-store.js';
+import {
+  getActivePackDefinitionInTransaction,
+  getFieldProposalInTransaction,
+  listFieldEmbeddingFingerprintsInTransaction,
+  listFieldProposalsInTransaction,
+  saveFieldProposalsInTransaction,
+  savePackVersionInTransaction,
+  searchSimilarFieldsInTransaction,
+  setFieldProposalStatusInTransaction,
+  upsertFieldEmbeddingsInTransaction,
+  type FieldDictionaryStore,
+  type FieldEmbeddingFingerprint,
+  type FieldEmbeddingRow,
+  type FieldProposalDraft,
+  type FieldProposalStatus,
+  type SavePackVersionInput,
+  type SimilarFieldMatch,
+  type StoredFieldProposal,
+} from './domain-pack-store.js';
 
 export interface StoredPolicyDocument {
   id: string;
@@ -160,7 +180,7 @@ export interface PolicyProposalCreate {
   }>;
 }
 
-export class PostgresPolicyStore {
+export class PostgresPolicyStore implements FieldDictionaryStore {
   readonly #sql: ReturnType<typeof postgres>;
 
   constructor(connectionString: string) {
@@ -532,6 +552,108 @@ export class PostgresPolicyStore {
           version = version + 1 where id = ${input.policyDocumentId} returning *`;
       return mapPolicy(activatedRows[0]!);
     });
+  }
+
+  /**
+   * Resolves the tenant's active pack definition, falling back to the compiled catalog when
+   * no persisted definition exists so pre-existing volumes keep working.
+   */
+  async getActivePackDefinition(
+    tenantId: string,
+    domainPackId: string,
+  ): Promise<DomainPack | null> {
+    return this.withScope({ tenantIds: [tenantId], platformAdmin: false }, (tx) =>
+      getActivePackDefinitionInTransaction(tx, tenantId, domainPackId),
+    );
+  }
+
+  /**
+   * Mints one new pack version: inserts the version row, supersedes the previous active
+   * version, and appends an audit event. Safe to retry - replaying an identical version is a
+   * no-op, while a different definition for the same version raises `PACK_VERSION_CONFLICT`.
+   */
+  async savePackVersion(input: SavePackVersionInput): Promise<{ semanticVersion: string }> {
+    return this.withScope({ tenantIds: [input.tenantId], platformAdmin: false }, (tx) =>
+      savePackVersionInTransaction(tx, input),
+    );
+  }
+
+  /**
+   * Cosine recall over `field_embeddings`, the index of the vocabulary the active pack actually
+   * declares - including fields that ship compiled and were never proposed.
+   */
+  async searchSimilarFields(
+    tenantId: string,
+    domainPackId: string,
+    embedding: readonly number[],
+    limit = 5,
+  ): Promise<SimilarFieldMatch[]> {
+    return this.withScope({ tenantIds: [tenantId], platformAdmin: false }, (tx) =>
+      searchSimilarFieldsInTransaction(tx, tenantId, domainPackId, embedding, limit),
+    );
+  }
+
+  /** Lets the worker embed only the fields whose wording is missing from or stale in the index. */
+  async listFieldEmbeddingFingerprints(
+    tenantId: string,
+    domainPackId: string,
+  ): Promise<FieldEmbeddingFingerprint[]> {
+    return this.withScope({ tenantIds: [tenantId], platformAdmin: false }, (tx) =>
+      listFieldEmbeddingFingerprintsInTransaction(tx, tenantId, domainPackId),
+    );
+  }
+
+  /** Idempotent by `(tenantId, domainPackId, path)`; the worker supplies the vectors. */
+  async upsertFieldEmbeddings(
+    tenantId: string,
+    domainPackId: string,
+    rows: readonly FieldEmbeddingRow[],
+  ): Promise<{ upserted: number }> {
+    return this.withScope({ tenantIds: [tenantId], platformAdmin: false }, (tx) =>
+      upsertFieldEmbeddingsInTransaction(tx, tenantId, domainPackId, rows),
+    );
+  }
+
+  /** Idempotent by proposal id, so reprocessing a policy document does not duplicate rows. */
+  async saveFieldProposals(
+    tenantId: string,
+    domainPackId: string,
+    proposals: readonly FieldProposalDraft[],
+  ): Promise<{ saved: number }> {
+    return this.withScope({ tenantIds: [tenantId], platformAdmin: false }, (tx) =>
+      saveFieldProposalsInTransaction(tx, tenantId, domainPackId, proposals),
+    );
+  }
+
+  async listFieldProposals(
+    tenantId: string,
+    domainPackId: string,
+    status?: FieldProposalStatus,
+  ): Promise<StoredFieldProposal[]> {
+    return this.withScope({ tenantIds: [tenantId], platformAdmin: false }, (tx) =>
+      listFieldProposalsInTransaction(tx, tenantId, domainPackId, status),
+    );
+  }
+
+  async getFieldProposal(tenantId: string, id: string): Promise<StoredFieldProposal | null> {
+    return this.withScope({ tenantIds: [tenantId], platformAdmin: false }, (tx) =>
+      getFieldProposalInTransaction(tx, tenantId, id),
+    );
+  }
+
+  /** Governed transition with an append-only audit event; re-applying a status is a no-op. */
+  async setFieldProposalStatus(
+    tenantId: string,
+    id: string,
+    status: FieldProposalStatus,
+    actorUserId: string,
+    reason?: string,
+  ): Promise<void> {
+    await this.withScope(
+      { tenantIds: [tenantId], platformAdmin: false, userId: actorUserId },
+      (tx) =>
+        setFieldProposalStatusInTransaction(tx, { tenantId, id, status, actorUserId, reason }),
+    );
   }
 
   private async withScope<T>(

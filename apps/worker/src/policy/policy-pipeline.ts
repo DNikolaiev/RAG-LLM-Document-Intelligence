@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   ConditionSchema,
@@ -15,6 +14,7 @@ import type {
   StoredPolicyPage,
 } from '@caselens/persistence';
 import type { DocumentTextProvider, ModelProvider, OcrProvider } from '@caselens/providers';
+import { normalizeCitationText, stableId } from './policy-text.js';
 
 const generatedProposalSchema = z.object({
   proposals: z
@@ -315,15 +315,6 @@ function validateConditionGrounding(
     });
   }
   return issues;
-}
-
-function normalizeCitationText(value: string): string {
-  return value
-    .normalize('NFKC')
-    .toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
 }
 
 function normalizeMinimumCurrencyRequirement(
@@ -694,10 +685,6 @@ function containsQuote(source: string, quote: string): boolean {
     value.normalize('NFKC').replaceAll(/\s+/g, ' ').trim().toLocaleLowerCase();
   const target = normalize(quote);
   return target.length > 0 && normalize(source).includes(target);
-}
-
-function stableId(prefix: string, value: string): string {
-  return `${prefix}_${createHash('sha256').update(value).digest('hex').slice(0, 24)}`;
 }
 
 function slug(value: string): string {

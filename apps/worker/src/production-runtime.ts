@@ -20,11 +20,13 @@ import {
 import { PolicyRetriever } from '@caselens/retrieval';
 import { CaseWorkflowRunner, PostgresWorkflowCheckpointStore } from '@caselens/workflow';
 import { createWorkerModelRuntime } from './model-runtime.js';
+import { generateFieldProposals } from './policy/field-proposal-pipeline.js';
 import {
   chunkPolicyPages,
   extractPolicyPages,
   generatePolicyProposals,
 } from './policy/policy-pipeline.js';
+import { evidenceContainsQuote } from './policy/policy-text.js';
 
 interface QueuePayload {
   databaseJobId: string;
@@ -860,6 +862,31 @@ async function processPolicyJob(
     for (const proposal of proposals) {
       await policies.saveProposal(tenantId, policy.id, proposal);
     }
+
+    await jobs.updateJob(databaseJobId, tenantId, {
+      status: 'processing',
+      progress: 85,
+      eventType: 'job.progress',
+      stage: 'field_proposal',
+      message: 'Candidate extraction fields are being proposed and deduplicated by meaning.',
+    });
+    // Proposals only; the closed vocabulary still widens through administrator approval alone.
+    const fieldProposals = await generateFieldProposals({
+      tenantId,
+      domainPackId: policy.domainPackId,
+      policyDocumentId: policy.id,
+      fallbackPack: pack,
+      chunks,
+      model,
+      embeddings,
+      store: policies,
+      timeoutMs: config.WORKER_POLICY_MODEL_TIMEOUT_MS,
+      similarityFloor: config.WORKER_FIELD_DEDUP_SIMILARITY_FLOOR,
+    });
+    if (fieldProposals.length) {
+      await policies.saveFieldProposals(tenantId, policy.domainPackId, fieldProposals);
+    }
+
     const refreshed = await policies.get(scope, policy.id);
     if (!refreshed) throw new Error('Policy disappeared after extraction');
     await policies.updateStatus({
@@ -872,6 +899,7 @@ async function processPolicyJob(
         pageCount: pages.length,
         chunkCount: chunks.length,
         proposalCount: proposals.length,
+        fieldProposalCount: fieldProposals.length,
         embeddingProvider: embeddings.capabilities().id,
         embeddingModel: config.EMBEDDING_MODEL,
         proposalProvider: model.capabilities().id,
@@ -1057,15 +1085,6 @@ function scalarValue(value: unknown): string | number | boolean | null {
 
 function stableWorkerId(prefix: string, value: string): string {
   return `${prefix}_${createHash('sha256').update(value).digest('hex').slice(0, 24)}`;
-}
-
-function normalizeEvidence(value: string): string {
-  return value.normalize('NFKC').replaceAll(/\s+/g, ' ').trim().toLocaleLowerCase();
-}
-
-export function evidenceContainsQuote(source: string, quote: string): boolean {
-  const normalizedQuote = normalizeEvidence(quote);
-  return normalizedQuote.length > 0 && normalizeEvidence(source).includes(normalizedQuote);
 }
 
 function setDottedValue(target: Record<string, unknown>, path: string, value: unknown): void {

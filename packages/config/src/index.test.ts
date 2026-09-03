@@ -10,6 +10,19 @@ describe('loadConfig', () => {
     });
   });
 
+  it('coerces the field dedup similarity floor and holds it inside the unit interval', () => {
+    expect(loadConfig({}).WORKER_FIELD_DEDUP_SIMILARITY_FLOOR).toBe(0.4);
+    expect(loadConfig({ WORKER_FIELD_DEDUP_SIMILARITY_FLOOR: '0.6' })).toMatchObject({
+      WORKER_FIELD_DEDUP_SIMILARITY_FLOOR: 0.6,
+    });
+    expect(() => loadConfig({ WORKER_FIELD_DEDUP_SIMILARITY_FLOOR: '1.4' })).toThrow(
+      ConfigurationError,
+    );
+    expect(() => loadConfig({ WORKER_FIELD_DEDUP_SIMILARITY_FLOOR: 'most' })).toThrow(
+      ConfigurationError,
+    );
+  });
+
   it('rejects an incomplete provider switch at startup', () => {
     expect(() => loadConfig({ MODEL_PROVIDER: 'openai-compatible' })).toThrow(ConfigurationError);
   });

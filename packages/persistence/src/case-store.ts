@@ -1,3 +1,4 @@
+import { resolveDomainPack } from '@caselens/domain';
 import postgres from 'postgres';
 
 export interface AccessScope {
@@ -152,9 +153,13 @@ export class PostgresCaseStore {
       async (tx) => {
         for (const tenant of tenants) {
           await tx`insert into tenants (id, name) values (${tenant.id}, ${tenant.name}) on conflict (id) do update set name = excluded.name, updated_at = now()`;
+          const pack = resolveDomainPack(tenant.domain);
           await tx`insert into domain_packs (id, tenant_id, domain_key, semantic_version, status, definition, activated_at)
-          values (${`pack_${tenant.id}`}, ${tenant.id}, ${tenant.domain.toLocaleLowerCase().replaceAll(/[^a-z0-9]+/g, '-')}, '1.0.0', 'active', ${tx.json(asJson({ name: tenant.domain }))}::jsonb, now())
-          on conflict (tenant_id, domain_key, semantic_version) do update set status = 'active', definition = excluded.definition, updated_at = now()`;
+          values (${`pack_${tenant.id}`}, ${tenant.id}, ${tenant.domain.toLocaleLowerCase().replaceAll(/[^a-z0-9]+/g, '-')}, ${pack.version}, 'active', ${tx.json(asJson(pack))}::jsonb, now())
+          on conflict (tenant_id, domain_key, semantic_version) do update set
+            status = case when domain_packs.status = 'superseded' then 'superseded' else 'active' end,
+            definition = case when domain_packs.status = 'superseded' then domain_packs.definition else excluded.definition end,
+            updated_at = now()`;
         }
         for (const user of users) {
           await tx`insert into users (id, external_subject, display_name, email) values (${user.id}, ${user.id}, ${user.displayName}, ${user.email})

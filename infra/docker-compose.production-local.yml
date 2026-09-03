@@ -112,7 +112,7 @@ services:
       [
         'sh',
         '-c',
-        'psql -v ON_ERROR_STOP=1 -f /migrations/0001_job_lifecycle_events.sql -f /migrations/0002_policy_library.sql',
+        'psql -v ON_ERROR_STOP=1 -f /migrations/0001_job_lifecycle_events.sql -f /migrations/0002_policy_library.sql -f /migrations/0003_tenant_field_dictionary.sql -f /migrations/0004_field_embedding_index.sql',
       ]
     depends_on:
       postgres-provision: { condition: service_completed_successfully }

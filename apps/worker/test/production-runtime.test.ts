@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { legalContractPack } from '@caselens/domain';
+import { evidenceContainsQuote } from '../src/policy/policy-text.js';
 import {
   buildExtractionFieldCatalog,
   chunkSourcePage,
-  evidenceContainsQuote,
   isExtractionValueAllowed,
   mapWithConcurrency,
 } from '../src/production-runtime.js';

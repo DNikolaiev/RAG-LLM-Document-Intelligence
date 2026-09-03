@@ -664,3 +664,75 @@ export const workflowCheckpoints = pgTable(
     index('workflow_checkpoint_updated_idx').on(table.tenantId, table.updatedAt),
   ],
 );
+
+export const fieldProposals = pgTable(
+  'field_proposals',
+  {
+    id: text('id').primaryKey(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    domainPackId: text('domain_pack_id')
+      .notNull()
+      .references(() => domainPacks.id),
+    policyDocumentId: text('policy_document_id')
+      .notNull()
+      .references(() => policyDocuments.id),
+    kind: text('kind').notNull(),
+    documentTypeId: text('document_type_id').notNull(),
+    path: text('path').notNull(),
+    label: text('label').notNull(),
+    fieldType: text('field_type').notNull(),
+    aliases: text('aliases').array().notNull().default([]),
+    citationChunkId: text('citation_chunk_id').notNull(),
+    citationPage: integer('citation_page').notNull(),
+    citationQuote: text('citation_quote').notNull(),
+    dedupVerdict: text('dedup_verdict').notNull(),
+    dedupMatchedPath: text('dedup_matched_path'),
+    dedupSimilarity: numeric('dedup_similarity', { precision: 5, scale: 4 }),
+    dedupReason: text('dedup_reason').notNull(),
+    status: text('status').notNull().default('proposed'),
+    issues: jsonb('issues').notNull().default([]),
+    embedding: vector('embedding', { dimensions: 768 }).notNull(),
+    reviewedByUserId: text('reviewed_by_user_id').references(() => users.id),
+    reviewReason: text('review_reason'),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    ...auditColumns,
+  },
+  (table) => [
+    index('field_proposal_tenant_pack_status_idx').on(
+      table.tenantId,
+      table.domainPackId,
+      table.status,
+      table.updatedAt,
+    ),
+    index('field_proposal_document_idx').on(table.policyDocumentId),
+    index('field_proposal_tenant_pack_path_idx').on(table.tenantId, table.domainPackId, table.path),
+    index('field_proposal_reviewer_idx').on(table.reviewedByUserId),
+  ],
+);
+
+/**
+ * The searchable vocabulary of a tenant's active pack, one row per field. Separate from
+ * `field_proposals` on purpose: a field compiled into the domain pack was never proposed, so
+ * it has no proposal row, yet semantic recall must still find it. The worker keeps this table
+ * in step with the pack definition and only re-embeds a field whose fingerprint changed.
+ */
+export const fieldEmbeddings = pgTable(
+  'field_embeddings',
+  {
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    domainPackId: text('domain_pack_id')
+      .notNull()
+      .references(() => domainPacks.id),
+    path: text('path').notNull(),
+    label: text('label').notNull(),
+    aliases: text('aliases').array().notNull().default([]),
+    embedding: vector('embedding', { dimensions: 768 }).notNull(),
+    fingerprint: text('fingerprint').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.tenantId, table.domainPackId, table.path] })],
+);

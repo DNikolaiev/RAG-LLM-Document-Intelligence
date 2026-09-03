@@ -68,6 +68,12 @@ export const appConfigSchema = z
       .min(30_000)
       .max(600_000)
       .default(300_000),
+    // Cosine similarity a recalled field must reach before the chat model is asked whether a
+    // proposed field means the same thing. Lower it to catch more duplicates at the cost of more
+    // model calls; raise it to mint new fields more readily.
+    // A recall guard, not a decision boundary: measured synonym and unrelated-field similarity
+    // bands overlap, so the model decides. Above ~0.5 real duplicates stop reaching it.
+    WORKER_FIELD_DEDUP_SIMILARITY_FLOOR: z.coerce.number().min(0).max(1).default(0.4),
   })
   .superRefine((config, context) => {
     const required = (condition: boolean, value: unknown, path: string, message: string) => {

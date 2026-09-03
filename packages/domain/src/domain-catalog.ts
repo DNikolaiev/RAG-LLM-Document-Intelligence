@@ -147,3 +147,27 @@ export function resolveDomainPack(domain: string): DomainPack {
 export function resolvePersistedDomainPack(domainPackId: string): DomainPack | null {
   return persistedDomainPacks.get(domainPackId) ?? null;
 }
+
+const persistedPackAliases: Readonly<Record<string, string>> = {
+  demo: 'pharmacy-supplier',
+  legal: 'commercial-contract-review',
+  insurance: 'insurance-claims-assessment',
+  manufacturing: 'supplier-quality-assurance',
+};
+
+/**
+ * Resolves the compiled fallback pack for a persisted `domain_packs.id`, tolerating the
+ * `pack_<tenant>` and `pack_<tenant>_<major>_<minor>_<patch>` identifiers minted by the
+ * persistence layer. Returns `null` when no compiled pack matches, so callers can decide
+ * whether a missing pack is an error.
+ */
+export function resolveCompiledDomainPack(domainPackId: string): DomainPack | null {
+  const withoutVersion = domainPackId.replace(/_\d+_\d+_\d+$/, '');
+  const direct =
+    resolvePersistedDomainPack(domainPackId) ?? resolvePersistedDomainPack(withoutVersion);
+  if (direct) return direct;
+  const key = withoutVersion.startsWith('pack_tenant_')
+    ? withoutVersion.slice('pack_tenant_'.length).replaceAll('_', '-')
+    : withoutVersion.replace(/^pack_/, '').replaceAll('_', '-');
+  return resolvePersistedDomainPack(persistedPackAliases[key] ?? key);
+}

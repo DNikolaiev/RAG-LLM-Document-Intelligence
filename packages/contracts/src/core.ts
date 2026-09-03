@@ -236,6 +236,120 @@ export const AuditEventSchema = z.object({
 export const CursorPageSchema = <T extends z.ZodType>(item: T) =>
   z.object({ items: z.array(item), nextCursor: z.string().nullable() });
 
+/**
+ * The unified tenant rule registry returned by the domain-pack endpoint. Every active rule declares
+ * the collection it belongs to and a discriminated origin: a domain-pack rule names its pack and
+ * version, a policy-derived rule names its source policy document and that document's version.
+ */
+export const RuleOriginSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('domain_pack'),
+    domainPackName: z.string().min(1),
+    domainPackVersion: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('policy_document'),
+    policyId: z.string().min(1),
+    policyTitle: z.string().min(1),
+    policyVersion: z.string().min(1),
+  }),
+]);
+
+export const RegistryCollectionSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+});
+
+export const RegistryRuleSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().min(1),
+  severity: SeveritySchema,
+  collectionId: z.string().min(1),
+  origin: RuleOriginSchema,
+});
+
+export const DomainPackRequiredDocumentSchema = z.object({
+  id: z.string().min(1),
+  documentType: z.string().min(1),
+  documentLabel: z.string().min(1),
+  severity: SeveritySchema,
+  message: z.string().min(1),
+  conditional: z.boolean(),
+});
+
+export const DomainPackFieldSchema = z.object({
+  path: z.string().min(1),
+  label: z.string().min(1),
+  type: z.string().min(1),
+  required: z.boolean(),
+  aliases: z.array(z.string()),
+});
+
+export const DomainPackDocumentTypeSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().min(1),
+  fields: z.array(DomainPackFieldSchema),
+});
+
+export const DomainPackConfigurationSchema = z.object({
+  tenantId: z.string().min(1),
+  domainPack: z.object({
+    id: z.string().min(1),
+    key: z.string().min(1),
+    name: z.string().min(1),
+    version: z.string().min(1),
+    terminology: z.object({ case: z.string(), subject: z.string(), decision: z.string() }),
+    collections: z.array(RegistryCollectionSchema),
+    requiredDocuments: z.array(DomainPackRequiredDocumentSchema),
+    documentTypes: z.array(DomainPackDocumentTypeSchema),
+    rules: z.array(RegistryRuleSchema),
+  }),
+});
+
+/**
+ * A candidate extraction field proposed by an uploaded policy document, as returned to the
+ * browser. Mirrors the `FieldProposal` interface in `@caselens/persistence`'s field dictionary
+ * store, minus `embedding` — a 768-float vector never needs to reach the client. For
+ * `kind: 'alias'`, `path` names the *existing* field and `aliases` carries only the new wording
+ * proposed for it.
+ */
+export const FieldProposalCitationSchema = z.object({
+  chunkId: z.string().min(1),
+  page: z.number().int().positive(),
+  quote: z.string().min(1),
+});
+
+export const FieldProposalDedupSchema = z.object({
+  verdict: z.enum(['distinct', 'duplicate']),
+  matchedPath: z.string().min(1).nullable(),
+  similarity: z.number().min(0).max(1).nullable(),
+  reason: z.string().min(1),
+});
+
+export const FieldProposalIssueSchema = z.object({
+  code: z.string().min(1),
+  message: z.string().min(1),
+});
+
+export const FieldProposalSchema = z.object({
+  id: z.string().min(1),
+  tenantId: z.string().min(1),
+  domainPackId: z.string().min(1),
+  policyDocumentId: z.string().min(1),
+  kind: z.enum(['new_field', 'alias']),
+  documentTypeId: z.string().min(1),
+  path: z.string().min(1),
+  label: z.string().min(1),
+  fieldType: z.enum(['string', 'number', 'boolean', 'date', 'currency', 'list']),
+  aliases: z.array(z.string()),
+  citation: FieldProposalCitationSchema,
+  dedup: FieldProposalDedupSchema,
+  status: z.enum(['proposed', 'invalid', 'approved', 'rejected']),
+  issues: z.array(FieldProposalIssueSchema),
+});
+
 export const ProblemDetailSchema = z.object({
   type: z.string().default('about:blank'),
   title: z.string(),
@@ -261,3 +375,11 @@ export type JobLifecycleEvent = z.infer<typeof JobLifecycleEventSchema>;
 export type JobNotification = z.infer<typeof JobNotificationSchema>;
 export type AuditEvent = z.infer<typeof AuditEventSchema>;
 export type ProblemDetail = z.infer<typeof ProblemDetailSchema>;
+export type RuleOrigin = z.infer<typeof RuleOriginSchema>;
+export type RegistryCollection = z.infer<typeof RegistryCollectionSchema>;
+export type RegistryRule = z.infer<typeof RegistryRuleSchema>;
+export type DomainPackConfiguration = z.infer<typeof DomainPackConfigurationSchema>;
+export type FieldProposalCitation = z.infer<typeof FieldProposalCitationSchema>;
+export type FieldProposalDedup = z.infer<typeof FieldProposalDedupSchema>;
+export type FieldProposalIssue = z.infer<typeof FieldProposalIssueSchema>;
+export type FieldProposal = z.infer<typeof FieldProposalSchema>;
