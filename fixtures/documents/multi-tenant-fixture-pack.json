@@ -6,63 +6,219 @@
   "documents": [
     {
       "filename": "legal-contract/05_contract-approval-control-policy.pdf",
-      "sha256": "a9abeab6605d8ee0c0d152d69f60e80892e805ab6f4193277899156f360be79f",
-      "bytes": 74199
+      "sha256": "2a28bd99a4965cb5dfd548babc8e535aacb599aa416b9cb5fb416cc327bc1907",
+      "bytes": 74199,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Commercial Contract Review Controls",
+        "governing law is not German law",
+        "Commercial contract review"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "governing law is not German law",
+          "field": "governingLawEscalationCondition"
+        }
+      ]
     },
     {
       "filename": "insurance-claim/05_claim-cost-escalation-policy.pdf",
-      "sha256": "63f4f0b688a6990ac3e59e7a59da49ad367ca8fdea81050dc0bbe7c98f49efba",
-      "bytes": 74186
+      "sha256": "8fe72d299e4c4ad16d088652cc05741cec5ff69bc0018737f2223401b57875b0",
+      "bytes": 74186,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Claim Cost Escalation Policy",
+        "estimated repair cost is EUR 10,000 or more",
+        "Property claim assessment"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "estimated repair cost is EUR 10,000 or more",
+          "field": "seniorReviewThreshold"
+        }
+      ]
     },
     {
       "filename": "manufacturing-supplier/05_material-grade-control-policy.pdf",
-      "sha256": "1a3f26e53fc48801aab04d7b880fa7f85cd49d80f7984932264d13fa2101786d",
-      "bytes": 74204
+      "sha256": "593c27501dbc0a9d0469335dc44363ee4dfddf21483da7eb77340a01934a9766",
+      "bytes": 74204,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Supplier Material Grade Control",
+        "stated material grade is not 1.4404",
+        "Supplier quality assurance"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "stated material grade is not 1.4404",
+          "field": "gradeEscalationCondition"
+        }
+      ]
     },
     {
       "filename": "legal-contract/02_nordstern_commercial_register_extract.pdf",
-      "sha256": "d6725e8aef64b7491c577f57e852dac3cd3760e888545a2f008a78d4a83b5661",
-      "bytes": 74400
+      "sha256": "f4c09c86539c265bacb73038712ca0cd1374281f2e281c774b8c6195b499e83a",
+      "bytes": 74400,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Nordstern Trading GmbH",
+        "registered in D\u00fcsseldorf under HRB 88421",
+        "Elena Fischer"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "registered in D\u00fcsseldorf under HRB 88421",
+          "field": "registerNumber"
+        }
+      ]
     },
     {
       "filename": "legal-contract/03_nordstern_data-processing-annex.pdf",
-      "sha256": "59b4be5785603d7b1f5f0524f989141e22047ab49289fcac16f6421877936930",
-      "bytes": 74237
+      "sha256": "d104083beb8d56eadc57ab6899aaf8d2e1c49842b194a4ec2afeac5a90c075f7",
+      "bytes": 74237,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Data Processing Annex",
+        "Annex B to agreement RLS-CDA-2026-041",
+        "only on documented instructions"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "Annex B to agreement RLS-CDA-2026-041",
+          "field": "annexReference"
+        }
+      ]
     },
     {
       "filename": "legal-contract/04_nordstern_signature_authority_confirmation.pdf",
-      "sha256": "176909e72dd2bc07fd8ba614e1b1923f1c82728686d32837587ee32c6bf40e4a",
-      "bytes": 74150
+      "sha256": "41e5887ae783c2897e66cd58543ebfaa7b1158e3e024f5c593b08f6416423b14",
+      "bytes": 74150,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Signature Authority Confirmation",
+        "Elena Fischer may sign agreement RLS-CDA-2026-041",
+        "thirty-day written termination notice"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "Elena Fischer may sign agreement RLS-CDA-2026-041",
+          "field": "signatureAuthority"
+        }
+      ]
     },
     {
       "filename": "insurance-claim/02_kronenberg_repair_estimate.pdf",
-      "sha256": "2929eaa2c419bba5112fd5b68f56e7d444be45d2b3822de1e57f29efd7e71f12",
-      "bytes": 74103
+      "sha256": "9388a32d2ee023336eb400a8ec3f6d4af75b23709b46986b45033d2b76e9bcd9",
+      "bytes": 74103,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Kronenberg Property Repair Estimate",
+        "estimated at EUR 12,480.00 including VAT",
+        "HCE-DE-2026-005184"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "estimated at EUR 12,480.00 including VAT",
+          "field": "estimatedRepairCost"
+        }
+      ]
     },
     {
       "filename": "insurance-claim/03_kronenberg_contractor_report.pdf",
-      "sha256": "8a875cffe47f1c0b80028a65e3feaa146f76953ca9d3cc9a45f4a83b5a6b1c3a",
-      "bytes": 74126
+      "sha256": "aad7fd44190c993d3f72843f5d42fa7a69bf2cf7c840bd2c6a9a193ba23cf449",
+      "bytes": 74126,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Contractor Service Report",
+        "inspected the property on 16 May 2026",
+        "EUR 12,480.00 repair estimate"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "inspected the property on 16 May 2026",
+          "field": "inspectionDate"
+        }
+      ]
     },
     {
       "filename": "insurance-claim/04_kronenberg_settlement_instruction.pdf",
-      "sha256": "f41bccb9e7106863a1329d956a98bc8c9aac92b17dae6cda9807231f73bbe909",
-      "bytes": 74140
+      "sha256": "0e2af775b2795edeba3bc6fd80d00a6d095300fea9fe7d067460fabb8701c0d0",
+      "bytes": 74140,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Settlement Preparation Instruction",
+        "estimated repair cost of EUR 12,480.00",
+        "HCE-DE-2026-005184"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "estimated repair cost of EUR 12,480.00",
+          "field": "estimatedRepairCost"
+        }
+      ]
     },
     {
       "filename": "manufacturing-supplier/02_vektor_purchase_specification.pdf",
-      "sha256": "2005169350340202b800d83a9b9eee1fc908c983690663041e90f25eec082015",
-      "bytes": 74087
+      "sha256": "d84006e5335420e43e5eeddb831ce860ee9d3966e15ff3b13e2130b608564fb2",
+      "bytes": 74087,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Vektor Purchase Specification",
+        "material grade 1.4404",
+        "Batch VP-4421 is supplied against purchase order RW-26-8821"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "Batch VP-4421 is supplied against purchase order RW-26-8821",
+          "field": "batchNumber"
+        }
+      ]
     },
     {
       "filename": "manufacturing-supplier/03_vektor_pmi_inspection_report.pdf",
-      "sha256": "81f54c8726fbff4716e92521a1a030477d01b43bf659a345762481e875adcfc4",
-      "bytes": 74071
+      "sha256": "f772a04272c2159786908c3d19ac4646db3227b2431f0b80ccc36b09baf5f73f",
+      "bytes": 74071,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Positive Material Identification Report",
+        "batch VP-4421 and heat H-26-7718",
+        "PMI-26-8821"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "batch VP-4421 and heat H-26-7718",
+          "field": "heatNumber"
+        }
+      ]
     },
     {
       "filename": "manufacturing-supplier/04_vektor_release_note.pdf",
-      "sha256": "f7743e0f369f2bfadd0a62cae495227edf5211a000d10a9b03d416daa62e1cd1",
-      "bytes": 74085
+      "sha256": "a90a26f41bcf36105278edf408fde2a5485b76b2d3861f45717e9132f99669f4",
+      "bytes": 74085,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Supplier Quality Release Note",
+        "confirming grade 1.4404 and heat number H-26-7718",
+        "release RLS-26-8821"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "confirming grade 1.4404 and heat number H-26-7718",
+          "field": "releasedHeatNumber"
+        }
+      ]
     }
   ]
 }

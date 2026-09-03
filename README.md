@@ -55,6 +55,8 @@ npm run fixtures:generate:multi-tenant
 npm run fixtures:seed:multi-tenant
 ```
 
+Generation is byte-stable, and `npm run fixtures:verify` checks both fixture corpora: recorded hashes, page counts, required phrases, evidence-page anchors, Poppler renders, and two consecutive generations producing identical SHA-256 values.
+
 The seed command uses the public API: it uploads each policy, extracts and indexes its clauses, approves the already-valid synthetic proposal, activates the policy, then queues the matching tenant case. The local-only `FIXTURE_POLICY_CATALOG_ENABLED=true` setting makes the three marked policy proposals deterministic; it does not bypass PDF extraction, MinIO, pgvector embeddings, BullMQ, review/activation, or case processing. Keep this flag disabled outside the local synthetic demo.
 
 ## Components and why they exist

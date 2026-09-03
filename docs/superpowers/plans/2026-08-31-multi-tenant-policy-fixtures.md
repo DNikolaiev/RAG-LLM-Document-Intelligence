@@ -41,6 +41,7 @@
 - [ ] Run the command against the production-local Docker stack and verify policy status, documents, extracted facts, findings, and tenant-scoped notifications.
 - [x] Add focused automated coverage for fixture policy acceptance.
 - [x] Update README/architecture notes with the fixture pack and seed command.
+- [x] Cover the twelve PDFs in `scripts/verify-fixtures.py` with page counts, required phrases, evidence-page anchors, Poppler renders, and two-generation SHA-256 stability.
 
 ## Test and verification plan
 
@@ -49,3 +50,4 @@
 - Execute the seed command against the running production-local stack.
 - Query the authenticated API for each tenant and platform administrator to prove data isolation and complete administrator visibility.
 - Run the existing Playwright suite, including notification-scoping checks.
+- Run `python scripts/verify-fixtures.py` so both fixture corpora are rendered and asserted together.
