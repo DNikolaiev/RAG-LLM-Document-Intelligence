@@ -58,6 +58,13 @@ CORPORA = (
         expected_document_count=12,
         generator=ROOT / "scripts" / "generate-multi-tenant-fixtures.py",
     ),
+    Corpus(
+        name="policy-lab",
+        manifest_path=ROOT / "fixtures" / "documents" / "policy-lab" / "policy-lab-fixture-pack.json",
+        manifest_dir=ROOT / "fixtures" / "documents" / "policy-lab",
+        expected_document_count=13,
+        generator=ROOT / "scripts" / "generate-policy-lab-fixtures.py",
+    ),
 )
 
 

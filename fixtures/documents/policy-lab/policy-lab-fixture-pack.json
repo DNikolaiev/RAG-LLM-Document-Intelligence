@@ -1,0 +1,294 @@
+{
+  "schemaVersion": "1.0.0",
+  "fixtureSet": "caselens-policy-lab",
+  "generatedOn": "2026-09-03",
+  "synthetic": true,
+  "documents": [
+    {
+      "filename": "legal/01_termination-notice-minimum-policy.pdf",
+      "tenantId": "tenant_legal",
+      "kind": "policy",
+      "collectionId": "commercial-contract-review-policy",
+      "outcome": "A_approvable_rule",
+      "sha256": "1e7d777176c5c00efc7b4fffa354c1f2b2c51e5ae09bdedd81d2ed04516bebed",
+      "bytes": 74181,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Termination Notice Minimum Control",
+        "at least ninety (90) days",
+        "Commercial contract review"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "at least ninety (90) days",
+          "field": "terminationNoticeFloor"
+        }
+      ]
+    },
+    {
+      "filename": "legal/02_jurisdiction-escalation-policy.pdf",
+      "tenantId": "tenant_legal",
+      "kind": "policy",
+      "collectionId": "commercial-contract-review-policy",
+      "outcome": "C_citation_condition_mismatch",
+      "sha256": "28e2740835316e3e47d5ac45163564916d7f2e74703f35785e7e5f1b94142aea",
+      "bytes": 74218,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Jurisdiction Escalation Control",
+        "subject to courts outside Germany",
+        "Commercial contract review"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "subject to courts outside Germany",
+          "field": "forumEscalation"
+        }
+      ]
+    },
+    {
+      "filename": "legal/03_talwerk_supply_agreement_extract.pdf",
+      "tenantId": "tenant_legal",
+      "kind": "evidence",
+      "collectionId": "",
+      "outcome": "satisfies_A_legal",
+      "sha256": "c99ebaf96fdada37a63ab906389f7d51588e6975553e026e82bc9b6adef77ccd",
+      "bytes": 74266,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Talwerk Logistik Supply Agreement",
+        "one hundred and twenty (120) days",
+        "German law"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "one hundred and twenty (120) days",
+          "field": "terminationNoticeDays"
+        }
+      ]
+    },
+    {
+      "filename": "legal/04_ostkante_supply_agreement_extract.pdf",
+      "tenantId": "tenant_legal",
+      "kind": "evidence",
+      "collectionId": "",
+      "outcome": "violates_A_legal",
+      "sha256": "c0e89e34eb469932151664ee15db8cbec5667030ba1db869877fc10c19dec21f",
+      "bytes": 74264,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Ostkante Vertrieb Supply Agreement",
+        "forty-five (45) days",
+        "German law"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "forty-five (45) days",
+          "field": "terminationNoticeDays"
+        }
+      ]
+    },
+    {
+      "filename": "insurance/01_loss-date-cutoff-policy.pdf",
+      "tenantId": "tenant_insurance",
+      "kind": "policy",
+      "collectionId": "insurance-claims-assessment-policy",
+      "outcome": "A_approvable_rule",
+      "sha256": "31e9224308887096bc3bbf1d902df492d62508f010098de20420c85886792377",
+      "bytes": 74160,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Claim Loss Date Escalation Control",
+        "date of loss is before 01 January 2026",
+        "Insurance claims assessment"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "date of loss is before 01 January 2026",
+          "field": "lossDateCutoff"
+        }
+      ]
+    },
+    {
+      "filename": "insurance/02_claim-settlement-value-policy.pdf",
+      "tenantId": "tenant_insurance",
+      "kind": "policy",
+      "collectionId": "insurance-claims-assessment-policy",
+      "outcome": "E_alias_proposal",
+      "sha256": "ef6623587741e87a80479fdc5bdc40e27e6497cdb866d56c1012e071dd0968e7",
+      "bytes": 74204,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Claim Settlement Value Standard",
+        "record the claim settlement value",
+        "Insurance claims assessment"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "record the claim settlement value",
+          "field": "claimSettlementValue"
+        }
+      ]
+    },
+    {
+      "filename": "insurance/03_lindenhof_claim_evidence.pdf",
+      "tenantId": "tenant_insurance",
+      "kind": "evidence",
+      "collectionId": "",
+      "outcome": "satisfies_A_insurance",
+      "sha256": "f80f7052ef8de212ed98b4c9e5a29bcd93201333e44528dfa681dcf21a4fa58a",
+      "bytes": 74236,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Lindenhof Property Claim Evidence",
+        "recorded for this claim is 2026-05-14",
+        "HCE-PROP-771903"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "recorded for this claim is 2026-05-14",
+          "field": "lossDate"
+        }
+      ]
+    },
+    {
+      "filename": "insurance/04_altmarkt_claim_evidence.pdf",
+      "tenantId": "tenant_insurance",
+      "kind": "evidence",
+      "collectionId": "",
+      "outcome": "violates_A_insurance",
+      "sha256": "83d79cccc28d354588e3e145b1cc5e674e41e418443df659f81be44ba0d2a8d6",
+      "bytes": 74245,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Altmarkt Property Claim Evidence",
+        "recorded for this claim is 2025-11-03",
+        "HCE-PROP-660184"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "recorded for this claim is 2025-11-03",
+          "field": "lossDate"
+        }
+      ]
+    },
+    {
+      "filename": "manufacturing/01_approved-grade-list-policy.pdf",
+      "tenantId": "tenant_manufacturing",
+      "kind": "policy",
+      "collectionId": "supplier-quality-assurance-policy",
+      "outcome": "A_approvable_rule",
+      "sha256": "5078427073ec862dc48c5c0b8738215f6ef2ea0ad1555d971165516f11b48d57",
+      "bytes": 74215,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Approved Material Grade Control",
+        "when the material grade is not one of 1.4404",
+        "Supplier quality assurance"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "when the material grade is not one of 1.4404",
+          "field": "approvedGrades"
+        }
+      ]
+    },
+    {
+      "filename": "manufacturing/02_heat-number-cross-check-policy.pdf",
+      "tenantId": "tenant_manufacturing",
+      "kind": "policy",
+      "collectionId": "supplier-quality-assurance-policy",
+      "outcome": "B_condition_too_weak",
+      "sha256": "58f427c56ce275185363e749a84b626add9a65fd4864e3db201ccb289fb01d70",
+      "bytes": 74215,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Heat Number Cross-Check Control",
+        "must match the heat number recorded",
+        "Supplier quality assurance"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "must match the heat number recorded",
+          "field": "heatNumberCrossCheck"
+        }
+      ]
+    },
+    {
+      "filename": "manufacturing/03_tensile-strength-policy.pdf",
+      "tenantId": "tenant_manufacturing",
+      "kind": "policy",
+      "collectionId": "supplier-quality-assurance-policy",
+      "outcome": "D_new_field_proposal",
+      "sha256": "2d1439cc3017e131f4d749dc311de85eaac1a25e84e4d7f15c7eafe253903606",
+      "bytes": 74192,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Tensile Strength Acceptance Control",
+        "tensile strength is below 485 MPa",
+        "Supplier quality assurance"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "tensile strength is below 485 MPa",
+          "field": "tensileStrengthMpa"
+        }
+      ]
+    },
+    {
+      "filename": "manufacturing/04_hallwerk_material_certificate.pdf",
+      "tenantId": "tenant_manufacturing",
+      "kind": "evidence",
+      "collectionId": "",
+      "outcome": "satisfies_A_manufacturing",
+      "sha256": "6cf1cef714dad4bff614e617570a459af1e4fe44dcc439645e473ccf885d1a34",
+      "bytes": 74217,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Hallwerk Stahl Material Certificate",
+        "delivered batch is 1.4404",
+        "H-26-5510"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "delivered batch is 1.4404",
+          "field": "materialGrade"
+        }
+      ]
+    },
+    {
+      "filename": "manufacturing/05_kantstahl_material_certificate.pdf",
+      "tenantId": "tenant_manufacturing",
+      "kind": "evidence",
+      "collectionId": "",
+      "outcome": "violates_A_manufacturing",
+      "sha256": "53b0319fc3031b58fbf96ffec719c7ce58616cc264c1a8579082a0be2e2a989a",
+      "bytes": 74219,
+      "expectedPages": 1,
+      "expectedPhrases": [
+        "Kantstahl Werke Material Certificate",
+        "delivered batch is 1.4301",
+        "H-26-6127"
+      ],
+      "evidence": [
+        {
+          "page": 1,
+          "phrase": "delivered batch is 1.4301",
+          "field": "materialGrade"
+        }
+      ]
+    }
+  ]
+}
