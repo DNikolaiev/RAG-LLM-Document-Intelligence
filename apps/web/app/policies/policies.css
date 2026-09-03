@@ -202,6 +202,7 @@
 
 .domain-pack-identity {
   min-width: 180px;
+  max-width: 100%;
   display: grid;
   gap: 4px;
   padding: 10px 12px;
@@ -211,14 +212,63 @@
   text-align: right;
 }
 
+/* The page-level workspace switcher. A left-aligned column reads as a control rather than
+   as a caption, so the block flips alignment when it holds a real <select>. */
+.domain-pack-identity-switch {
+  min-width: 236px;
+  gap: 5px;
+  text-align: left;
+}
+
+.domain-pack-identity-label {
+  color: #4f7f88;
+  font: 700 8px/1.2 var(--sans);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* The uppercase eyebrow is a visual treatment; the hidden clarifier stays spoken as written. */
+.domain-pack-identity-label .sr-only {
+  letter-spacing: normal;
+  text-transform: none;
+}
+
 .domain-pack-identity strong {
   color: #235b67;
   font-size: 10px;
 }
 
-.domain-pack-identity span {
+.domain-pack-identity-pack {
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--ink-muted);
   font: 500 8px/1.35 var(--mono);
+}
+
+.workspace-switcher {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid rgb(24 130 136 / 28%);
+  border-radius: 10px;
+  background: white;
+  color: #1c4f5a;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  outline: none;
+}
+
+.workspace-switcher:hover {
+  border-color: rgb(22 141 142 / 55%);
+}
+
+.workspace-switcher:focus {
+  border-color: #168d8e;
+  box-shadow: 0 0 0 3px rgb(24 174 179 / 20%);
 }
 
 .domain-pack-loading,
@@ -932,6 +982,36 @@
   grid-template-columns: 0.72fr 1.28fr;
   gap: 12px;
 }
+/* The workspace is chosen once, in the panel header. The form only states where the upload lands. */
+.policy-upload-scope {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0;
+  padding: 11px 12px;
+  border: 1px solid rgb(24 130 136 / 18%);
+  border-radius: 11px;
+  background: rgb(228 248 247 / 45%);
+  color: #235b67;
+  font-size: 11px;
+}
+.policy-upload-scope > svg {
+  flex: none;
+  margin-top: 1px;
+  color: #168d8e;
+}
+.policy-upload-scope > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.policy-upload-scope strong {
+  font-weight: 700;
+}
+.policy-upload-scope small {
+  color: var(--ink-muted);
+  font-size: 10px;
+}
 .policy-form label {
   display: grid;
   gap: 7px;
@@ -1556,7 +1636,11 @@
   .domain-pack-identity {
     grid-column: 1 / -1;
     width: 100%;
+    min-width: 0;
     text-align: left;
+  }
+  .workspace-switcher {
+    min-height: 44px;
   }
   .domain-pack-section {
     padding: 18px;

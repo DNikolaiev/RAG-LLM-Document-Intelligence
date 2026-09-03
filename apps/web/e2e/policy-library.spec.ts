@@ -87,6 +87,58 @@ const registryFixture = {
   },
 };
 
+const legalRegistryFixture = {
+  tenantId: 'tenant_legal',
+  domainPack: {
+    id: 'pack_tenant_legal',
+    key: 'commercial-contract-review',
+    name: 'Commercial contract review',
+    version: '2.4.0',
+    terminology: { case: 'matter', subject: 'counterparty', decision: 'decision' },
+    collections: [{ id: 'commercial-contract-review-policy', label: 'Commercial contract policy' }],
+    requiredDocuments: [
+      {
+        id: 'signed-contract',
+        documentType: 'contract',
+        documentLabel: 'Signed contract',
+        severity: 'major',
+        message: 'A countersigned contract is required.',
+        conditional: false,
+      },
+    ],
+    documentTypes: [
+      {
+        id: 'contract',
+        label: 'Signed contract',
+        description: 'The executed commercial agreement.',
+        fields: [
+          {
+            path: 'contract.terminationNoticeDays',
+            label: 'Termination notice',
+            type: 'number',
+            required: true,
+            aliases: [],
+          },
+        ],
+      },
+    ],
+    rules: [
+      {
+        id: 'termination-notice',
+        title: 'Termination notice period too short',
+        description: 'Termination requires at least three months of written notice.',
+        severity: 'major',
+        collectionId: 'commercial-contract-review-policy',
+        origin: {
+          kind: 'domain_pack',
+          domainPackName: 'Commercial contract review',
+          domainPackVersion: '2.4.0',
+        },
+      },
+    ],
+  },
+};
+
 const fieldProposalsFixture = {
   items: [
     {
@@ -315,6 +367,115 @@ test('field proposal queue names an alias match and approving removes it from vi
   await expect(aliasCard).toHaveCount(0);
   // The rest of the queue, and the approved catalog below it, are unaffected.
   await expect(newFieldCard).toBeVisible();
+
+  await expectHealthyLayout(page);
+  expectNoRuntimeFailures(failures);
+});
+
+test('a single-workspace profile reads its workspace as a label, not a dropdown', async ({
+  page,
+}) => {
+  const failures = monitorRuntimeFailures(page);
+  await page.route(
+    (url) => url.pathname === '/api/policies/domain-pack',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(registryFixture),
+      });
+    },
+  );
+
+  const response = await page.goto('/policies');
+  expect(response?.ok()).toBe(true);
+
+  // The workspace heads the panel every other section is scoped by, with the pack it resolves to
+  // as the supporting line beside it.
+  const identity = page.getByTestId('workspace-switcher');
+  await expect(identity).toContainText('Workspace');
+  await expect(identity).toContainText('Düsseldorf Health Operations');
+  await expect(identity).toContainText('Pharmaceutical supplier qualification · v1.0.0');
+
+  // The default profile owns exactly one workspace, so there is nothing to choose.
+  await expect(identity.getByRole('combobox')).toHaveCount(0);
+
+  // The upload form states where the upload lands instead of asking for the workspace again.
+  const uploadCard = page.locator('.policy-upload-card');
+  await expect(uploadCard.getByText(/Uploading into/)).toContainText(
+    'Düsseldorf Health Operations',
+  );
+  await expect(uploadCard.getByLabel('Workspace')).toHaveCount(0);
+  await expect(uploadCard.getByRole('button', { name: 'Upload and process' })).toBeEnabled();
+
+  await expectHealthyLayout(page);
+  expectNoRuntimeFailures(failures);
+});
+
+test('a multi-workspace profile re-scopes the library from the panel switcher', async ({
+  page,
+}) => {
+  const failures = monitorRuntimeFailures(page);
+  const profileResponse = await page.request.post('/api/session/profile', {
+    data: { profileId: 'profile_mara_stein' },
+  });
+  expect(profileResponse.ok()).toBe(true);
+
+  await page.route(
+    (url) => url.pathname === '/api/policies/domain-pack',
+    async (route) => {
+      const tenantId = new URL(route.request().url()).searchParams.get('tenantId');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(tenantId === 'tenant_legal' ? legalRegistryFixture : registryFixture),
+      });
+    },
+  );
+  await page.route(
+    (url) => url.pathname === '/api/policies/field-proposals',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ items: [] }),
+      });
+    },
+  );
+
+  const response = await page.goto('/policies');
+  expect(response?.ok()).toBe(true);
+
+  const identity = page.getByTestId('workspace-switcher');
+  const switcher = identity.getByRole('combobox', { name: /select the workspace/i });
+  await expect(switcher).toBeVisible();
+  await expect(switcher).toHaveValue('tenant_demo');
+  await expect(identity).toContainText('Pharmaceutical supplier qualification · v1.0.0');
+
+  const domainPack = page.getByTestId('domain-pack-configuration');
+  await expect(
+    domainPack.getByText('Liability coverage below policy', { exact: true }),
+  ).toBeVisible();
+
+  await switcher.selectOption('tenant_legal');
+
+  // Selecting a workspace re-scopes the panel, not just the label above it.
+  await expect(switcher).toHaveValue('tenant_legal');
+  await expect(identity).toContainText('Commercial contract review · v2.4.0');
+  await expect(
+    domainPack.getByText('Termination notice period too short', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    domainPack.getByText('Liability coverage below policy', { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    domainPack.getByRole('region', { name: 'Commercial contract policy rules' }),
+  ).toBeVisible();
+
+  // The upload form follows the page-level selection instead of keeping its own.
+  await expect(page.locator('.policy-upload-card').getByText(/Uploading into/)).toContainText(
+    'Rheinland Legal Services',
+  );
 
   await expectHealthyLayout(page);
   expectNoRuntimeFailures(failures);

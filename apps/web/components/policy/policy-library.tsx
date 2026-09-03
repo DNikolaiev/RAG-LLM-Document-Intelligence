@@ -6,6 +6,7 @@ import {
   BadgeCheck,
   BookOpenCheck,
   Braces,
+  Building2,
   ExternalLink,
   FileCheck2,
   FileUp,
@@ -129,6 +130,8 @@ export function PolicyLibrary({
   ).length;
   const blockedProposalCount = reviewableProposals.length - pendingReviewCount;
   const selectedTenant = tenants.find((tenant) => tenant.id === tenantId);
+  const workspaceName = selectedTenant?.name ?? 'Workspace';
+  const switchableWorkspaces = tenants.length > 1;
   const tenantItems = items.filter((item) => item.tenantId === tenantId);
   const registryRules = domainPack?.domainPack.rules ?? [];
   const registryGroups = domainPack
@@ -217,6 +220,17 @@ export function PolicyLibrary({
     };
   }, [tenantId]);
 
+  // Everything below the switcher is tenant scoped. The keyed domain-pack and field-proposal
+  // loads fall back to their loading state on their own, so only the state that is not keyed by
+  // tenant has to be dropped here: an in-flight proposal decision and a message about the
+  // workspace the reader just left.
+  function selectWorkspace(nextTenantId: string) {
+    if (nextTenantId === tenantId) return;
+    setTenantId(nextTenantId);
+    setPendingProposalId('');
+    setMessage('');
+  }
+
   async function decideFieldProposal(proposal: FieldProposal, decision: 'approve' | 'reject') {
     const priorLoad = currentFieldProposalsLoad;
     if (!priorLoad || pendingProposalId) return;
@@ -250,8 +264,10 @@ export function PolicyLibrary({
     event.preventDefault();
     setState('submitting');
     setMessage('Uploading the immutable source and adding processing to the queue…');
-    const form = new FormData(event.currentTarget);
-    const tenantId = String(form.get('tenantId'));
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    // The page-level workspace switcher owns the tenant; the form no longer asks for it.
+    form.set('tenantId', tenantId);
     form.set('domainPackId', `pack_${tenantId}`);
     const response = await fetch('/api/policies', {
       method: 'POST',
@@ -265,7 +281,7 @@ export function PolicyLibrary({
       return;
     }
     setMessage('Policy accepted. Its private processing timeline is available in notifications.');
-    event.currentTarget.reset();
+    formElement.reset();
     setFileName('');
     await load();
   }
@@ -341,9 +357,36 @@ export function PolicyLibrary({
               policy-derived rules; each new rule must come from a cited source clause.
             </p>
           </div>
-          <div className="domain-pack-identity" aria-live="polite">
-            <strong>{selectedTenant?.name ?? 'Workspace'}</strong>
-            <span>
+          <div
+            className={`domain-pack-identity${switchableWorkspaces ? ' domain-pack-identity-switch' : ''}`}
+            data-testid="workspace-switcher"
+          >
+            {switchableWorkspaces ? (
+              <>
+                <label className="domain-pack-identity-label" htmlFor="policy-workspace">
+                  Workspace{' '}
+                  <span className="sr-only">— select the workspace this library describes</span>
+                </label>
+                <select
+                  id="policy-workspace"
+                  className="workspace-switcher"
+                  value={tenantId}
+                  onChange={(event) => selectWorkspace(event.target.value)}
+                >
+                  {tenants.map((tenant) => (
+                    <option key={tenant.id} value={tenant.id}>
+                      {tenant.name}
+                    </option>
+                  ))}
+                </select>
+              </>
+            ) : (
+              <>
+                <span className="domain-pack-identity-label">Workspace</span>
+                <strong>{workspaceName}</strong>
+              </>
+            )}
+            <span className="domain-pack-identity-pack" aria-live="polite">
               {domainPack
                 ? `${domainPack.domainPack.name} · v${domainPack.domainPack.version}`
                 : 'Loading baseline…'}
@@ -678,20 +721,17 @@ export function PolicyLibrary({
             </div>
           </header>
           <form onSubmit={upload} className="policy-form">
-            <label>
-              Workspace
-              <select
-                name="tenantId"
-                value={tenantId}
-                onChange={(event) => setTenantId(event.target.value)}
-              >
-                {tenants.map((tenant) => (
-                  <option key={tenant.id} value={tenant.id}>
-                    {tenant.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <p className="policy-upload-scope">
+              <Building2 size={15} aria-hidden="true" />
+              <span>
+                <span>
+                  Uploading into <strong>{workspaceName}</strong>
+                </span>
+                {switchableWorkspaces ? (
+                  <small>Change it with the workspace switcher above.</small>
+                ) : null}
+              </span>
+            </p>
             <label>
               Policy title
               <input
