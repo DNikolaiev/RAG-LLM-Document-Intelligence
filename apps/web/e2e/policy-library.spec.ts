@@ -19,6 +19,11 @@ const registryFixture = {
       { id: 'data-protection', label: 'Data Protection Policy' },
       { id: 'distribution', label: 'Pharmaceutical Distribution Policy' },
     ],
+    uploadableCollections: [
+      { id: 'insurance', label: 'Insurance Requirements' },
+      { id: 'data-protection', label: 'Data Protection Policy' },
+      { id: 'distribution', label: 'Pharmaceutical Distribution Policy' },
+    ],
     requiredDocuments: [
       {
         id: 'insurance-always',
@@ -96,6 +101,9 @@ const legalRegistryFixture = {
     version: '2.4.0',
     terminology: { case: 'matter', subject: 'counterparty', decision: 'decision' },
     collections: [{ id: 'commercial-contract-review-policy', label: 'Commercial contract policy' }],
+    uploadableCollections: [
+      { id: 'commercial-contract-review-policy', label: 'Commercial contract policy' },
+    ],
     requiredDocuments: [
       {
         id: 'signed-contract',
@@ -135,6 +143,23 @@ const legalRegistryFixture = {
           domainPackVersion: '2.4.0',
         },
       },
+    ],
+  },
+};
+
+/**
+ * The registry's display grouping and the uploadable list are different things. This fixture is
+ * the case that proves it: `general-controls` is a synthetic bucket the API appends so pack rules
+ * that declare no collection have somewhere to be shown, and it is not in the pack's
+ * `policyCollections` - so uploading into it would always be refused.
+ */
+const syntheticCollectionFixture = {
+  ...registryFixture,
+  domainPack: {
+    ...registryFixture.domainPack,
+    collections: [
+      ...registryFixture.domainPack.collections,
+      { id: 'general-controls', label: 'General controls' },
     ],
   },
 };
@@ -476,6 +501,91 @@ test('a multi-workspace profile re-scopes the library from the panel switcher', 
   await expect(page.locator('.policy-upload-card').getByText(/Uploading into/)).toContainText(
     'Rheinland Legal Services',
   );
+
+  await expectHealthyLayout(page);
+  expectNoRuntimeFailures(failures);
+});
+
+test('the upload form offers the workspace collections and never the synthetic one', async ({
+  page,
+}) => {
+  const failures = monitorRuntimeFailures(page);
+  await page.route(
+    (url) => url.pathname === '/api/policies/domain-pack',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(syntheticCollectionFixture),
+      });
+    },
+  );
+
+  const response = await page.goto('/policies');
+  expect(response?.ok()).toBe(true);
+
+  const uploadCard = page.locator('.policy-upload-card');
+  const collection = uploadCard.getByLabel('Collection', { exact: true });
+  await expect(collection).toBeEnabled();
+
+  // Exactly the pack's own collections, in pack order, plus the one explicit create action.
+  await expect(collection.locator('option')).toHaveText([
+    'Insurance Requirements',
+    'Data Protection Policy',
+    'Pharmaceutical Distribution Policy',
+    'Create a new collection…',
+  ]);
+  await expect(collection).toHaveValue('insurance');
+
+  // `general-controls` heads a group in the registry above, and must still not be offered here.
+  await expect(
+    page.getByTestId('domain-pack-configuration').getByRole('region', {
+      name: 'General controls rules',
+    }),
+  ).toBeVisible();
+  await expect(collection.locator('option[value="general-controls"]')).toHaveCount(0);
+
+  await expectHealthyLayout(page);
+  expectNoRuntimeFailures(failures);
+});
+
+test('naming a new collection is an explicit choice that reveals a labelled field', async ({
+  page,
+}) => {
+  const failures = monitorRuntimeFailures(page);
+  await page.route(
+    (url) => url.pathname === '/api/policies/domain-pack',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(registryFixture),
+      });
+    },
+  );
+
+  const response = await page.goto('/policies');
+  expect(response?.ok()).toBe(true);
+
+  const uploadCard = page.locator('.policy-upload-card');
+  const collection = uploadCard.getByLabel('Collection', { exact: true });
+  await expect(collection).toBeEnabled();
+  await expect(uploadCard.getByLabel('New collection name')).toHaveCount(0);
+
+  await collection.selectOption('__create__');
+
+  const name = uploadCard.getByLabel('New collection name');
+  await expect(name).toBeVisible();
+  await expect(name).toBeEditable();
+  await name.fill('Product recall handling');
+  await expect(name).toHaveValue('Product recall handling');
+
+  // The reveal has to hold its own at this width, so the layout is checked while it is open.
+  await expectHealthyLayout(page);
+
+  // Choosing an existing collection again puts it away.
+  await collection.selectOption('data-protection');
+  await expect(uploadCard.getByLabel('New collection name')).toHaveCount(0);
 
   await expectHealthyLayout(page);
   expectNoRuntimeFailures(failures);

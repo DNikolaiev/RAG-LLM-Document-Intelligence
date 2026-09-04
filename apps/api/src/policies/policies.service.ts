@@ -22,6 +22,7 @@ import {
   assertPolicyTransition,
   assertProposalTransition,
   parseDomainPack,
+  resolveCompiledDomainPack,
   resolvePersistedDomainPack,
   validateRuleProposal,
   type DomainPack,
@@ -141,15 +142,20 @@ export function requireAdministrator(context: RequestContext): void {
 }
 
 /**
- * The narrow slice of `FieldDictionaryStore` (`@caselens/persistence`) that field-proposal
- * approval and rejection need. A `PostgresPolicyStore` satisfies this structurally, but tests can
- * hand in a minimal in-memory stand-in instead of implementing the whole dictionary surface
- * (embedding search, fingerprint listing, proposal batch-save) that approval never touches.
+ * The two pack-versioning calls every governed pack mutation needs: read the tenant's active
+ * definition, mint the next version. Field approval and collection creation both build on this
+ * and nothing else, so a test can hand in a minimal in-memory stand-in rather than implementing
+ * the whole `FieldDictionaryStore` surface (embedding search, fingerprint listing, proposal
+ * batch-save) that neither one touches.
  */
-export interface FieldProposalGovernanceStore {
-  getFieldProposal(tenantId: string, id: string): Promise<StoredFieldProposal | null>;
+export interface PackVersionStore {
   getActivePackDefinition(tenantId: string, domainPackId: string): Promise<DomainPack | null>;
   savePackVersion(input: SavePackVersionInput): Promise<{ semanticVersion: string }>;
+}
+
+/** `PackVersionStore` plus the two proposal-record calls approval and rejection need. */
+export interface FieldProposalGovernanceStore extends PackVersionStore {
+  getFieldProposal(tenantId: string, id: string): Promise<StoredFieldProposal | null>;
   setFieldProposalStatus(
     tenantId: string,
     id: string,
@@ -406,11 +412,213 @@ function translateFieldDictionaryError(error: unknown): unknown {
   return error;
 }
 
+/**
+ * Retrieval defaults for a collection an administrator creates at upload time, matching the
+ * compiled pharmacy collections. Chunking is a retrieval-tuning concern, not a governance
+ * decision, so the upload form never asks about it.
+ */
+export const NEW_POLICY_COLLECTION_CHUNK_SIZE = 700;
+export const NEW_POLICY_COLLECTION_OVERLAP = 90;
+
+/**
+ * The collection id derived from an administrator-typed label: lowercased, every run of
+ * non-alphanumeric characters folded to a single hyphen, leading and trailing hyphens trimmed.
+ * Only shrinks or preserves length, so a label within the request-schema bound yields an id
+ * within the same bound. Returns `''` for a label with no ASCII alphanumerics at all, which the
+ * caller refuses rather than inventing an id for.
+ */
+export function toPolicyCollectionId(label: string): string {
+  return label
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/g, '-')
+    .replaceAll(/^-+|-+$/g, '');
+}
+
+/**
+ * Builds the next pack definition with one collection appended, then re-validates the WHOLE pack
+ * through `parseDomainPack` before anything is persisted - the same discipline
+ * `applyFieldProposal` follows. Pure and synchronous: a blank name, a name that carries no
+ * alphanumerics, or a slug the tenant already uses throws here, before a single byte is written,
+ * so a refused name never leaves a partial pack behind.
+ */
+export function applyPolicyCollection(
+  pack: DomainPack,
+  label: string,
+): { pack: DomainPack; collection: DomainPack['policyCollections'][number] } {
+  const trimmed = label.trim();
+  if (!trimmed) {
+    throw new BadRequestException({
+      code: 'POLICY_COLLECTION_NAME_REQUIRED',
+      message: 'Name the new policy collection.',
+    });
+  }
+  const id = toPolicyCollectionId(trimmed);
+  if (!id) {
+    throw new BadRequestException({
+      code: 'POLICY_COLLECTION_NAME_INVALID',
+      message: 'A collection name must contain at least one letter or digit.',
+    });
+  }
+  if (pack.policyCollections.some((collection) => collection.id === id)) {
+    throw new ConflictException({
+      code: 'POLICY_COLLECTION_EXISTS',
+      message: `The "${id}" collection already exists in this workspace. Choose it instead of creating it again.`,
+    });
+  }
+  const collection = {
+    id,
+    label: trimmed,
+    chunkSize: NEW_POLICY_COLLECTION_CHUNK_SIZE,
+    overlap: NEW_POLICY_COLLECTION_OVERLAP,
+  };
+  const nextPack = { ...pack, policyCollections: [...pack.policyCollections, collection] };
+  try {
+    return { pack: parseDomainPack(nextPack), collection };
+  } catch {
+    throw new ConflictException({
+      code: 'POLICY_COLLECTION_PACK_INVALID',
+      message: 'Adding this collection would produce an invalid domain pack.',
+    });
+  }
+}
+
+/**
+ * Creates one policy collection for a tenant and mints the next pack version for it.
+ *
+ * A collection name is typed by an administrator, not lifted out of an untrusted PDF the way a
+ * field proposal is, so it needs no approval queue - but it is still a change to the governed
+ * pack, so it is recorded the same auditable way field approval records one: a new version via
+ * `savePackVersion`, never an in-place edit.
+ */
+export async function createPolicyCollection(
+  store: PackVersionStore,
+  context: RequestContext,
+  tenantId: string,
+  domainPackId: string,
+  label: string,
+): Promise<{ collectionId: string; semanticVersion: string; pack: DomainPack }> {
+  requireAdministrator(context);
+  // Persisted definition first, compiled catalog as the fallback - the same order every other
+  // read in this service uses. A tenant that has never minted a version still has a compiled
+  // pack, and refusing to add a collection to it would make this feature unusable on exactly
+  // those tenants. Only when neither resolves is there genuinely no pack to extend.
+  const activePack =
+    (await store.getActivePackDefinition(tenantId, domainPackId)) ??
+    resolveCompiledDomainPack(domainPackId);
+  if (!activePack) {
+    throw new NotFoundException({
+      code: 'DOMAIN_PACK_NOT_FOUND',
+      message: 'No active domain pack is installed for this tenant.',
+    });
+  }
+  const { pack: nextDefinition, collection } = applyPolicyCollection(activePack, label);
+  const semanticVersion = nextMinorVersion(activePack.version);
+  let minted: { semanticVersion: string };
+  try {
+    minted = await store.savePackVersion({
+      tenantId,
+      domainPackId,
+      definition: nextDefinition,
+      semanticVersion,
+      supersedes: activePack.version,
+      actorUserId: context.userId,
+    });
+  } catch (error) {
+    throw translateFieldDictionaryError(error);
+  }
+  return {
+    collectionId: collection.id,
+    semanticVersion: minted.semanticVersion,
+    pack: { ...nextDefinition, version: minted.semanticVersion },
+  };
+}
+
+/**
+ * Resolves the collection one upload lands in, and is the only place that decides between the
+ * two ways an administrator may name it. Exactly one of `collectionId` and `newCollectionLabel`
+ * must be supplied.
+ *
+ * Sequencing matters and is deliberate: a named collection is minted FIRST, and the membership
+ * check runs against the freshly minted definition, so the collection this returns is always one
+ * the caller can go on to write a policy into. A failed mint throws here, before the upload has
+ * stored bytes, created a policy row, or queued a job. The reverse is not symmetric and does not
+ * need to be: if the upload later fails, the minted collection remains - an empty collection an
+ * administrator can upload into or ignore, not a corrupt pack.
+ *
+ * Exported and taking an injected `PackVersionStore` for the same reason `approveFieldProposal`
+ * is: `PoliciesService.runtime()` throws `POLICY_LIBRARY_REQUIRES_PRODUCTION_LOCAL` outside the
+ * production-local profile, so no endpoint test can reach the upload path.
+ */
+export async function resolveUploadCollection(
+  store: PackVersionStore,
+  context: RequestContext,
+  tenantId: string,
+  domainPackId: string,
+  input: { collectionId?: string | undefined; newCollectionLabel?: string | undefined },
+): Promise<{ collectionId: string; pack: DomainPack; createdVersion: string | null }> {
+  requireAdministrator(context);
+  const collectionId = input.collectionId?.trim() ?? '';
+  const newCollectionLabel = input.newCollectionLabel?.trim() ?? '';
+  if (collectionId && newCollectionLabel) {
+    throw new BadRequestException({
+      code: 'POLICY_COLLECTION_AMBIGUOUS',
+      message: 'Choose an existing policy collection or name a new one, not both.',
+    });
+  }
+  if (!collectionId && !newCollectionLabel) {
+    throw new BadRequestException({
+      code: 'POLICY_COLLECTION_REQUIRED',
+      message: 'Choose an existing policy collection or name a new one.',
+    });
+  }
+  if (newCollectionLabel) {
+    const created = await createPolicyCollection(
+      store,
+      context,
+      tenantId,
+      domainPackId,
+      newCollectionLabel,
+    );
+    return {
+      collectionId: created.collectionId,
+      pack: created.pack,
+      createdVersion: created.semanticVersion,
+    };
+  }
+  const pack = await resolveActivePack(store, tenantId, domainPackId);
+  if (!pack.policyCollections.some((collection) => collection.id === collectionId)) {
+    throw new BadRequestException({
+      code: 'POLICY_COLLECTION_NOT_FOUND',
+      message: 'Choose a policy collection configured for this workspace.',
+    });
+  }
+  return { collectionId, pack, createdVersion: null };
+}
+
+/**
+ * Pack resolution order for every read in this service: the tenant's persisted, versioned
+ * definition first, the compiled catalog as the fallback for a tenant that has never minted one.
+ * Reading the compiled catalog alone would hide every minted collection and every approved
+ * field, which is exactly the staleness the upload form used to suffer from.
+ */
+export async function resolveActivePack(
+  store: PackVersionStore,
+  tenantId: string,
+  domainPackId: string,
+): Promise<DomainPack> {
+  const persisted = await store.getActivePackDefinition(tenantId, domainPackId);
+  return persisted ?? resolvePersistedDomainPackId(domainPackId);
+}
+
 export interface PolicyUploadInput {
   tenantId?: string | undefined;
   title: string;
   policyVersion: string;
-  collectionId: string;
+  /** An existing collection of the tenant's active pack. Mutually exclusive with the label below. */
+  collectionId?: string | undefined;
+  /** A collection to create for this tenant and upload into. See `resolveUploadCollection`. */
+  newCollectionLabel?: string | undefined;
   domainPackId?: string | undefined;
   language: string;
   validFrom: string;
@@ -533,24 +741,20 @@ export class PoliciesService implements OnModuleDestroy {
     this.requireAdministrator(context);
     const tenantId = this.resolveTenant(context, requestedTenantId);
     const domainPackId = `pack_${tenantId}`;
-    const pack = resolvePersistedDomainPackId(domainPackId);
-    if (!pack) {
-      throw new NotFoundException({
-        code: 'DOMAIN_PACK_NOT_FOUND',
-        message: 'No domain pack is installed for the selected workspace.',
-      });
-    }
-    const documentTypes = new Map(
-      pack.documentTypes.map((documentType) => [documentType.id, documentType]),
-    );
     const store = this.runtime().store;
-    const [activePolicies, activePolicyRules] = await Promise.all([
+    // The persisted definition first, so a collection an administrator minted at upload time and
+    // a field the queue approved both show up here rather than only in the database.
+    const [pack, activePolicies, activePolicyRules] = await Promise.all([
+      resolveActivePack(store, tenantId, domainPackId),
       store.list(this.scopeForTenant(tenantId, context.userId), {
         domainPackId,
         status: 'active',
       }),
       store.listActiveRules(tenantId, domainPackId),
     ]);
+    const documentTypes = new Map(
+      pack.documentTypes.map((documentType) => [documentType.id, documentType]),
+    );
     const registry = buildRuleRegistry(pack, activePolicies, activePolicyRules);
 
     return {
@@ -561,7 +765,14 @@ export class PoliciesService implements OnModuleDestroy {
         name: pack.name,
         version: pack.version,
         terminology: pack.terminology,
+        // Two different lists on purpose. `collections` is the registry's display grouping and
+        // may carry the synthetic `general-controls` bucket; `uploadableCollections` is what the
+        // pack actually declares, and is the only list `upload()` will accept a collection from.
         collections: registry.collections,
+        uploadableCollections: pack.policyCollections.map((collection) => ({
+          id: collection.id,
+          label: collection.label,
+        })),
         requiredDocuments: pack.requiredDocuments.map((requirement) => ({
           id: requirement.id,
           documentType: requirement.documentType,
@@ -623,22 +834,11 @@ export class PoliciesService implements OnModuleDestroy {
     const { store, jobs, storage, queue } = this.runtime();
     const tenantId = this.resolveTenant(context, input.tenantId);
     const domainPackId = input.domainPackId?.trim() || `pack_${tenantId}`;
-    const domainPack = resolvePersistedDomainPackId(domainPackId);
     const installedPack = await store.getDomainPackDescriptor(tenantId, domainPackId);
     if (!installedPack) {
       throw new BadRequestException({
         code: 'DOMAIN_PACK_NOT_AVAILABLE_TO_TENANT',
         message: 'Choose a domain pack installed in the selected tenant workspace.',
-      });
-    }
-    if (
-      !domainPack.policyCollections.some(
-        (collection) => collection.id === input.collectionId.trim(),
-      )
-    ) {
-      throw new BadRequestException({
-        code: 'POLICY_COLLECTION_NOT_FOUND',
-        message: 'Choose a policy collection configured for this workspace.',
       });
     }
     const validation = await validateFile(
@@ -674,6 +874,16 @@ export class PoliciesService implements OnModuleDestroy {
     const policyId = stableId('policy', `${tenantId}:${idempotencyKey}`);
     const existing = await store.get(this.scopeForTenant(tenantId, context.userId), policyId);
     if (existing) return existing;
+    // Resolved - and, when the administrator named one, created - after every cheap check and
+    // after the idempotency replay, but before any byte is stored or any job queued. Minting
+    // earlier broke both ways: a rejected file orphaned a fresh collection, and replaying a
+    // successful upload hit POLICY_COLLECTION_EXISTS instead of returning the stored policy.
+    const collection = await resolveUploadCollection(store, context, tenantId, domainPackId, {
+      ...(input.collectionId === undefined ? {} : { collectionId: input.collectionId }),
+      ...(input.newCollectionLabel === undefined
+        ? {}
+        : { newCollectionLabel: input.newCollectionLabel }),
+    });
     const sha256 = createHash('sha256').update(file.buffer).digest('hex');
     const storageKey = `${tenantId}/policies/${policyId}/${sha256}-${safeFileName(file.originalname)}`;
     const stored = await storage.put(storageKey, file.buffer, {
@@ -695,7 +905,7 @@ export class PoliciesService implements OnModuleDestroy {
         domainPackId,
         title: input.title.trim(),
         policyVersion: input.policyVersion.trim(),
-        collectionId: input.collectionId.trim(),
+        collectionId: collection.collectionId,
         storageKey,
         originalName: file.originalname,
         mediaType: 'application/pdf',

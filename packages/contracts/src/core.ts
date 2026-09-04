@@ -301,7 +301,18 @@ export const DomainPackConfigurationSchema = z.object({
     name: z.string().min(1),
     version: z.string().min(1),
     terminology: z.object({ case: z.string(), subject: z.string(), decision: z.string() }),
+    /**
+     * Display grouping for the rule registry. May contain the synthetic `general-controls`
+     * collection, which exists only so domain-pack rules that declare no collection have
+     * somewhere to be shown. Never offer these as upload targets.
+     */
     collections: z.array(RegistryCollectionSchema),
+    /**
+     * The collections a policy may actually be uploaded into: the active pack's
+     * `policyCollections`, verbatim. This is the list the upload form must be built from -
+     * anything else can offer a collection the upload endpoint will refuse.
+     */
+    uploadableCollections: z.array(RegistryCollectionSchema),
     requiredDocuments: z.array(DomainPackRequiredDocumentSchema),
     documentTypes: z.array(DomainPackDocumentTypeSchema),
     rules: z.array(RegistryRuleSchema),

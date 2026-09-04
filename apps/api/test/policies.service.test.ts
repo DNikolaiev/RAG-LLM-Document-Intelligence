@@ -4,9 +4,13 @@ import { describe, expect, it } from 'vitest';
 import type { RequestContext } from '../src/request-context.js';
 import {
   applyFieldProposal,
+  applyPolicyCollection,
   approveFieldProposal,
   buildRuleRegistry,
+  createPolicyCollection,
   rejectFieldProposal,
+  resolveUploadCollection,
+  toPolicyCollectionId,
   type FieldProposalGovernanceStore,
 } from '../src/policies/policies.service.js';
 
@@ -478,5 +482,256 @@ describe('rejectFieldProposal', () => {
       expect((error as { getStatus: () => number }).getStatus()).toBe(403);
     }
     expect(store.proposals.get('field_proposal_new')?.status).toBe('proposed');
+  });
+});
+
+/**
+ * Policy collections. `PoliciesService.upload()` is unreachable from a test - `runtime()` throws
+ * `POLICY_LIBRARY_REQUIRES_PRODUCTION_LOCAL` outside the production-local profile - so the part
+ * of the upload that resolves or creates a collection is exported and exercised directly here,
+ * against the same in-memory store the field-proposal tests use.
+ */
+describe('toPolicyCollectionId', () => {
+  it('lowercases, folds every run of non-alphanumerics to one hyphen, and trims', () => {
+    expect(toPolicyCollectionId('Product Recall Handling')).toBe('product-recall-handling');
+    expect(toPolicyCollectionId('  Supplier / Quality  ')).toBe('supplier-quality');
+    expect(toPolicyCollectionId('GxP — 2026!')).toBe('gxp-2026');
+    expect(toPolicyCollectionId('--Cold  chain--')).toBe('cold-chain');
+  });
+
+  it('yields nothing for a name with no letters or digits at all', () => {
+    expect(toPolicyCollectionId('***')).toBe('');
+    expect(toPolicyCollectionId('   ')).toBe('');
+  });
+});
+
+describe('applyPolicyCollection', () => {
+  it('appends exactly one collection with the shared retrieval defaults', () => {
+    const { pack, collection } = applyPolicyCollection(
+      pharmacySupplierPack,
+      'Product recall handling',
+    );
+
+    expect(collection).toEqual({
+      id: 'product-recall-handling',
+      label: 'Product recall handling',
+      chunkSize: 700,
+      overlap: 90,
+    });
+    expect(pack.policyCollections).toHaveLength(pharmacySupplierPack.policyCollections.length + 1);
+    expect(pack.policyCollections.at(-1)).toEqual(collection);
+    // Every collection that already existed is byte-for-byte untouched.
+    expect(pack.policyCollections.slice(0, -1)).toEqual(pharmacySupplierPack.policyCollections);
+    // And nothing else about the pack moved.
+    expect({ ...pack, policyCollections: [] }).toEqual({
+      ...pharmacySupplierPack,
+      policyCollections: [],
+    });
+  });
+
+  it('refuses a name whose slug the tenant already uses', () => {
+    try {
+      applyPolicyCollection(pharmacySupplierPack, 'Insurance');
+      throw new Error('expected the call to throw');
+    } catch (error) {
+      expect((error as { getStatus: () => number }).getStatus()).toBe(409);
+      expect((error as { getResponse: () => { code: string } }).getResponse().code).toBe(
+        'POLICY_COLLECTION_EXISTS',
+      );
+    }
+  });
+
+  it('refuses a blank name and a name that carries no letters or digits', () => {
+    try {
+      applyPolicyCollection(pharmacySupplierPack, '   ');
+      throw new Error('expected the call to throw');
+    } catch (error) {
+      expect((error as { getStatus: () => number }).getStatus()).toBe(400);
+      expect((error as { getResponse: () => { code: string } }).getResponse().code).toBe(
+        'POLICY_COLLECTION_NAME_REQUIRED',
+      );
+    }
+    try {
+      applyPolicyCollection(pharmacySupplierPack, '***');
+      throw new Error('expected the call to throw');
+    } catch (error) {
+      expect((error as { getResponse: () => { code: string } }).getResponse().code).toBe(
+        'POLICY_COLLECTION_NAME_INVALID',
+      );
+    }
+  });
+});
+
+describe('resolveUploadCollection', () => {
+  const domainPackId = `pack_${tenantId}`;
+
+  function setup() {
+    const store = new InMemoryGovernanceStore();
+    store.seedPack(tenantId, domainPackId, pharmacySupplierPack);
+    return store;
+  }
+
+  async function expectRefusal(
+    store: InMemoryGovernanceStore,
+    input: { collectionId?: string; newCollectionLabel?: string },
+    code: string,
+    status: number,
+    context: RequestContext = adminContext,
+  ) {
+    try {
+      await resolveUploadCollection(store, context, tenantId, domainPackId, input);
+      throw new Error('expected the call to throw');
+    } catch (error) {
+      expect((error as { getStatus: () => number }).getStatus()).toBe(status);
+      expect((error as { getResponse: () => { code: string } }).getResponse().code).toBe(code);
+    }
+    // Nothing was written, so the tenant's pack is exactly where it was.
+    expect(store.savedVersions).toHaveLength(0);
+    expect(await store.getActivePackDefinition(tenantId, domainPackId)).toEqual(
+      pharmacySupplierPack,
+    );
+  }
+
+  it('passes an existing collection straight through and mints no version', async () => {
+    const store = setup();
+
+    const resolved = await resolveUploadCollection(store, adminContext, tenantId, domainPackId, {
+      collectionId: 'insurance',
+    });
+
+    expect(resolved.collectionId).toBe('insurance');
+    expect(resolved.createdVersion).toBeNull();
+    expect(store.savedVersions).toHaveLength(0);
+    expect(await store.getActivePackDefinition(tenantId, domainPackId)).toEqual(
+      pharmacySupplierPack,
+    );
+  });
+
+  it('mints exactly one version and appends exactly one collection for a new name', async () => {
+    const store = setup();
+
+    const resolved = await resolveUploadCollection(store, adminContext, tenantId, domainPackId, {
+      newCollectionLabel: '  Product Recall Handling  ',
+    });
+
+    expect(resolved.collectionId).toBe('product-recall-handling');
+    expect(resolved.createdVersion).toBe('1.1.0');
+    expect(store.savedVersions).toHaveLength(1);
+    expect(store.savedVersions[0]).toMatchObject({
+      tenantId,
+      domainPackId,
+      semanticVersion: '1.1.0',
+      supersedes: '1.0.0',
+      actorUserId: 'user_admin',
+    });
+
+    const active = (await store.getActivePackDefinition(tenantId, domainPackId))!;
+    expect(active.policyCollections).toHaveLength(
+      pharmacySupplierPack.policyCollections.length + 1,
+    );
+    expect(active.policyCollections.at(-1)).toEqual({
+      id: 'product-recall-handling',
+      label: 'Product Recall Handling',
+      chunkSize: 700,
+      overlap: 90,
+    });
+    // The pack handed back is the minted one, so the caller can validate against it without a
+    // second read - the collection it names is already in it.
+    expect(resolved.pack.version).toBe('1.1.0');
+    expect(
+      resolved.pack.policyCollections.some((collection) => collection.id === resolved.collectionId),
+    ).toBe(true);
+  });
+
+  it('refuses a name whose slug collides, without writing anything', async () => {
+    const store = setup();
+    await expectRefusal(
+      store,
+      { newCollectionLabel: 'Insurance' },
+      'POLICY_COLLECTION_EXISTS',
+      409,
+    );
+  });
+
+  it('refuses an empty name, without writing anything', async () => {
+    await expectRefusal(setup(), { newCollectionLabel: '' }, 'POLICY_COLLECTION_REQUIRED', 400);
+    await expectRefusal(setup(), { newCollectionLabel: '   ' }, 'POLICY_COLLECTION_REQUIRED', 400);
+    await expectRefusal(setup(), {}, 'POLICY_COLLECTION_REQUIRED', 400);
+  });
+
+  it('refuses a name that carries no letters or digits, without writing anything', async () => {
+    await expectRefusal(
+      setup(),
+      { newCollectionLabel: '###' },
+      'POLICY_COLLECTION_NAME_INVALID',
+      400,
+    );
+  });
+
+  it('refuses a collection the pack does not declare', async () => {
+    await expectRefusal(
+      setup(),
+      { collectionId: 'general-controls' },
+      'POLICY_COLLECTION_NOT_FOUND',
+      400,
+    );
+  });
+
+  it('refuses choosing and creating at the same time', async () => {
+    await expectRefusal(
+      setup(),
+      { collectionId: 'insurance', newCollectionLabel: 'Product recall handling' },
+      'POLICY_COLLECTION_AMBIGUOUS',
+      400,
+    );
+  });
+
+  it('refuses a non-administrator before it reads or writes anything', async () => {
+    await expectRefusal(
+      setup(),
+      { newCollectionLabel: 'Product recall handling' },
+      'POLICY_ADMIN_REQUIRED',
+      403,
+      reviewerContext,
+    );
+  });
+});
+
+describe('createPolicyCollection', () => {
+  it('refuses a blank name before it mints anything', async () => {
+    const store = new InMemoryGovernanceStore();
+    store.seedPack(tenantId, `pack_${tenantId}`, pharmacySupplierPack);
+
+    try {
+      await createPolicyCollection(store, adminContext, tenantId, `pack_${tenantId}`, '   ');
+      throw new Error('expected the call to throw');
+    } catch (error) {
+      expect((error as { getStatus: () => number }).getStatus()).toBe(400);
+      expect((error as { getResponse: () => { code: string } }).getResponse().code).toBe(
+        'POLICY_COLLECTION_NAME_REQUIRED',
+      );
+    }
+    expect(store.savedVersions).toHaveLength(0);
+  });
+
+  it('fails cleanly when the tenant has no active pack', async () => {
+    const store = new InMemoryGovernanceStore();
+
+    try {
+      await createPolicyCollection(
+        store,
+        adminContext,
+        tenantId,
+        `pack_${tenantId}`,
+        'Product recall handling',
+      );
+      throw new Error('expected the call to throw');
+    } catch (error) {
+      expect((error as { getStatus: () => number }).getStatus()).toBe(404);
+      expect((error as { getResponse: () => { code: string } }).getResponse().code).toBe(
+        'DOMAIN_PACK_NOT_FOUND',
+      );
+    }
+    expect(store.savedVersions).toHaveLength(0);
   });
 });

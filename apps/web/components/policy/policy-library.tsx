@@ -79,21 +79,12 @@ function groupRulesByCollection(
   return [...groups.values()];
 }
 
-const COLLECTIONS: Record<string, ReadonlyArray<{ id: string; label: string }>> = {
-  tenant_demo: [
-    { id: 'supplier-qualification', label: 'Supplier qualification' },
-    { id: 'pharmaceutical-distribution', label: 'Pharmaceutical distribution' },
-    { id: 'insurance', label: 'Insurance requirements' },
-    { id: 'data-protection', label: 'Data protection' },
-  ],
-  tenant_legal: [{ id: 'commercial-contract-review-policy', label: 'Commercial contract policy' }],
-  tenant_insurance: [
-    { id: 'insurance-claims-assessment-policy', label: 'Claims assessment policy' },
-  ],
-  tenant_manufacturing: [
-    { id: 'supplier-quality-assurance-policy', label: 'Supplier quality policy' },
-  ],
-};
+/**
+ * The one `<option>` value in the collection select that is not a collection id. It never leaves
+ * the browser: `upload()` translates it into a `newCollectionLabel` field instead of sending it
+ * as a `collectionId` the API would refuse.
+ */
+const CREATE_COLLECTION = '__create__';
 
 export function PolicyLibrary({
   tenants,
@@ -110,6 +101,12 @@ export function PolicyLibrary({
   const [domainPackLoad, setDomainPackLoad] = useState<DomainPackLoad | null>(null);
   const [fieldProposalsLoad, setFieldProposalsLoad] = useState<FieldProposalsLoad | null>(null);
   const [pendingProposalId, setPendingProposalId] = useState('');
+  const [collectionSelection, setCollectionSelection] = useState<{
+    tenantId: string;
+    value: string;
+  } | null>(null);
+  const [newCollectionName, setNewCollectionName] = useState('');
+  const [collectionError, setCollectionError] = useState('');
   const currentDomainPackLoad = domainPackLoad?.tenantId === tenantId ? domainPackLoad : null;
   const domainPack = currentDomainPackLoad?.domainPack ?? null;
   const domainPackState: 'loading' | 'ready' | 'error' = !tenantId
@@ -137,6 +134,23 @@ export function PolicyLibrary({
   const registryGroups = domainPack
     ? groupRulesByCollection(domainPack.domainPack.collections, registryRules)
     : [];
+  // The collections a policy may actually be uploaded into, straight from the API. Deliberately
+  // NOT `domainPack.collections`, which is the rule registry's display grouping and can include
+  // the synthetic `general-controls` bucket that no upload may target.
+  const uploadableCollections = domainPack?.domainPack.uploadableCollections ?? [];
+  const collectionsReady = domainPackState === 'ready' && Boolean(domainPack);
+  // Derived during render and keyed by tenant, the way `domainPackLoad` and `fieldProposalsLoad`
+  // are, so switching workspace falls back to that workspace's own first collection instead of
+  // carrying over a selection that does not exist there. A stored id the pack no longer declares
+  // falls back the same way.
+  const chosenCollection =
+    collectionSelection?.tenantId === tenantId ? collectionSelection.value : '';
+  const selectedCollection =
+    chosenCollection === CREATE_COLLECTION ||
+    uploadableCollections.some((collection) => collection.id === chosenCollection)
+      ? chosenCollection
+      : (uploadableCollections[0]?.id ?? CREATE_COLLECTION);
+  const creatingCollection = selectedCollection === CREATE_COLLECTION;
   const load = useCallback(async () => {
     const response = await fetch('/api/policies', { cache: 'no-store' });
     const body = await response.json().catch(() => ({ items: [] }));
@@ -154,38 +168,45 @@ export function PolicyLibrary({
     return () => clearTimeout(timer);
   }, [load]);
 
+  /**
+   * One domain-pack read, shaped into the keyed record the panel renders from. Never throws, so
+   * both callers - the effect below and `upload()`, which re-reads the pack after an attempt that
+   * may have minted a collection - handle success and failure the same way.
+   */
+  const readDomainPack = useCallback(async (forTenantId: string): Promise<DomainPackLoad> => {
+    try {
+      const response = await fetch(
+        `/api/policies/domain-pack?tenantId=${encodeURIComponent(forTenantId)}`,
+        { cache: 'no-store' },
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.message ?? 'Could not load the domain pack.');
+      return {
+        tenantId: forTenantId,
+        state: 'ready',
+        domainPack: body as DomainPackConfiguration,
+        error: '',
+      };
+    } catch (error) {
+      return {
+        tenantId: forTenantId,
+        state: 'error',
+        domainPack: null,
+        error: (error as Error).message,
+      };
+    }
+  }, []);
+
   useEffect(() => {
     if (!tenantId) return;
     let cancelled = false;
-    void fetch(`/api/policies/domain-pack?tenantId=${encodeURIComponent(tenantId)}`, {
-      cache: 'no-store',
-    })
-      .then(async (response) => {
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(body.message ?? 'Could not load the domain pack.');
-        if (!cancelled) {
-          setDomainPackLoad({
-            tenantId,
-            state: 'ready',
-            domainPack: body as DomainPackConfiguration,
-            error: '',
-          });
-        }
-      })
-      .catch((error: Error) => {
-        if (!cancelled) {
-          setDomainPackLoad({
-            tenantId,
-            state: 'error',
-            domainPack: null,
-            error: error.message,
-          });
-        }
-      });
+    void readDomainPack(tenantId).then((load) => {
+      if (!cancelled) setDomainPackLoad(load);
+    });
     return () => {
       cancelled = true;
     };
-  }, [tenantId]);
+  }, [tenantId, readDomainPack]);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -229,6 +250,8 @@ export function PolicyLibrary({
     setTenantId(nextTenantId);
     setPendingProposalId('');
     setMessage('');
+    setNewCollectionName('');
+    setCollectionError('');
   }
 
   async function decideFieldProposal(proposal: FieldProposal, decision: 'approve' | 'reject') {
@@ -262,27 +285,60 @@ export function PolicyLibrary({
 
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // Captured before the first await: React nulls `event.currentTarget` after dispatch.
+    const formElement = event.currentTarget;
+    const newCollectionLabel = newCollectionName.trim();
+    if (creatingCollection && !newCollectionLabel) {
+      setCollectionError('Name the new collection before uploading into it.');
+      return;
+    }
+    setCollectionError('');
     setState('submitting');
     setMessage('Uploading the immutable source and adding processing to the queue…');
-    const formElement = event.currentTarget;
     const form = new FormData(formElement);
     // The page-level workspace switcher owns the tenant; the form no longer asks for it.
     form.set('tenantId', tenantId);
     form.set('domainPackId', `pack_${tenantId}`);
+    // Exactly one of the two reaches the API: an existing collection id, or a name to create.
+    if (creatingCollection) {
+      form.delete('collectionId');
+      form.set('newCollectionLabel', newCollectionLabel);
+    } else {
+      form.set('collectionId', selectedCollection);
+      form.delete('newCollectionLabel');
+    }
     const response = await fetch('/api/policies', {
       method: 'POST',
       body: form,
       headers: { 'idempotency-key': crypto.randomUUID() },
     });
     const body = await response.json().catch(() => ({}));
+    // The API mints the collection before it stores anything, so an attempt that named one may
+    // have created it even when the upload itself then failed. Re-reading the pack on BOTH paths
+    // is what makes that recoverable in place: the new collection becomes selectable, and the
+    // administrator retries into it instead of being told it already exists.
+    if (creatingCollection) {
+      const reloaded = await readDomainPack(tenantId);
+      if (reloaded.state === 'ready') setDomainPackLoad(reloaded);
+    }
     if (!response.ok) {
       setMessage(body.message ?? 'Policy upload failed.');
       setState('ready');
       return;
     }
-    setMessage('Policy accepted. Its private processing timeline is available in notifications.');
+    setMessage(
+      creatingCollection
+        ? `Collection “${newCollectionLabel}” created and the policy accepted. Its private processing timeline is available in notifications.`
+        : 'Policy accepted. Its private processing timeline is available in notifications.',
+    );
     formElement.reset();
     setFileName('');
+    setNewCollectionName('');
+    // Keep the collection the API confirmed this policy landed in selected, so a second version
+    // of the same policy does not have to be re-chosen.
+    if (typeof body.collectionId === 'string' && body.collectionId) {
+      setCollectionSelection({ tenantId, value: body.collectionId });
+    }
     await load();
   }
 
@@ -746,17 +802,72 @@ export function PolicyLibrary({
                 Version
                 <input name="policyVersion" required placeholder="3.0" />
               </label>
-              <label>
-                Collection
-                <select name="collectionId" key={tenantId}>
-                  {(COLLECTIONS[tenantId] ?? []).map((collection) => (
-                    <option key={collection.id} value={collection.id}>
-                      {collection.label}
+              {/* `for`/`id` rather than a wrapping label, like the workspace switcher above: a
+                  select nested inside its own label drags its option text into the label's text
+                  content, so the accessible name stops being just "Collection". The value is
+                  derived per tenant during render, so the control also needs no per-tenant key
+                  to forget the workspace the reader just left. */}
+              <div className="policy-form-field">
+                <label htmlFor="policy-collection">Collection</label>
+                <select
+                  id="policy-collection"
+                  name="collectionId"
+                  value={collectionsReady ? selectedCollection : ''}
+                  disabled={!collectionsReady}
+                  onChange={(event) => {
+                    setCollectionSelection({ tenantId, value: event.target.value });
+                    setCollectionError('');
+                  }}
+                >
+                  {collectionsReady ? (
+                    [
+                      ...uploadableCollections.map((collection) => (
+                        <option key={collection.id} value={collection.id}>
+                          {collection.label}
+                        </option>
+                      )),
+                      <option key={CREATE_COLLECTION} value={CREATE_COLLECTION}>
+                        Create a new collection…
+                      </option>,
+                    ]
+                  ) : (
+                    <option value="">
+                      {domainPackState === 'error'
+                        ? 'Collections unavailable'
+                        : 'Loading collections…'}
                     </option>
-                  ))}
+                  )}
                 </select>
-              </label>
+              </div>
             </div>
+            {collectionsReady && creatingCollection ? (
+              <div className="policy-form-field">
+                <label htmlFor="policy-new-collection">New collection name</label>
+                <input
+                  id="policy-new-collection"
+                  name="newCollectionLabel"
+                  value={newCollectionName}
+                  maxLength={80}
+                  placeholder="Product recall handling"
+                  aria-invalid={collectionError ? true : undefined}
+                  aria-describedby={collectionError ? 'policy-collection-error' : undefined}
+                  onChange={(event) => {
+                    setNewCollectionName(event.target.value);
+                    if (collectionError) setCollectionError('');
+                  }}
+                />
+                {collectionError ? (
+                  <p className="policy-field-error" id="policy-collection-error" role="alert">
+                    {collectionError}
+                  </p>
+                ) : (
+                  <p className="policy-collection-hint">
+                    Created in this workspace as a new domain-pack version, then used for this
+                    upload.
+                  </p>
+                )}
+              </div>
+            ) : null}
             <div className="policy-form-row">
               <label>
                 Valid from
@@ -795,7 +906,10 @@ export function PolicyLibrary({
                 onChange={(event) => setFileName(event.target.files?.[0]?.name ?? '')}
               />
             </label>
-            <button className="policy-primary" disabled={state === 'submitting'}>
+            <button
+              className="policy-primary"
+              disabled={state === 'submitting' || !collectionsReady}
+            >
               {state === 'submitting' ? 'Adding to queue…' : 'Upload and process'}
             </button>
           </form>

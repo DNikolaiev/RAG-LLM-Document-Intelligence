@@ -1038,6 +1038,38 @@
   border-color: var(--blueprint);
   box-shadow: 0 0 0 3px rgb(84 87 214 / 12%);
 }
+/* A label associated by `for`/`id` rather than by wrapping, so its accessible name is the label
+   text alone. Matches `.policy-form label` exactly, and the create-a-collection reveal is its own
+   full-width block below the two-column row so opening it never squeezes the pair beside it. */
+.policy-form-field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: #454e68;
+  font-size: 11px;
+  font-weight: 650;
+}
+.policy-collection-hint {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.policy-field-error {
+  margin: 0;
+  color: #a8324b;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.policy-form select:disabled {
+  background: #f5f6fb;
+  color: var(--ink-muted);
+  cursor: not-allowed;
+}
+
 .policy-file {
   padding: 14px;
   border: 1px dashed #b9bfda;

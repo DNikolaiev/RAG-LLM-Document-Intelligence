@@ -22,7 +22,12 @@ const uploadSchema = z.object({
   tenantId: z.string().min(1).optional(),
   title: z.string().trim().min(2).max(200),
   policyVersion: z.string().trim().min(1).max(40),
-  collectionId: z.string().trim().min(1).max(80),
+  // Exactly one of these two carries a value. Neither declares a minimum length: a multipart
+  // form sends a present-but-unused control as an empty string, and "blank" has to mean the same
+  // thing as "absent" so the exactly-one-of rule is decided in one place - the service's
+  // `resolveUploadCollection` - with a precise problem-details code instead of VALIDATION_FAILED.
+  collectionId: z.string().trim().max(80).optional(),
+  newCollectionLabel: z.string().trim().max(80).optional(),
   domainPackId: z.string().trim().min(1).optional(),
   language: z.string().trim().min(2).max(20).default('und'),
   validFrom: z.string().min(1),
