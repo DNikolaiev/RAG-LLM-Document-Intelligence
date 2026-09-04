@@ -25,7 +25,9 @@ import {
   S3CompatibleStorageProvider,
 } from '@caselens/providers';
 import { createDemoCases, type CaseStatus, type DemoCase } from './demo-data.js';
+import { validateIntakeFiles, type IntakeFile } from './intake-validation.js';
 import type { RequestContext } from './request-context.js';
+import { resolveTenant } from './tenant.js';
 
 @Injectable()
 export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
@@ -33,9 +35,11 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
   readonly #policies: PostgresPolicyStore;
   readonly #storage: S3CompatibleStorageProvider;
   readonly #queue: BullMqQueueProvider;
+  readonly #maxDocuments: number;
 
   constructor() {
     const config = loadConfig();
+    this.#maxDocuments = config.WORKER_MAX_DOCUMENTS;
     const redis = new URL(config.REDIS_URL!);
     this.#store = new PostgresCaseStore(config.DATABASE_URL!);
     this.#policies = new PostgresPolicyStore(config.DATABASE_URL!);
@@ -170,17 +174,26 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
 
   async create(
     context: RequestContext,
-    input: { subjectName: string; domainPackId: string; reference?: string | undefined },
+    input: {
+      subjectName: string;
+      domainPackId: string;
+      reference?: string | undefined;
+      tenantId?: string | undefined;
+    },
     idempotencyKey: string,
   ) {
     this.requireRole(context, ['intake', 'reviewer', 'admin']);
+    // Same rule as `intake`: a tenant user is pinned to their own tenant, a platform administrator
+    // must name one. Reading `context.tenantId` here silently filed a platform administrator's
+    // case into whichever tenant happened to be first in their list.
+    const tenantId = resolveTenant(context, input.tenantId);
     const timestamp = new Date().toISOString();
-    const id = stableId('case', `${context.tenantId}:create:${idempotencyKey}`);
+    const id = stableId('case', `${tenantId}:create:${idempotencyKey}`);
     const existing = await this.#store.get(this.scope(context), id);
     if (existing) return this.summary(existing);
     const item: PersistedCaseProjection = {
       id,
-      tenantId: context.tenantId,
+      tenantId,
       reference: input.reference ?? `CASE-${ulid().slice(-8)}`,
       subjectName: input.subjectName,
       domain: input.domainPackId,
@@ -209,6 +222,167 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
         message: 'The case create request conflicted. Retry safely with the same key.',
       });
     return this.summary(winner);
+  }
+
+  /**
+   * `POST /v1/cases/intake`: one multipart request that creates a case from the documents that
+   * justify it, rather than an empty case filled in afterwards (`create`, above, still exists for
+   * other callers, but a platform administrator choosing a workspace is only offered here - the
+   * one path the review console actually uses to create a case).
+   *
+   * Order matters and is the whole point of this method, mirroring the fix already applied to
+   * `PoliciesService.upload`: resolve the tenant, validate EVERY attached file, and only then
+   * create the case, attach the documents, and queue processing. Minting the case before every
+   * file has passed validation - or checking the idempotency replay after a write has already
+   * happened - reintroduces the exact defect that upload's collection-minting bug was: a rejected
+   * file would orphan a half-built case, and a retry would either duplicate work or blow up on a
+   * row it just created.
+   *
+   * Idempotent on `idempotencyKey` alone (scoped by tenant): the case id is a deterministic hash
+   * of it, so a replay finds the case `store.insert` already made and returns immediately -
+   * without attaching a single document or creating a job a second time. The job id returned on
+   * that replay is *recomputed*, not re-fetched: `process`'s job id is a pure hash of
+   * `processIdempotencyKey(...)`, so it can be reproduced here without touching the queue or the
+   * jobs table again. (If a prior attempt crashed after the case and documents were saved but
+   * before `process` ever ran, this recomputed id would name a job that was never actually
+   * created - a known, narrow gap shared with `PoliciesService.upload`'s own replay path, and
+   * recoverable the same way: the case's own `POST /v1/cases/:id/process` is itself idempotent
+   * and can be called again.)
+   */
+  async intake(
+    context: RequestContext,
+    files: readonly IntakeFile[],
+    input: {
+      subjectName: string;
+      domainPackId?: string | undefined;
+      tenantId?: string | undefined;
+    },
+    idempotencyKey: string,
+  ): Promise<{ caseId: string; reference: string; documentIds: string[]; jobIds: string[] }> {
+    this.requireRole(context, ['intake', 'reviewer', 'admin']);
+    const tenantId = resolveTenant(context, input.tenantId);
+    const validated = await validateIntakeFiles(files, this.#maxDocuments);
+
+    const scope = this.scope(context);
+    const caseId = stableId('case', `${tenantId}:intake:${idempotencyKey}`);
+    const jobId = stableId('job', this.processIdempotencyKey(context, caseId, idempotencyKey));
+    const existing = await this.#store.get(scope, caseId);
+    if (existing) {
+      return {
+        caseId: existing.id,
+        reference: existing.reference,
+        documentIds: (existing.documents as DemoCase['documents']).map((document) => document.id),
+        jobIds: [jobId],
+      };
+    }
+
+    const domainPackId = input.domainPackId?.trim() || `pack_${tenantId}`;
+    const timestamp = new Date().toISOString();
+    const item: PersistedCaseProjection = {
+      id: caseId,
+      tenantId,
+      reference: `CASE-${ulid().slice(-8)}`,
+      subjectName: input.subjectName,
+      domain: domainPackId,
+      domainPackVersion: '1.0.0',
+      status: 'processing',
+      recommendation: null,
+      progress: 0,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      dueAt: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+      assignedTo: context.userId,
+      assignedUserId: context.userId,
+      version: 1,
+      documents: [],
+      facts: [],
+      findings: [],
+      audit: [
+        this.auditEvent(
+          context,
+          'case.created',
+          `Created with ${domainPackId} from ${validated.length} attached document(s)`,
+        ),
+      ],
+      decision: null,
+    };
+    const inserted = await this.#store.insert(item);
+    if (!inserted) {
+      // Raced by another request using the same idempotency key between our replay check above
+      // and this insert - the same race `create` guards against.
+      const winner = await this.#store.get(scope, caseId);
+      if (!winner)
+        throw new ConflictException({
+          code: 'IDEMPOTENCY_CONFLICT',
+          message: 'The case intake request conflicted. Retry safely with the same key.',
+        });
+      return {
+        caseId: winner.id,
+        reference: winner.reference,
+        documentIds: (winner.documents as DemoCase['documents']).map((document) => document.id),
+        jobIds: [jobId],
+      };
+    }
+
+    const documents: DemoCase['documents'] = [];
+    const priorVersion = item.version;
+    for (const [index, { file, sha256, pageCount }] of validated.entries()) {
+      const documentId = stableId('doc', `${tenantId}:${caseId}:intake:${idempotencyKey}:${index}`);
+      const storageKey = `${tenantId}/${caseId}/${documentId}/${sha256}-${safeFileName(file.originalname)}`;
+      // eslint-disable-next-line no-await-in-loop -- each document is its own storage write and
+      // store record; nothing about them can be parallelized against `documents.push` order below.
+      const stored = await this.#storage.put(storageKey, file.buffer, {
+        tenant: tenantId,
+        case: caseId,
+        sha256,
+      });
+      if (!stored.ok) {
+        throw new ServiceUnavailableException({
+          code: 'STORAGE_UNAVAILABLE',
+          message: stored.error.message,
+        });
+      }
+      const warning = `Awaiting classification; sha256:${sha256}`;
+      documents.push({
+        id: documentId,
+        name: file.originalname.replace(/\.[^.]+$/, ''),
+        type: 'unknown',
+        status: 'needs_review',
+        pages: pageCount,
+        confidence: null,
+        fileName: file.originalname,
+        warning,
+      });
+      await this.#store.recordDocument({
+        id: documentId,
+        tenantId,
+        caseId,
+        storageKey,
+        originalName: file.originalname,
+        mediaType: file.mimetype,
+        sha256,
+        byteSize: file.size,
+        pageCount,
+        warning,
+      });
+      this.touch(
+        item,
+        context,
+        'document.uploaded',
+        `${file.originalname} accepted for processing`,
+      );
+    }
+    item.documents = documents;
+    await this.save(item, priorVersion);
+
+    const job = await this.process(context, caseId, idempotencyKey);
+
+    return {
+      caseId: item.id,
+      reference: item.reference,
+      documentIds: documents.map((document) => document.id),
+      jobIds: [job.id],
+    };
   }
 
   async list(
@@ -327,7 +501,7 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     this.requireRole(context, ['intake', 'reviewer', 'admin']);
     const item = await this.mutable(context, caseId);
     const timestamp = new Date().toISOString();
-    const durableKey = `${context.tenantId}:${context.userId}:${caseId}:process:${idempotencyKey}`;
+    const durableKey = this.processIdempotencyKey(context, caseId, idempotencyKey);
     const job = await this.#store.createJob({
       id: stableId('job', durableKey),
       tenantId: item.tenantId,
@@ -504,10 +678,15 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     const documents = item.documents as DemoCase['documents'];
     const existing = documents.find((document) => document.warning?.includes(sha256));
     if (existing) return structuredClone(existing);
-    const documentId = stableId('doc', `${context.tenantId}:${caseId}:${idempotencyKey}`);
-    const storageKey = `${context.tenantId}/${caseId}/${documentId}/${sha256}-${safeFileName(file.originalname)}`;
+    // The case owns the tenant, not the caller. A platform administrator legitimately opens a case
+    // in any of their tenants (`mutable` scopes by `context.tenantIds`), but their own
+    // `context.tenantId` falls back to their first tenant - so deriving the storage prefix or the
+    // document's tenant from the request would file another tenant's evidence under the wrong one.
+    const caseTenantId = item.tenantId;
+    const documentId = stableId('doc', `${caseTenantId}:${caseId}:${idempotencyKey}`);
+    const storageKey = `${caseTenantId}/${caseId}/${documentId}/${sha256}-${safeFileName(file.originalname)}`;
     const stored = await this.#storage.put(storageKey, file.buffer, {
-      tenant: context.tenantId,
+      tenant: caseTenantId,
       case: caseId,
       sha256,
     });
@@ -528,7 +707,7 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     };
     await this.#store.recordDocument({
       id: documentId,
-      tenantId: context.tenantId,
+      tenantId: caseTenantId,
       caseId,
       storageKey,
       originalName: file.originalname,
@@ -721,6 +900,19 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     const item = await this.#store.get(this.scope(context), id);
     if (!item) throw new NotFoundException({ code: 'CASE_NOT_FOUND', message: 'Case not found.' });
     return item;
+  }
+
+  /**
+   * The durable job id `process` mints is a hash of this key alone, so `intake`'s idempotency
+   * replay can recompute the same job id without a second store round trip - as long as it uses
+   * this exact formula. Extracted so the two can never drift apart.
+   */
+  private processIdempotencyKey(
+    context: RequestContext,
+    caseId: string,
+    idempotencyKey: string,
+  ): string {
+    return `${context.tenantId}:${context.userId}:${caseId}:process:${idempotencyKey}`;
   }
 
   private async save(item: PersistedCaseProjection, expectedVersion: number): Promise<void> {

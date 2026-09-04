@@ -14,15 +14,25 @@ import {
   Res,
   StreamableFile,
   UploadedFile,
+  UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { loadConfig } from '@caselens/config';
 import type { Response as ExpressResponse } from 'express';
 import { z } from 'zod';
 import { CASES_RUNTIME, type CasesRuntime } from './cases-runtime.js';
 import type { CaseStatus } from './demo-data.js';
 import { Context, type RequestContext } from './request-context.js';
 import { parseBody } from './validation.js';
+
+// Read once at module load. `FilesInterceptor`'s count limit is a hard multipart-parsing cutoff
+// enforced by Multer before a controller method ever runs, so it cannot itself raise the
+// `TOO_MANY_DOCUMENTS` problem-details response - that check, with the friendly message naming
+// the actual ceiling, happens in the service. This is only a generous backstop against a client
+// attaching an absurd number of parts; it is set one above the real business ceiling so a request
+// at or under that ceiling always reaches the service's own check.
+const MAX_INTAKE_FILE_PARTS = loadConfig().WORKER_MAX_DOCUMENTS + 1;
 
 const correctionSchema = z.object({
   value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
@@ -43,6 +53,18 @@ const createCaseSchema = z.object({
   subjectName: z.string().trim().min(2).max(200),
   domainPackId: z.string().min(1),
   reference: z.string().trim().min(3).max(80).optional(),
+  // Honoured only for a platform administrator, who must name one; ignored for a tenant user,
+  // who is pinned to their own tenant. See `resolveTenant`.
+  tenantId: z.string().trim().min(1).optional(),
+});
+const intakeCaseSchema = z.object({
+  subjectName: z.string().trim().min(2).max(200),
+  // Defaults to the tenant's active pack (`pack_<tenantId>`) when omitted - see
+  // `CasesService.intake` / `ProductionCasesService.intake`.
+  domainPackId: z.string().trim().min(1).optional(),
+  // Required for a platform administrator, ignored for anyone else: `resolveTenant` locks a
+  // non-platform-administrator to their own membership tenant regardless of what is sent here.
+  tenantId: z.string().trim().min(1).optional(),
 });
 const listCasesSchema = z.object({
   status: z
@@ -64,6 +86,23 @@ export class CasesController {
     @Headers('idempotency-key') key = `implicit-${context.correlationId}`,
   ) {
     return this.cases.create(context, parseBody(createCaseSchema, body), key);
+  }
+
+  // Registered ahead of every `:id`-scoped route below for the same reason
+  // `PoliciesController` registers `field-proposals` ahead of its own `:id` - there is no bare
+  // `:id`-shaped POST on this controller today, but a literal segment must still win over any
+  // future one-segment wildcard route by declaration order.
+  @Post('intake')
+  @UseInterceptors(
+    FilesInterceptor('file', MAX_INTAKE_FILE_PARTS, { limits: { fileSize: 15 * 1024 * 1024 } }),
+  )
+  intake(
+    @Context() context: RequestContext,
+    @UploadedFiles() files: Express.Multer.File[] | undefined,
+    @Body() body: unknown,
+    @Headers('idempotency-key') key = `implicit-${context.correlationId}`,
+  ) {
+    return this.cases.intake(context, files ?? [], parseBody(intakeCaseSchema, body), key);
   }
 
   @Get()

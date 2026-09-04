@@ -1,0 +1,273 @@
+/* Case intake: the single screen that creates a case from its documents */
+
+.intake-page {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.intake-title-row p:not(.eyebrow) {
+  max-width: 640px;
+}
+
+.intake-card {
+  display: grid;
+  gap: 18px;
+  max-width: 720px;
+  min-width: 0;
+  margin: 0 30px 40px;
+  padding: 26px;
+  border: 1px solid rgb(208 213 230 / 82%);
+  border-radius: 24px;
+  background: rgb(255 255 255 / 92%);
+  box-shadow: var(--shadow-md);
+}
+
+.intake-workspace {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid rgb(84 87 214 / 16%);
+  border-radius: 13px;
+  background: var(--iris-soft);
+  color: var(--blueprint-deep);
+}
+
+.intake-workspace > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.intake-workspace-control {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 6px;
+}
+
+.intake-workspace-label {
+  color: #4b4fb0;
+  font: 700 9px/1.2 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.intake-workspace-control strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.intake-workspace-select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 11px;
+  background: white;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  outline: none;
+}
+
+.intake-workspace-select:focus {
+  border-color: var(--blueprint);
+  box-shadow: 0 0 0 3px rgb(84 87 214 / 18%);
+}
+
+.intake-field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: #454e68;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.intake-field input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 11px;
+  background: white;
+  color: var(--ink);
+  font: inherit;
+  outline: none;
+}
+
+.intake-field input:focus {
+  border-color: var(--blueprint);
+  box-shadow: 0 0 0 3px rgb(84 87 214 / 12%);
+}
+
+.intake-field-error {
+  margin: -4px 0 0;
+  color: #a8324b;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.intake-file {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px dashed #b9bfda;
+  border-radius: 13px;
+  background: #fafbff;
+  color: #454e68;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.intake-file:focus-within {
+  border-color: var(--blueprint);
+  box-shadow: 0 0 0 3px rgb(84 87 214 / 18%);
+}
+
+/* Kept focusable and settable, so the native picker and its change events still fire. Scoped
+   under .intake-file so no ambient input sizing rule can widen it back out. */
+.intake-file .intake-file-input {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 1px;
+  min-height: 0;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.intake-file-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.intake-file-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 9px;
+  background: white;
+  color: var(--blueprint-deep);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.intake-file:hover .intake-file-button {
+  border-color: var(--blueprint);
+  background: var(--iris-soft);
+}
+
+.intake-file-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intake-file-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.intake-file-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: white;
+}
+
+.intake-file-list svg {
+  flex: none;
+  color: var(--blueprint);
+}
+
+.intake-file-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intake-file-remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.intake-file-remove:hover {
+  border-color: var(--rose);
+  color: #a8324b;
+  background: var(--rose-soft);
+}
+
+.intake-submit {
+  justify-self: start;
+  min-width: 180px;
+}
+
+.intake-submit:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.intake-message {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 11px;
+  background: var(--iris-soft);
+  color: var(--blueprint-deep);
+  font-size: 11px;
+}
+
+@media (max-width: 940px) {
+  .intake-card {
+    margin: 0 20px 32px;
+  }
+}
+
+@media (max-width: 700px) {
+  .intake-card {
+    margin: 0 15px 28px;
+    padding: 20px;
+  }
+}

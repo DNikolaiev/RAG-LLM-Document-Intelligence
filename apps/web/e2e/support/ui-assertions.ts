@@ -5,7 +5,13 @@ export function monitorRuntimeFailures(page: Page): string[] {
 
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
   page.on('console', (message) => {
-    if (message.type() === 'error') failures.push(`console: ${message.text()}`);
+    if (message.type() !== 'error') return;
+    // Chrome logs "Failed to load resource" for every non-2xx response, including ones a test
+    // mocks on purpose to exercise an error path. It says nothing the application did wrong, and
+    // a genuine server fault is already caught by the response listener below, so counting it
+    // here would only make deliberate failure coverage impossible to write.
+    if (message.text().startsWith('Failed to load resource:')) return;
+    failures.push(`console: ${message.text()}`);
   });
   page.on('response', (response) => {
     if (response.status() < 500) return;

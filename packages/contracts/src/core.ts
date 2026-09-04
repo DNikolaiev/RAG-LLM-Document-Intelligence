@@ -139,6 +139,20 @@ export const CaseDetailSchema = CaseSummarySchema.extend({
   findings: z.array(FindingSchema),
 });
 
+/**
+ * `POST /v1/cases/intake` response: one multipart request that creates the case, attaches every
+ * uploaded document, and queues processing. Plain (non-branded) string ids, like
+ * `DomainPackConfigurationSchema` above - the running API mints case/document/job ids as
+ * prefixed ulids or hashes (`case_...`, `doc_...`, `job_...`), not the bare-ulid shape
+ * `CaseIdSchema`/`DocumentIdSchema`/`JobIdSchema` validate.
+ */
+export const CaseIntakeResponseSchema = z.object({
+  caseId: z.string().min(1),
+  reference: z.string().min(1),
+  documentIds: z.array(z.string().min(1)),
+  jobIds: z.array(z.string().min(1)),
+});
+
 export const JobSchema = z.object({
   id: JobIdSchema,
   tenantId: TenantIdSchema,
@@ -375,6 +389,7 @@ export type Decision = z.infer<typeof DecisionSchema>;
 export type Severity = z.infer<typeof SeveritySchema>;
 export type CaseSummary = z.infer<typeof CaseSummarySchema>;
 export type CaseDetail = z.infer<typeof CaseDetailSchema>;
+export type CaseIntakeResponse = z.infer<typeof CaseIntakeResponseSchema>;
 export type Document = z.infer<typeof DocumentSchema>;
 export type EvidenceSpan = z.infer<typeof EvidenceSpanSchema>;
 export type ExtractedFact = z.infer<typeof ExtractedFactSchema>;

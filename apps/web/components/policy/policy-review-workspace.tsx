@@ -65,7 +65,7 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
   const load = useCallback(async () => {
     const response = await fetch(`/api/policies/${policyId}`, { cache: 'no-store' });
     const body = await response.json();
-    if (!response.ok) throw new Error(body.message ?? 'Policy could not be loaded.');
+    if (!response.ok) throw new Error(body.detail ?? body.message ?? 'Policy could not be loaded.');
     setPolicy(body);
     setSeverityEdits({});
   }, [policyId]);
@@ -132,7 +132,7 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
     setMessage(
       response.ok
         ? `Proposal ${decision === 'approve' ? 'approved' : 'rejected'}.`
-        : (body.message ?? 'Review failed.'),
+        : (body.detail ?? body.message ?? 'Review failed.'),
     );
     if (response.ok) await load();
   }
@@ -145,7 +145,9 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
     });
     const body = await response.json().catch(() => ({}));
     setMessage(
-      response.ok ? 'Policy and approved rules activated.' : (body.message ?? 'Activation failed.'),
+      response.ok
+        ? 'Policy and approved rules activated.'
+        : (body.detail ?? body.message ?? 'Activation failed.'),
     );
     if (response.ok) await load();
   }
@@ -160,7 +162,7 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
     setMessage(
       response.ok
         ? 'Policy regeneration is queued. The refreshed rules will replace the blocked proposals.'
-        : (body.message ?? 'Policy regeneration could not be queued.'),
+        : (body.detail ?? body.message ?? 'Policy regeneration could not be queued.'),
     );
     if (response.ok) await load();
     setRegenerating(false);

@@ -7,11 +7,14 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { ulid } from 'ulid';
+import { loadConfig } from '@caselens/config';
 import { validateFile } from '@caselens/document-pipeline';
 import { DeterministicVirusScanner } from '@caselens/providers';
 import type { RequestContext } from './request-context.js';
 import { createDemoCases, type CaseStatus, type DemoCase } from './demo-data.js';
 import { resolveTestProfile, resolveTestTenant } from '@caselens/contracts';
+import { validateIntakeFiles, type IntakeFile } from './intake-validation.js';
+import { resolveTenant } from './tenant.js';
 
 export interface DemoJob {
   id: string;
@@ -59,21 +62,28 @@ export class CasesService {
       readAt: string | null;
     }>
   >();
+  private readonly maxDocuments = loadConfig().WORKER_MAX_DOCUMENTS;
 
   create(
     context: RequestContext,
-    input: { subjectName: string; domainPackId: string; reference?: string | undefined },
+    input: {
+      subjectName: string;
+      domainPackId: string;
+      reference?: string | undefined;
+      tenantId?: string | undefined;
+    },
     idempotencyKey: string,
   ) {
     this.requireRole(context, ['intake', 'reviewer', 'admin']);
-    const key = `${context.tenantId}:create:${idempotencyKey}`;
+    const tenantId = resolveTenant(context, input.tenantId);
+    const key = `${tenantId}:create:${idempotencyKey}`;
     const existing = this.idempotency.get(key);
     if (existing) return existing;
     const timestamp = new Date().toISOString();
     const id = `case_${ulid()}`;
     const item: DemoCase = {
       id,
-      tenantId: context.tenantId,
+      tenantId,
       reference: input.reference ?? `CASE-${ulid().slice(-8)}`,
       subjectName: input.subjectName,
       domain: input.domainPackId,
@@ -102,6 +112,101 @@ export class CasesService {
     };
     this.cases.push(item);
     const result = this.summary(item);
+    this.idempotency.set(key, result);
+    return result;
+  }
+
+  /**
+   * `POST /v1/cases/intake`: one multipart request that creates a case from the documents that
+   * justify it, rather than an empty case filled in afterwards. Order matters and is the whole
+   * point of this method - resolve the tenant, validate every attached file, and only then create
+   * the case, attach the documents, and queue processing. A file rejected on validation must not
+   * leave a half-built case behind, so nothing here is written until `validateIntakeFiles` has
+   * accepted the entire batch.
+   *
+   * Idempotent the same way `create` and `process` already are: the whole response is cached by
+   * `${tenantId}:intake:${idempotencyKey}`, so a replay returns the original case, document ids,
+   * and job id without attaching or queueing anything a second time - the cache hit short-circuits
+   * before any of that code runs.
+   */
+  async intake(
+    context: RequestContext,
+    files: readonly IntakeFile[],
+    input: {
+      subjectName: string;
+      domainPackId?: string | undefined;
+      tenantId?: string | undefined;
+    },
+    idempotencyKey: string,
+  ): Promise<{ caseId: string; reference: string; documentIds: string[]; jobIds: string[] }> {
+    this.requireRole(context, ['intake', 'reviewer', 'admin']);
+    const tenantId = resolveTenant(context, input.tenantId);
+    const validated = await validateIntakeFiles(files, this.maxDocuments);
+
+    const key = `${tenantId}:intake:${idempotencyKey}`;
+    const existing = this.idempotency.get(key) as
+      { caseId: string; reference: string; documentIds: string[]; jobIds: string[] } | undefined;
+    if (existing) return existing;
+
+    const domainPackId = input.domainPackId?.trim() || `pack_${tenantId}`;
+    const timestamp = new Date().toISOString();
+    const id = `case_${ulid()}`;
+    const documents = validated.map(({ file, sha256, pageCount }) => ({
+      id: `doc_${ulid()}`,
+      name: file.originalname.replace(/\.[^.]+$/, ''),
+      type: 'unknown',
+      status: 'needs_review' as const,
+      pages: pageCount,
+      confidence: null,
+      fileName: file.originalname,
+      warning: `Awaiting classification; sha256:${sha256}`,
+    }));
+    for (const [index, document] of documents.entries()) {
+      const { file } = validated[index]!;
+      this.documentContent.set(`${tenantId}:${id}:${document.id}`, {
+        body: Uint8Array.from(file.buffer),
+        mediaType: file.mimetype,
+        fileName: file.originalname,
+      });
+    }
+    const item: DemoCase = {
+      id,
+      tenantId,
+      reference: `CASE-${ulid().slice(-8)}`,
+      subjectName: input.subjectName,
+      domain: domainPackId,
+      domainPackVersion: '1.0.0',
+      status: 'processing',
+      recommendation: null,
+      progress: 0,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      dueAt: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+      assignedTo: context.userId,
+      version: 1,
+      documents,
+      facts: [],
+      findings: [],
+      audit: [
+        {
+          id: `audit_${ulid()}`,
+          at: timestamp,
+          actor: context.userId,
+          action: 'case.created',
+          detail: `Created with ${domainPackId} from ${documents.length} attached document(s)`,
+        },
+      ],
+      decision: null,
+    };
+    this.cases.push(item);
+
+    const job = this.process(context, id, idempotencyKey);
+    const result = {
+      caseId: item.id,
+      reference: item.reference,
+      documentIds: documents.map((document) => document.id),
+      jobIds: [job.id],
+    };
     this.idempotency.set(key, result);
     return result;
   }

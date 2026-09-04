@@ -154,7 +154,7 @@ export function PolicyLibrary({
   const load = useCallback(async () => {
     const response = await fetch('/api/policies', { cache: 'no-store' });
     const body = await response.json().catch(() => ({ items: [] }));
-    if (!response.ok) throw new Error(body.message ?? 'Could not load policies.');
+    if (!response.ok) throw new Error(body.detail ?? body.message ?? 'Could not load policies.');
     setItems(body.items ?? []);
     setState('ready');
   }, []);
@@ -180,7 +180,8 @@ export function PolicyLibrary({
         { cache: 'no-store' },
       );
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.message ?? 'Could not load the domain pack.');
+      if (!response.ok)
+        throw new Error(body.detail ?? body.message ?? 'Could not load the domain pack.');
       return {
         tenantId: forTenantId,
         state: 'ready',
@@ -216,7 +217,8 @@ export function PolicyLibrary({
     })
       .then(async (response) => {
         const body = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(body.message ?? 'Could not load field proposals.');
+        if (!response.ok)
+          throw new Error(body.detail ?? body.message ?? 'Could not load field proposals.');
         if (!cancelled) {
           setFieldProposalsLoad({
             tenantId,
@@ -269,7 +271,7 @@ export function PolicyLibrary({
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
       setFieldProposalsLoad(priorLoad);
-      setMessage(body.message ?? `Could not ${decision} the field proposal.`);
+      setMessage(body.detail ?? body.message ?? `Could not ${decision} the field proposal.`);
       setPendingProposalId('');
       return;
     }
@@ -322,7 +324,7 @@ export function PolicyLibrary({
       if (reloaded.state === 'ready') setDomainPackLoad(reloaded);
     }
     if (!response.ok) {
-      setMessage(body.message ?? 'Policy upload failed.');
+      setMessage(body.detail ?? body.message ?? 'Policy upload failed.');
       setState('ready');
       return;
     }

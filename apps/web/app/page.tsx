@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   CircleAlert,
   Clock3,
+  FilePlus2,
   FileSearch,
   Layers3,
   ListFilter,
@@ -83,6 +84,10 @@ export default async function QueuePage({ searchParams }: QueuePageProps) {
               Open review queue
               <ArrowUpRight aria-hidden="true" size={16} />
             </a>
+            <Link className="button button-secondary" href="/cases/new">
+              <FilePlus2 aria-hidden="true" size={16} />
+              New case
+            </Link>
             <span>
               <ShieldAlert aria-hidden="true" size={15} /> Human approval stays in control
             </span>

@@ -44,6 +44,7 @@ import {
   S3CompatibleStorageProvider,
 } from '@caselens/providers';
 import type { RequestContext } from '../request-context.js';
+import { resolveTenant } from '../tenant.js';
 
 export const GENERAL_CONTROLS_COLLECTION = {
   id: 'general-controls',
@@ -697,7 +698,7 @@ export class PoliciesService implements OnModuleDestroy {
   ): Promise<{ items: FieldProposal[] }> {
     this.requireAdministrator(context);
     const store = this.runtime().store;
-    const tenantId = this.resolveTenant(context, filters.tenantId);
+    const tenantId = resolveTenant(context, filters.tenantId);
     const domainPackId = `pack_${tenantId}`;
     const proposals = await store.listFieldProposals(tenantId, domainPackId, filters.status);
     return { items: proposals.map(toFieldProposalResponse) };
@@ -714,7 +715,7 @@ export class PoliciesService implements OnModuleDestroy {
     input: { tenantId?: string | undefined; reason?: string | undefined },
   ): Promise<{ semanticVersion: string }> {
     const store = this.runtime().store;
-    const tenantId = this.resolveTenant(context, input.tenantId);
+    const tenantId = resolveTenant(context, input.tenantId);
     return approveFieldProposal(store, context, tenantId, proposalId, input.reason);
   }
 
@@ -725,7 +726,7 @@ export class PoliciesService implements OnModuleDestroy {
     input: { tenantId?: string | undefined; reason?: string | undefined },
   ): Promise<{ status: 'rejected' }> {
     const store = this.runtime().store;
-    const tenantId = this.resolveTenant(context, input.tenantId);
+    const tenantId = resolveTenant(context, input.tenantId);
     return rejectFieldProposal(store, context, tenantId, proposalId, input.reason);
   }
 
@@ -739,7 +740,7 @@ export class PoliciesService implements OnModuleDestroy {
     requestedTenantId?: string,
   ): Promise<DomainPackConfiguration> {
     this.requireAdministrator(context);
-    const tenantId = this.resolveTenant(context, requestedTenantId);
+    const tenantId = resolveTenant(context, requestedTenantId);
     const domainPackId = `pack_${tenantId}`;
     const store = this.runtime().store;
     // The persisted definition first, so a collection an administrator minted at upload time and
@@ -832,7 +833,7 @@ export class PoliciesService implements OnModuleDestroy {
   ) {
     this.requireAdministrator(context);
     const { store, jobs, storage, queue } = this.runtime();
-    const tenantId = this.resolveTenant(context, input.tenantId);
+    const tenantId = resolveTenant(context, input.tenantId);
     const domainPackId = input.domainPackId?.trim() || `pack_${tenantId}`;
     const installedPack = await store.getDomainPackDescriptor(tenantId, domainPackId);
     if (!installedPack) {
@@ -1202,17 +1203,6 @@ export class PoliciesService implements OnModuleDestroy {
 
   private requireAdministrator(context: RequestContext): void {
     requireAdministrator(context);
-  }
-
-  private resolveTenant(context: RequestContext, requested?: string): string {
-    if (!context.platformAdmin) return context.tenantId;
-    if (!requested || !context.tenantIds.includes(requested)) {
-      throw new BadRequestException({
-        code: 'TENANT_REQUIRED',
-        message: 'Platform administrators must choose a tenant for the policy.',
-      });
-    }
-    return requested;
   }
 
   private scope(context: RequestContext): AccessScope {

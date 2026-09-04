@@ -40,11 +40,65 @@ function domainPackFor(tenantId: string) {
   };
 }
 
+function fieldProposals() {
+  return {
+    items: [
+      {
+        id: 'fp_new_field',
+        tenantId: 'tenant_demo',
+        domainPackId: 'pack_tenant_demo',
+        policyDocumentId: 'policy-registry-fixture',
+        kind: 'new_field',
+        documentTypeId: 'insurance_certificate',
+        path: 'insurance.deductibleEur',
+        label: 'Deductible amount',
+        fieldType: 'currency',
+        aliases: [],
+        citation: {
+          chunkId: 'chunk_deductible',
+          page: 4,
+          quote: 'The policyholder bears a deductible of the stated amount per occurrence.',
+        },
+        dedup: {
+          verdict: 'distinct',
+          matchedPath: null,
+          similarity: null,
+          reason: 'No existing field was recalled for this wording.',
+        },
+        status: 'proposed',
+        issues: [],
+      },
+    ],
+  };
+}
+
 function json(body: unknown) {
   return new Response(JSON.stringify(body), {
     status: 200,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+/**
+ * The API error shape the component actually meets in the running app. `ProblemDetailsFilter` is
+ * registered globally in `apps/api`, so every failed request arrives as RFC 7807 with the reason
+ * in `detail` and NO top-level `message`. Mocking `{ message }` here instead would let a
+ * component that only reads `body.message` pass while silently swallowing the reason in
+ * production, which is exactly the regression these tests exist to catch.
+ */
+function problem(status: number, detail: string) {
+  return new Response(
+    JSON.stringify({
+      type: `https://caselens.dev/problems/${status}`,
+      title: detail,
+      status,
+      code: `HTTP_${status}`,
+      detail,
+      instance: '/api/policies',
+      correlationId: 'test-correlation-id',
+    }),
+    { status, headers: { 'content-type': 'application/problem+json' } },
+  );
 }
 
 // `init` is part of the signature so a test can tell the upload POST apart from the GETs and
@@ -241,10 +295,7 @@ describe('policy library collection selection', () => {
         minted = true;
         return uploadStatus === 200
           ? json({ id: 'policy_new', collectionId: 'product-recall-handling' })
-          : new Response(JSON.stringify({ message: 'The queue is unavailable.' }), {
-              status: 503,
-              headers: { 'content-type': 'application/json' },
-            });
+          : problem(503, 'The queue is unavailable.');
       }
       return json({ items: [] });
     });
@@ -303,6 +354,98 @@ describe('policy library collection selection', () => {
         }),
       ).toBeInTheDocument(),
     );
+  });
+
+  it("surfaces the API's own reason for a failed upload, not the generic fallback", async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost');
+      if (url.pathname === '/api/policies/domain-pack') {
+        return json(domainPackFor(url.searchParams.get('tenantId') ?? ''));
+      }
+      if (url.pathname === '/api/policies/field-proposals') return json({ items: [] });
+      if (url.pathname === '/api/policies' && init?.method === 'POST') {
+        return problem(413, 'The policy exceeds the 25 MB upload limit.');
+      }
+      return json({ items: [] });
+    });
+    const { container } = render(<PolicyLibrary tenants={[TEST_TENANTS[0]]} administrator />);
+
+    const select = await screen.findByLabelText('Collection');
+    await waitFor(() => expect(select).toBeEnabled());
+    fillRequiredFields();
+    fireEvent.submit(uploadForm(container));
+
+    // The reason the API gave, read from `detail`. Falling back to 'Policy upload failed.' here
+    // would mean the administrator is told nothing about the size limit they just hit.
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'The policy exceeds the 25 MB upload limit.',
+      ),
+    );
+    expect(screen.getByRole('status')).not.toHaveTextContent('Policy upload failed.');
+  });
+
+  it('falls back to `message` when the web proxy reports the API unreachable', async () => {
+    // The route handler in app/api/policies does NOT produce a problem document on this path: its
+    // own catch returns `{ code, message }` when it cannot reach the API at all. Both shapes are
+    // live, so the component has to read both.
+    const fetchMock = stubFetch();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost');
+      if (url.pathname === '/api/policies/domain-pack') {
+        return json(domainPackFor(url.searchParams.get('tenantId') ?? ''));
+      }
+      if (url.pathname === '/api/policies/field-proposals') return json({ items: [] });
+      if (url.pathname === '/api/policies' && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            code: 'API_UNAVAILABLE',
+            message: 'The policy library is temporarily unavailable.',
+          }),
+          { status: 503, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return json({ items: [] });
+    });
+    const { container } = render(<PolicyLibrary tenants={[TEST_TENANTS[0]]} administrator />);
+
+    const select = await screen.findByLabelText('Collection');
+    await waitFor(() => expect(select).toBeEnabled());
+    fillRequiredFields();
+    fireEvent.submit(uploadForm(container));
+
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'The policy library is temporarily unavailable.',
+      ),
+    );
+  });
+
+  it("surfaces the API's own reason for a refused field-proposal decision", async () => {
+    const fetchMock = stubFetch();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost');
+      if (url.pathname === '/api/policies/domain-pack') {
+        return json(domainPackFor(url.searchParams.get('tenantId') ?? ''));
+      }
+      if (url.pathname === '/api/policies/field-proposals') return json(fieldProposals());
+      if (init?.method === 'POST' && url.pathname.endsWith('/approve')) {
+        return problem(409, 'The domain pack changed since this proposal was raised.');
+      }
+      return json({ items: [] });
+    });
+    render(<PolicyLibrary tenants={[TEST_TENANTS[0]]} administrator />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve field' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'The domain pack changed since this proposal was raised.',
+      ),
+    );
+    // The optimistic removal is rolled back, so the proposal is still reviewable after the refusal.
+    expect(screen.getByRole('button', { name: 'Approve field' })).toBeEnabled();
   });
 
   it('sends an existing collection as an id, with no name to create', async () => {
