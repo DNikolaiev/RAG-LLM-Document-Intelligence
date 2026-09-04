@@ -42,7 +42,7 @@ docker compose --env-file infra/.env.production-local -f infra/docker-compose.pr
 
 For the CPU-local default, the worker processes one case and one model request at a time, with a five-minute request limit. This is deliberate: it is slower but avoids competing requests causing local-model timeouts. Deployments with dedicated model capacity can raise `WORKER_JOB_CONCURRENCY` and `WORKER_MODEL_CONCURRENCY` in the environment file.
 
-Select a fictional identity from the profile menu. Lena, Jonas, Amara, and Mateo each administer one tenant in a different business domain. Mara Stein is the platform administrator and sees the cross-tenant queue. This is intentionally a local test impersonation mechanism, not authentication.
+Select a fictional identity from the profile menu: Lena administers the pharmacy tenant, Jonas the legal tenant, Amara the insurance tenant, and Mateo the manufacturing tenant. Mara Stein is the platform administrator and sees the cross-tenant queue. This is intentionally a local test impersonation mechanism, not authentication.
 
 Stop the stack without losing data using `docker compose ... down`. To intentionally erase all local CaseLens data and downloaded models, use the same command with `down --volumes`.
 
@@ -58,6 +58,10 @@ npm run fixtures:seed:multi-tenant
 Generation is byte-stable, and `npm run fixtures:verify` checks both fixture corpora: recorded hashes, page counts, required phrases, evidence-page anchors, Poppler renders, and two consecutive generations producing identical SHA-256 values.
 
 The seed command uses the public API: it uploads each policy, extracts and indexes its clauses, approves the already-valid synthetic proposal, activates the policy, then queues the matching tenant case. The local-only `FIXTURE_POLICY_CATALOG_ENABLED=true` setting makes the three marked policy proposals deterministic; it does not bypass PDF extraction, MinIO, pgvector embeddings, BullMQ, review/activation, or case processing. Keep this flag disabled outside the local synthetic demo.
+
+### Policy lab fixtures
+
+[`fixtures/documents/policy-lab/`](fixtures/documents/policy-lab) holds 13 synthetic PDFs for the legal, insurance, and manufacturing tenants, engineered so each reviewable outcome is provoked on purpose: an approvable rule, a rule blocked as ungrounded, a rule blocked as too weak, a new field proposal, and a field proposal that merges into an existing field by dedup, plus matching satisfying/violating case evidence. [`docs/testing/policy-lab-upload-runbook.md`](docs/testing/policy-lab-upload-runbook.md) drives the whole pipeline by hand, one upload at a time.
 
 ## Components and why they exist
 
@@ -103,7 +107,7 @@ Redis is **not** the source of truth for case progress and is not used as a gene
 | LangGraph checkpoints                                          | PostgreSQL            | A worker can resume a durable workflow after a restart                                             |
 | Model weights                                                  | Ollama volume         | Free local chat and embedding models without sending documents to a cloud provider                 |
 
-Redis never stores the source PDF as business data, and pgvector is not a second database. `vector(768)` columns and their HNSW indexes live inside the same PostgreSQL service as the policy metadata.
+pgvector is not a second database: `vector(768)` columns and their HNSW indexes live inside the same PostgreSQL service as the policy metadata.
 
 ## Database schema map
 
@@ -159,9 +163,57 @@ flowchart LR
     activate --> evaluate[Future or explicitly re-evaluated cases]
 ```
 
-Policy PDF text is untrusted evidence. It cannot insert JavaScript, change prompts, create unknown fact fields, or activate itself. A proposal must use the allowlisted rule DSL, cite an exact policy page/quote, pass match/no-match/missing-value/boundary tests, and receive administrator approval. Existing cases retain the versions used during their original evaluation until someone explicitly requests re-evaluation.
+Policy PDF text is untrusted evidence. It cannot insert JavaScript, change prompts, create unknown fact fields, or activate itself. A proposal must use the allowlisted rule DSL, cite an exact policy page/quote, pass match/no-match/missing-value/boundary tests, and receive administrator approval. Existing cases retain the versions used during their original evaluation until someone explicitly requests re-evaluation. Upload targets a tenant's policy collection — an administrator picks an existing one or names a new one, which mints a pack version immediately.
 
 The review screen always shows every generated rule. A green test means the actual result matched its expected result; red means that exact expectation failed, regardless of whether the category is `match`, `no_match`, `missing_value`, or `boundary`. Validation blockers list their code, field path, and explanation. Valid rules may be approved or dismissed; invalid rules may be dismissed with an audit reason but cannot be approved. Selecting a citation navigates the original PDF to its page and highlights the matching clause.
+
+### Rule registry
+
+Each tenant has one rule registry, grouped by policy collection. Every active rule states its origin: a domain-pack rule shows the pack name and version that shipped it; a policy-derived rule links to the source policy document and version it was cited from. A collection with no approved rule yet stays listed rather than disappearing.
+
+### Field vocabulary and semantic dedup
+
+A policy may also propose a new extraction field, not just a rule — but the closed-vocabulary invariant holds: extraction only ever runs against an approved catalog, so a policy proposes and an administrator approves. Approval mints a new version of `domain_packs.definition`, the authoritative per-tenant pack; a tenant that has never minted one still resolves reads against the compiled catalog.
+
+Proposed fields are deduplicated by meaning, not wording. The candidate is embedded, the nearest existing fields are recalled from pgvector, and only above a similarity floor is the chat model asked to rule same-or-different over that short list. A duplicate becomes an alias on the existing field rather than a second path — "coverage amount" teaches the extractor another way to find the existing liability-limit field instead of creating a rival one. The floor is a recall guard, not a decision boundary: measured synonym and unrelated-field similarity bands overlap, so the model decides and post-model gates reject a path it invented or one of the wrong type. This also depends on EmbeddingGemma's documented task prefixes — without them, every pair in this vocabulary scores 0.86-0.96 and dedup cannot discriminate.
+
+Neither a newly approved field nor rule reaches an existing case automatically; `POST /v1/cases/:id/reprocess` explicitly re-runs one against the widened pack.
+
+## How it works
+
+![CaseLens end-to-end pipeline: a versioned domain pack feeds policy upload, model proposal, governance, and case evaluation, with approval looping a new pack version back into the dictionary](docs/assets/pipeline.svg)
+
+This draws the two pipelines above as one loop: a domain pack supplies fields, baseline rules, and collections; a policy upload proposes rules and fields against it; governance approves or blocks; approval mints a new pack version; and case documents are checked against that pack — known field, right type, real quote, best score — before producing findings and a decision.
+
+### Example: an insurance policy becomes a material finding
+
+One real path through the seeded pharmacy tenant, Düsseldorf Health Operations (`tenant_demo`, administered by Lena Vogt), captured on the local production stack:
+
+**1. Upload into a collection.** An administrator names or picks a collection and attaches the PDF. Here "Supplier Insurance Requirements" version `portfolio-2026.08.31` goes into the **Insurance Requirements** collection. The workspace switcher in the header re-scopes the whole page; only the platform administrator owns every workspace, everyone else sees a static label for their one.
+
+![Policy library page: upload form, workspace switcher, and policy register](docs/assets/screenshots/policy-library.png)
+
+**2. The model proposes, an administrator reviews.** The worker extracts clauses and proposes cited rules against them (see [above](#what-acts-when-a-policy-is-processed) for the grounding and test gates every proposal must clear). The screenshot below shows this same review screen on a different seeded policy — Rheinland Legal Services' governing-law control — the mechanics are identical for every tenant and policy:
+
+![Policy review screen: original clause, rule logic, and rule tests for a governing-law rule](docs/assets/screenshots/policy-review.png)
+
+**3. Approval lands in the registry.** Düsseldorf Health Operations' Insurance Requirements collection now shows both a long-standing rule badged **SYSTEM DEFAULT** and two rules badged **FROM POLICY REGISTER**, cited to "Supplier Insurance Requirements · portfolio-2026.08.31":
+
+![Rule registry: four collections, system-default and policy-derived rules, and one empty collection](docs/assets/screenshots/rule-registry.png)
+
+Note the empty **Pharmaceutical Distribution Policy** collection beside it — it stays listed with no rules rather than disappearing.
+
+**4. A case runs against those rules.** The review queue tracks every open case; the platform administrator sees all four tenant workspaces at once:
+
+![Case queue: cross-tenant review queue with decision-readiness stats](docs/assets/screenshots/case-queue.png)
+
+Case `SUP-2026-0142`, MediSupply GmbH, is one of the cases needing review. Its extracted liability coverage is €1,000,000 against the €2,000,000 per-occurrence minimum both rules now share, so it fires as a major finding (`insurance.minimum_limit`) linked to the exact page and quote it came from:
+
+![Case workspace: source documents, original PDF, and material findings with a request-information recommendation](docs/assets/screenshots/case-workspace.png)
+
+**5. A reviewer records a decision.** From here a reviewer opens the cited page, adds the finding to follow-up, and sends or copies a **Request information** draft — see [Original-document evidence review](#original-document-evidence-review) next for how evidence navigation and follow-up drafting work.
+
+To run this kind of path yourself, see [Policy lab fixtures](#policy-lab-fixtures): it drives the same upload-review-approve-run sequence by hand across three other tenants, deliberately provoking every reviewable outcome once.
 
 ## Original-document evidence review
 

@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="961" viewBox="0 0 680 961" role="img" aria-labelledby="pipelineTitle pipelineDesc">
+<title id="pipelineTitle">CaseLens end to end, with the four extraction checks broken out</title>
+<desc id="pipelineDesc">A versioned per-tenant domain pack supplies fields, baseline rules and collections. An administrator uploads a policy into a chosen or newly named collection. The model proposes rules and fields. Governance checks grounding and deterministic tests, and approval mints a new pack version back into the dictionary. Case documents then pass four checks in order — known field, right type, real quote, best score — before becoming facts, and effective rules produce findings for a human decision.</desc>
+<style>
+  .t,.ts,.th{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .t{font-size:14px}
+  .th{font-size:14px;font-weight:500}
+  .ts{font-size:12px}
+  .lane{fill:none;stroke:#B4B2A9;stroke-width:.5;stroke-dasharray:4 4}
+  .arr{fill:none;stroke:#5F5E5A;stroke-width:1.5}
+  .lbl{fill:#5F5E5A}
+  .purple rect{fill:#EEEDFE;stroke:#534AB7;stroke-width:.5}
+  .purple .th{fill:#3C3489}.purple .ts{fill:#534AB7}
+  .teal rect{fill:#E1F5EE;stroke:#0F6E56;stroke-width:.5}
+  .teal .th{fill:#085041}.teal .ts{fill:#0F6E56}
+  .coral rect{fill:#FAECE7;stroke:#993C1D;stroke-width:.5}
+  .coral .th{fill:#712B13}.coral .ts{fill:#993C1D}
+  .gray rect{fill:#F1EFE8;stroke:#5F5E5A;stroke-width:.5}
+  .gray .th{fill:#444441}.gray .ts{fill:#5F5E5A}
+  @media (prefers-color-scheme:dark){
+    .lane{stroke:#5F5E5A}.arr{stroke:#B4B2A9}.lbl{fill:#B4B2A9}
+    .purple rect{fill:#26215C;stroke:#7F77DD}.purple .th{fill:#CECBF6}.purple .ts{fill:#AFA9EC}
+    .teal rect{fill:#04342C;stroke:#1D9E75}.teal .th{fill:#9FE1CB}.teal .ts{fill:#5DCAA5}
+    .coral rect{fill:#4A1B0C;stroke:#D85A30}.coral .th{fill:#F5C4B3}.coral .ts{fill:#F0997B}
+    .gray rect{fill:#2C2C2A;stroke:#888780}.gray .th{fill:#D3D1C7}.gray .ts{fill:#B4B2A9}
+  }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+
+<rect class="lane" x="76" y="46" width="564" height="100" rx="8"/>
+<text class="ts lbl" x="88" y="66">1. Domain pack, versioned per tenant and grown only by approval</text>
+<g class="purple"><rect x="88" y="76" width="172" height="58" rx="4"/><text class="th" x="100" y="99">Extraction fields</text><text class="ts" x="100" y="117">the fact vocabulary</text></g>
+<g class="purple"><rect x="272" y="76" width="172" height="58" rx="4"/><text class="th" x="284" y="99">Baseline rules</text><text class="ts" x="284" y="117">system default</text></g>
+<g class="purple"><rect x="456" y="76" width="172" height="58" rx="4"/><text class="th" x="468" y="99">Collections</text><text class="ts" x="468" y="117">where policies land</text></g>
+
+<line class="arr" x1="358" y1="146" x2="358" y2="178" marker-end="url(#arrow)"/>
+
+<rect class="lane" x="76" y="182" width="564" height="92" rx="8"/>
+<text class="ts lbl" x="88" y="202">2. Policy upload, by an administrator</text>
+<g class="gray"><rect x="88" y="212" width="264" height="48" rx="4"/><text class="th" x="100" y="231">Choose or name a collection</text><text class="ts" x="100" y="248">naming one mints a version</text></g>
+<g class="gray"><rect x="364" y="212" width="264" height="48" rx="4"/><text class="th" x="376" y="231">Immutable PDF to clauses</text><text class="ts" x="376" y="248">chunks with page numbers</text></g>
+
+<line class="arr" x1="358" y1="274" x2="358" y2="306" marker-end="url(#arrow)"/>
+
+<rect class="lane" x="76" y="310" width="564" height="92" rx="8"/>
+<text class="ts lbl" x="88" y="330">3. Model proposes, untrusted and advisory only</text>
+<g class="coral"><rect x="88" y="340" width="264" height="48" rx="4"/><text class="th" x="100" y="359">Rule proposal</text><text class="ts" x="100" y="376">condition plus exact quote</text></g>
+<g class="coral"><rect x="364" y="340" width="264" height="48" rx="4"/><text class="th" x="376" y="359">Field proposal</text><text class="ts" x="376" y="376">new field, or alias by dedup</text></g>
+
+<line class="arr" x1="358" y1="402" x2="358" y2="434" marker-end="url(#arrow)"/>
+
+<rect class="lane" x="76" y="438" width="564" height="100" rx="8"/>
+<text class="ts lbl" x="88" y="458">4. Governance, only an administrator may approve</text>
+<g class="teal"><rect x="88" y="468" width="172" height="58" rx="4"/><text class="th" x="100" y="491">Grounded in quote?</text><text class="ts" x="100" y="509">cited clause names it</text></g>
+<g class="teal"><rect x="272" y="468" width="172" height="58" rx="4"/><text class="th" x="284" y="491">Deterministic tests</text><text class="ts" x="284" y="509">written by the worker</text></g>
+<g class="teal"><rect x="456" y="468" width="172" height="58" rx="4"/><text class="th" x="468" y="491">Approve</text><text class="ts" x="468" y="509">mints a pack version</text></g>
+
+<path class="arr" d="M76 494 H52 V96 H72" marker-end="url(#arrow)"/>
+
+<line class="arr" x1="358" y1="538" x2="358" y2="570" marker-end="url(#arrow)"/>
+
+<rect class="lane" x="76" y="574" width="564" height="198" rx="8"/>
+<text class="ts lbl" x="88" y="594">5. Case run, evidence becomes facts</text>
+<g class="gray"><rect x="88" y="604" width="262" height="48" rx="4"/><text class="th" x="100" y="623">Case documents</text><text class="ts" x="100" y="641">pages, then chunks</text></g>
+<line class="arr" x1="350" y1="628" x2="362" y2="628" marker-end="url(#arrow)"/>
+<g class="coral"><rect x="366" y="604" width="262" height="48" rx="4"/><text class="th" x="378" y="623">Model guesses a fact</text><text class="ts" x="378" y="641">value, page, quote</text></g>
+<line class="arr" x1="358" y1="652" x2="358" y2="666" marker-end="url(#arrow)"/>
+<rect class="lane" x="84" y="670" width="548" height="88" rx="8"/>
+<g class="teal"><rect x="88" y="680" width="125" height="62" rx="4"/><text class="th" x="100" y="705">Known field?</text><text class="ts" x="100" y="724">in the pack</text></g>
+<line class="arr" x1="213" y1="711" x2="223" y2="711" marker-end="url(#arrow)"/>
+<g class="teal"><rect x="225" y="680" width="125" height="62" rx="4"/><text class="th" x="237" y="705">Right type?</text><text class="ts" x="237" y="724">number not text</text></g>
+<line class="arr" x1="350" y1="711" x2="360" y2="711" marker-end="url(#arrow)"/>
+<g class="teal"><rect x="362" y="680" width="125" height="62" rx="4"/><text class="th" x="374" y="705">Quote real?</text><text class="ts" x="374" y="724">on that page</text></g>
+<line class="arr" x1="487" y1="711" x2="497" y2="711" marker-end="url(#arrow)"/>
+<g class="teal"><rect x="499" y="680" width="125" height="62" rx="4"/><text class="th" x="511" y="705">Best score?</text><text class="ts" x="511" y="724">beats duplicates</text></g>
+
+<line class="arr" x1="358" y1="772" x2="358" y2="804" marker-end="url(#arrow)"/>
+
+<rect class="lane" x="76" y="808" width="564" height="100" rx="8"/>
+<text class="ts lbl" x="88" y="828">6. Evaluation, deterministic and final</text>
+<g class="teal"><rect x="88" y="838" width="172" height="58" rx="4"/><text class="th" x="100" y="861">Effective rules</text><text class="ts" x="100" y="879">baseline plus approved</text></g>
+<g class="teal"><rect x="272" y="838" width="172" height="58" rx="4"/><text class="th" x="284" y="861">Findings</text><text class="ts" x="284" y="879">no model involved</text></g>
+<g class="teal"><rect x="456" y="838" width="172" height="58" rx="4"/><text class="th" x="468" y="861">Decision</text><text class="ts" x="468" y="879">a person signs off</text></g>
+
+<g class="purple"><rect x="88" y="928" width="10" height="10" rx="2"/></g>
+<text class="ts lbl" x="104" y="937">governed dictionary</text>
+<g class="gray"><rect x="230" y="928" width="10" height="10" rx="2"/></g>
+<text class="ts lbl" x="246" y="937">source files</text>
+<g class="coral"><rect x="336" y="928" width="10" height="10" rx="2"/></g>
+<text class="ts lbl" x="352" y="937">model proposal</text>
+<g class="teal"><rect x="456" y="928" width="10" height="10" rx="2"/></g>
+<text class="ts lbl" x="472" y="937">checked and governed</text>
+</svg>
