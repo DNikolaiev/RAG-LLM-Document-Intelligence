@@ -1,4 +1,5 @@
 import {
+  bigserial,
   boolean,
   customType,
   index,
@@ -735,4 +736,34 @@ export const fieldEmbeddings = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.tenantId, table.domainPackId, table.path] })],
+);
+
+/**
+ * The transactional outbox. A domain event is appended here in the same transaction as the
+ * business change it describes, so a fact can never be lost by a process dying between writing
+ * state and publishing. The table is also the event log: the relay stamps `publishedAt` after
+ * handing an event to the broker, but never removes the row, so a read model can be rebuilt by
+ * replaying in `sequence` order.
+ */
+export const domainEvents = pgTable(
+  'domain_events',
+  {
+    id: text('id').primaryKey(),
+    sequence: bigserial('sequence', { mode: 'number' }).notNull(),
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    type: text('type').notNull(),
+    aggregateType: text('aggregate_type').notNull(),
+    aggregateId: text('aggregate_id').notNull(),
+    payload: jsonb('payload').notNull().default({}),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('domain_event_unpublished_idx').on(table.sequence),
+    index('domain_event_tenant_sequence_idx').on(table.tenantId, table.sequence),
+    uniqueIndex('domain_event_sequence_uq').on(table.sequence),
+  ],
 );
