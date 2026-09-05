@@ -65,6 +65,294 @@ Application and domain code depend on capabilities rather than SDK-specific type
 
 A domain pack versions its document taxonomy, extraction schemas, thresholds, policy metadata, rules, decision mapping, and reviewer checklist. New legal, insurance, or manufacturing workflows can be introduced as new packs while sharing ingestion, evidence, workflow, audit, and provider infrastructure.
 
+## Database schema
+
+The canonical definition is [`packages/persistence/src/schema.ts`](packages/persistence/src/schema.ts) — 26 Drizzle tables. This section maps it; it is not a second source of truth. When the two disagree, the schema file is right.
+
+Two rules hold across every diagram below, so they are stated once rather than drawn two dozen times:
+
+- **Every business table carries `tenant_id` referencing `tenants.id`**, and PostgreSQL row-level security scopes reads and writes to the caller's tenants. Those edges are omitted from the diagrams; assume them everywhere.
+- **Every table carries the shared audit columns** (`created_at`, `updated_at`, and where applicable `version` for optimistic concurrency). `audit_events.actor_id` is deliberately plain text rather than a foreign key, because an actor may be the worker or the system rather than a user.
+
+### Identity and configuration
+
+`domain_packs` is the versioned per-tenant pack: `definition` holds the whole `DomainPack` as JSONB, and approving a proposed field or a new collection mints a new row rather than mutating one.
+
+```mermaid
+erDiagram
+  tenants ||--o{ memberships : "tenant_id"
+  users ||--o{ memberships : "user_id"
+  tenants ||--o{ domain_packs : "tenant_id"
+
+  tenants {
+    text id PK
+    text name
+  }
+  users {
+    text id PK
+    text external_subject UK
+    text email
+  }
+  memberships {
+    text tenant_id PK
+    text user_id PK
+    text role
+  }
+  domain_packs {
+    text id PK
+    text tenant_id FK
+    text domain_key
+    text semantic_version
+    text status
+    jsonb definition
+  }
+```
+
+`memberships` has a composite primary key of `(tenant_id, user_id)`, both of which are also foreign keys. `domain_packs` is unique on `(tenant_id, domain_key, semantic_version)`, which is what lets one lineage hold many versions with a single active row.
+
+### Case pipeline
+
+This is the provenance chain the safety model depends on: a finding points at the rule run that produced it and the evidence span that justifies it, and that span points at a document and page.
+
+```mermaid
+erDiagram
+  domain_packs ||--o{ cases : "domain_pack_id"
+  cases ||--o{ documents : "case_id"
+  documents ||--o{ document_pages : "document_id"
+  documents ||--o{ extraction_runs : "document_id"
+  documents ||--o{ evidence_spans : "document_id"
+  cases ||--o{ extracted_facts : "case_id"
+  extraction_runs ||--o{ extracted_facts : "extraction_run_id"
+  evidence_spans ||--o{ extracted_facts : "evidence_id"
+  cases ||--o{ rule_runs : "case_id"
+  domain_packs ||--o{ rule_runs : "domain_pack_id"
+  cases ||--o{ findings : "case_id"
+  rule_runs ||--o{ findings : "rule_run_id"
+  evidence_spans ||--o{ findings : "evidence_id"
+  cases ||--o{ decisions : "case_id"
+  cases ||--o{ audit_events : "case_id"
+
+  cases {
+    text id PK
+    text tenant_id FK
+    text domain_pack_id FK
+    text assigned_user_id FK
+    text reference
+    text status
+    integer version
+  }
+  documents {
+    text id PK
+    text case_id FK
+    text storage_key
+  }
+  document_pages {
+    text id PK
+    text document_id FK
+    integer page
+  }
+  extraction_runs {
+    text id PK
+    text document_id FK
+  }
+  evidence_spans {
+    text id PK
+    text document_id FK
+    integer page
+    text quote
+  }
+  extracted_facts {
+    text id PK
+    text case_id FK
+    text extraction_run_id FK
+    text evidence_id FK
+    text corrected_by_user_id FK
+    text path
+  }
+  rule_runs {
+    text id PK
+    text case_id FK
+    text domain_pack_id FK
+    jsonb input_snapshot
+  }
+  findings {
+    text id PK
+    text case_id FK
+    text rule_run_id FK
+    text evidence_id FK
+    text severity
+  }
+  decisions {
+    text id PK
+    text case_id FK
+    text decided_by_user_id FK
+    text outcome
+  }
+  audit_events {
+    text id PK
+    text case_id FK
+    text actor_id
+    text action
+  }
+```
+
+`rule_runs.input_snapshot` pins the rule identifiers and versions a case was judged against, so a later pack version never rewrites the history of a decision already taken.
+
+### Policy governance and the field dictionary
+
+An uploaded policy is immutable. Everything derived from it — clause chunks, proposed rules, proposed fields — is a separate row that an administrator must approve before it can affect a case.
+
+```mermaid
+erDiagram
+  domain_packs ||--o{ policy_documents : "domain_pack_id"
+  policy_documents ||--o{ policy_chunks : "policy_document_id"
+  policy_documents ||--o{ policy_document_pages : "policy_document_id"
+  policy_documents ||--o{ policy_rule_proposals : "policy_document_id"
+  policy_rule_proposals ||--o{ policy_rule_proposal_citations : "proposal_id"
+  policy_chunks ||--o{ policy_rule_proposal_citations : "policy_chunk_id"
+  policy_rule_proposals ||--o{ policy_rule_proposal_tests : "proposal_id"
+  policy_rule_proposals ||--o| policy_rules : "proposal_id"
+  policy_documents ||--o{ policy_rules : "policy_document_id"
+  domain_packs ||--o{ policy_rules : "domain_pack_id"
+  policy_documents ||--o{ field_proposals : "policy_document_id"
+  domain_packs ||--o{ field_proposals : "domain_pack_id"
+  domain_packs ||--o{ field_embeddings : "domain_pack_id"
+
+  policy_documents {
+    text id PK
+    text domain_pack_id FK
+    text uploaded_by_user_id FK
+    text approved_by_user_id FK
+    text collection_id
+    text policy_version
+    boolean revoked
+  }
+  policy_chunks {
+    text id PK
+    text policy_document_id FK
+    vector embedding
+    tsvector search_vector
+  }
+  policy_document_pages {
+    text id PK
+    text policy_document_id FK
+    integer page
+  }
+  policy_rule_proposals {
+    text id PK
+    text policy_document_id FK
+    text proposed_by_user_id FK
+    text reviewed_by_user_id FK
+    jsonb condition
+    text status
+  }
+  policy_rule_proposal_citations {
+    text id PK
+    text proposal_id FK
+    text policy_chunk_id FK
+    text quote
+  }
+  policy_rule_proposal_tests {
+    text id PK
+    text proposal_id FK
+    text kind
+    boolean expected
+  }
+  policy_rules {
+    text id PK
+    text domain_pack_id FK
+    text policy_document_id FK
+    text proposal_id FK
+    text approved_by_user_id FK
+    text rule_key
+    integer rule_version
+  }
+  field_proposals {
+    text id PK
+    text domain_pack_id FK
+    text policy_document_id FK
+    text reviewed_by_user_id FK
+    text kind
+    text path
+    vector embedding
+    text status
+  }
+  field_embeddings {
+    text tenant_id PK
+    text domain_pack_id PK
+    text path PK
+    vector embedding
+    text fingerprint
+  }
+```
+
+`field_proposals` and `field_embeddings` are deliberately separate tables. The first is the governance record of what a policy proposed and how it was reviewed. The second is the search index over the vocabulary the active pack actually holds, including fields that came from the compiled pack and were never proposed. Deduplication recalls from the index, never from the record — recalling from the record would leave a fresh tenant with an empty corpus, so every candidate would read as distinct and duplicates would be minted freely.
+
+### Operations
+
+```mermaid
+erDiagram
+  cases ||--o{ jobs : "case_id"
+  jobs ||--o{ job_events : "job_id"
+
+  jobs {
+    text id PK
+    text tenant_id FK
+    text case_id FK
+    text enqueued_by_user_id FK
+    text status
+    text idempotency_key
+  }
+  job_events {
+    text id PK
+    text job_id FK
+    text recipient_user_id FK
+    text actor_user_id FK
+    text type
+  }
+  workflow_checkpoints {
+    text tenant_id PK
+    text checkpoint_key PK
+    jsonb state
+    integer revision
+  }
+```
+
+`jobs` and `job_events` are the durable job history; Redis coordinates claims, locks and retries but is not the record. `job_events.recipient_user_id` is what scopes the notification feed to the person who enqueued the work. `workflow_checkpoints` has a composite key of `(tenant_id, checkpoint_key)`, so identical keys in different tenants cannot collide.
+
+### Every table at a glance
+
+| Table                            | Primary key                       | Foreign keys (besides `tenant_id`)                                           |
+| -------------------------------- | --------------------------------- | ---------------------------------------------------------------------------- |
+| `tenants`                        | `id`                              | —                                                                            |
+| `users`                          | `id`                              | —                                                                            |
+| `memberships`                    | `tenant_id, user_id`              | `user_id`                                                                    |
+| `domain_packs`                   | `id`                              | —                                                                            |
+| `cases`                          | `id`                              | `domain_pack_id`, `assigned_user_id`                                         |
+| `documents`                      | `id`                              | `case_id`                                                                    |
+| `document_pages`                 | `id`                              | `document_id`                                                                |
+| `extraction_runs`                | `id`                              | `document_id`                                                                |
+| `evidence_spans`                 | `id`                              | `document_id`                                                                |
+| `extracted_facts`                | `id`                              | `case_id`, `extraction_run_id`, `evidence_id`, `corrected_by_user_id`        |
+| `policy_documents`               | `id`                              | `domain_pack_id`, `uploaded_by_user_id`, `approved_by_user_id`               |
+| `policy_chunks`                  | `id`                              | `policy_document_id`                                                         |
+| `policy_document_pages`          | `id`                              | `policy_document_id`                                                         |
+| `policy_rule_proposals`          | `id`                              | `policy_document_id`, `proposed_by_user_id`, `reviewed_by_user_id`           |
+| `policy_rule_proposal_citations` | `id`                              | `proposal_id`, `policy_chunk_id`                                             |
+| `policy_rule_proposal_tests`     | `id`                              | `proposal_id`                                                                |
+| `policy_rules`                   | `id`                              | `domain_pack_id`, `policy_document_id`, `proposal_id`, `approved_by_user_id` |
+| `rule_runs`                      | `id`                              | `case_id`, `domain_pack_id`                                                  |
+| `findings`                       | `id`                              | `case_id`, `rule_run_id`, `evidence_id`                                      |
+| `decisions`                      | `id`                              | `case_id`, `decided_by_user_id`                                              |
+| `jobs`                           | `id`                              | `case_id`, `enqueued_by_user_id`                                             |
+| `job_events`                     | `id`                              | `job_id`, `recipient_user_id`, `actor_user_id`                               |
+| `audit_events`                   | `id`                              | `case_id`                                                                    |
+| `workflow_checkpoints`           | `tenant_id, checkpoint_key`       | —                                                                            |
+| `field_proposals`                | `id`                              | `domain_pack_id`, `policy_document_id`, `reviewed_by_user_id`                |
+| `field_embeddings`               | `tenant_id, domain_pack_id, path` | `domain_pack_id`                                                             |
+
+Migrations live in [`packages/persistence/migrations/`](packages/persistence/migrations/). The numbered files carry every change since the initial schema and are applied after [`infra/postgres/init`](infra/postgres/init) provisions a fresh database — the production-local compose profile and CI both apply them in that order.
+
 ## Safety model
 
 - Uploaded bytes are validated by signature, MIME, size, page count, encryption state, and scanner result before processing.
