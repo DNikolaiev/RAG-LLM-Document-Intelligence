@@ -24,10 +24,20 @@ import {
   DeterministicVirusScanner,
   S3CompatibleStorageProvider,
 } from '@caselens/providers';
+import {
+  contractCaseSummaryFields,
+  toContractCaseDetail,
+  toContractDocument,
+} from './case-contract.js';
 import { createDemoCases, type CaseStatus, type DemoCase } from './demo-data.js';
 import { validateIntakeFiles, type IntakeFile } from './intake-validation.js';
 import type { RequestContext } from './request-context.js';
 import { resolveTenant } from './tenant.js';
+
+/** Identifies durable-mode extraction as the `ExtractedFactSchema.provider.id` for every fact
+ *  this service returns - a plain, clearly-synthetic label, not a real model name, since neither
+ *  the local production profile nor its seeded fixtures run a real extraction provider today. */
+const DURABLE_FACT_PROVIDER_ID = 'caselens-production-local-seed';
 
 @Injectable()
 export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
@@ -111,13 +121,29 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
           )
         ).map((document) => document.id),
       );
+      // Hashed for every fixture-mapped document, not only ones not yet recorded in the SQL
+      // `documents` table - `DocumentSchema.sha256`/`mediaType`/`byteSize` need a real value on
+      // the *review-projection* copy of each document too (the one actually returned by
+      // `get`/`list`, via `metadata.reviewProjection`), and an existing local volume upgraded
+      // from an older image may already have the SQL row without ever having recorded those
+      // fields on that projection - see the backfill below.
+      const fixtureContentById = new Map<
+        string,
+        { sha256: string; byteSize: number; mediaType: string }
+      >();
       for (const document of item.documents) {
         const fixture = fixtureByDocumentId[document.id];
-        if (!fixture || existing.has(document.id)) continue;
+        if (!fixture) continue;
         const source = await readFile(
           new URL(`../../../fixtures/documents/${fixture}`, import.meta.url),
         );
         const sha256 = createHash('sha256').update(source).digest('hex');
+        fixtureContentById.set(document.id, {
+          sha256,
+          byteSize: source.byteLength,
+          mediaType: 'application/pdf',
+        });
+        if (existing.has(document.id)) continue;
         const originalName = document.fileName ?? fixture.split('/').at(-1)!;
         const storageKey = `${item.tenantId}/${item.id}/${document.id}/${sha256}-${safeFileName(originalName)}`;
         const stored = await this.#storage.put(storageKey, source, {
@@ -154,8 +180,18 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
       const additions = item.documents.filter(
         (document) => !persistedDocuments.some((candidate) => candidate.id === document.id),
       );
-      if (!additions.length) continue;
-      persisted.documents = [...persistedDocuments, ...additions];
+      // Backfill sha256/mediaType/byteSize onto an already-persisted document whose fixture
+      // content was just hashed above but predates this field ever being recorded on the
+      // projection (an existing local volume upgraded from an older image).
+      let backfilled = false;
+      const mergedDocuments = persistedDocuments.map((document) => {
+        const content = fixtureContentById.get(document.id);
+        if (!content || document.sha256) return document;
+        backfilled = true;
+        return { ...document, ...content };
+      });
+      if (!additions.length && !backfilled) continue;
+      persisted.documents = [...mergedDocuments, ...additions];
       await this.#store.save(persisted, persisted.version);
     }
   }
@@ -352,6 +388,9 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
         confidence: null,
         fileName: file.originalname,
         warning,
+        mediaType: file.mimetype,
+        byteSize: file.size,
+        sha256,
       });
       await this.#store.recordDocument({
         id: documentId,
@@ -409,10 +448,18 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  async get(context: RequestContext | string, id: string): Promise<DemoCase> {
+  async get(context: RequestContext | string, id: string) {
     const item = await this.#store.get(this.scope(context), id);
     if (!item) throw new NotFoundException({ code: 'CASE_NOT_FOUND', message: 'Case not found.' });
-    return structuredClone(item) as DemoCase;
+    const clone = structuredClone(item);
+    return toContractCaseDetail(
+      clone,
+      clone.documents as DemoCase['documents'],
+      clone.facts as DemoCase['facts'],
+      clone.findings as DemoCase['findings'],
+      clone.createdAt,
+      DURABLE_FACT_PROVIDER_ID,
+    );
   }
 
   async getDocumentContent(context: RequestContext, caseId: string, documentId: string) {
@@ -676,8 +723,16 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     }
     const sha256 = createHash('sha256').update(file.buffer).digest('hex');
     const documents = item.documents as DemoCase['documents'];
-    const existing = documents.find((document) => document.warning?.includes(sha256));
-    if (existing) return structuredClone(existing);
+    const duplicate = documents.find((document) => document.warning?.includes(sha256));
+    if (duplicate) {
+      return structuredClone(
+        toContractDocument(duplicate, {
+          tenantId: item.tenantId,
+          caseId: item.id,
+          createdAt: item.createdAt,
+        }),
+      );
+    }
     // The case owns the tenant, not the caller. A platform administrator legitimately opens a case
     // in any of their tenants (`mutable` scopes by `context.tenantIds`), but their own
     // `context.tenantId` falls back to their first tenant - so deriving the storage prefix or the
@@ -695,6 +750,7 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
         code: 'STORAGE_UNAVAILABLE',
         message: stored.error.message,
       });
+    const timestamp = new Date().toISOString();
     const document: DemoCase['documents'][number] = {
       id: documentId,
       name: file.originalname.replace(/\.[^.]+$/, ''),
@@ -704,6 +760,10 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
       confidence: null,
       fileName: file.originalname,
       warning: `Awaiting classification; sha256:${sha256}`,
+      mediaType: file.mimetype,
+      byteSize: file.size,
+      sha256,
+      createdAt: timestamp,
     };
     await this.#store.recordDocument({
       id: documentId,
@@ -721,7 +781,13 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     const priorVersion = item.version;
     this.touch(item, context, 'document.uploaded', `${file.originalname} accepted for processing`);
     await this.save(item, priorVersion);
-    return structuredClone(document);
+    return structuredClone(
+      toContractDocument(document, {
+        tenantId: item.tenantId,
+        caseId: item.id,
+        createdAt: item.createdAt,
+      }),
+    );
   }
 
   async getJob(context: RequestContext | string, id: string) {
@@ -956,6 +1022,11 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
           counts[finding.severity] = (counts[finding.severity] ?? 0) + 1;
           return counts;
         }, {}),
+      ...contractCaseSummaryFields(
+        item,
+        (item.findings as DemoCase['findings']).filter((finding) => finding.status === 'open')
+          .length,
+      ),
     };
   }
 

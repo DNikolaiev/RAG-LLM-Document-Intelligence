@@ -2,7 +2,7 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { CaseIntakeResponseSchema, ProblemDetailSchema } from '@caselens/contracts';
+import { CaseIntakeResponseSchema, DocumentSchema, ProblemDetailSchema } from '@caselens/contracts';
 import { expectMatchesSchema } from './support/contract.js';
 
 /**
@@ -441,6 +441,7 @@ describe('POST /v1/cases/:id/documents tenant attribution', () => {
         contentType: 'application/pdf',
       })
       .expect(201);
+    expectMatchesSchema(DocumentSchema, uploaded.body, 'POST .../documents 201 body');
 
     const recorded = seed.recordDocumentCalls.filter((call) => call.caseId === caseId);
     expect(recorded).toHaveLength(1);

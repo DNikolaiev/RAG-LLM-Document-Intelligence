@@ -45,6 +45,7 @@ describe('CaseLens API', () => {
       .expect(200);
     expect(legal.body.items).toHaveLength(1);
     expect(legal.body.items[0]).toMatchObject({ tenantId: 'tenant_legal' });
+    expectCursorPageMatchesSchema(CaseSummarySchema, legal.body, 'GET /v1/cases (tenant user)');
 
     const platform = await request(app.getHttpServer())
       .get('/v1/cases')
@@ -52,6 +53,11 @@ describe('CaseLens API', () => {
       .expect(200);
     expect(new Set(platform.body.items.map((item: { tenantId: string }) => item.tenantId))).toEqual(
       new Set(['tenant_demo', 'tenant_legal', 'tenant_insurance', 'tenant_manufacturing']),
+    );
+    expectCursorPageMatchesSchema(
+      CaseSummarySchema,
+      platform.body,
+      'GET /v1/cases (platform admin)',
     );
   });
 
@@ -75,6 +81,7 @@ describe('CaseLens API', () => {
       .send(body)
       .expect(201);
     expect(second.body.id).toBe(first.body.id);
+    expectMatchesSchema(CaseSummarySchema, first.body, 'POST /v1/cases 201 body');
   });
 
   it('rejects a spoofed PDF signature before processing', async () => {
@@ -106,6 +113,7 @@ describe('CaseLens API', () => {
         contentType: 'text/plain',
       })
       .expect(201);
+    expectMatchesSchema(DocumentSchema, upload.body, 'POST .../documents 201 body');
 
     const path = `/v1/cases/${createdCase.body.id}/documents/${upload.body.id}/content`;
     const full = await request(app.getHttpServer()).get(path).expect(200);
@@ -154,30 +162,5 @@ describe('CaseLens API', () => {
       .expect(403);
     expect(response.body).toMatchObject({ code: 'ROLE_FORBIDDEN' });
     expectMatchesSchema(ProblemDetailSchema, response.body, 'POST .../decisions 403 body');
-  });
-
-  /**
-   * A known, unresolved divergence, asserted rather than described so it cannot be forgotten.
-   *
-   * `CaseSummarySchema`, `CaseDetailSchema` and `DocumentSchema` describe a case model the API has
-   * never returned. Neither `CasesService` nor `ProductionCasesService` imports them; both return
-   * `subjectName`/`domain`/`findingCounts` where the contract declares
-   * `title`/`domainPackId`/`domainPackVersion`/`openFindings`/`version`, and the contract further
-   * requires bare-ULID identifiers while the application uses prefixed ids such as `case_01J...`
-   * and `tenant_demo`.
-   *
-   * Which side is wrong is a product decision - correcting the API touches every case consumer,
-   * correcting the contract concedes the intended model - so neither is changed here.
-   *
-   * `it.fails` means this passes only while the divergence is real. Reconcile the two and this
-   * test starts failing, which is the signal to delete it and assert the schema for real.
-   */
-  it.fails('case responses do not match their declared contract schema', async () => {
-    const response = await request(app.getHttpServer())
-      .get('/v1/cases')
-      .set('x-test-profile-id', 'profile_lena_vogt')
-      .expect(200);
-
-    expectCursorPageMatchesSchema(CaseSummarySchema, response.body, 'GET /v1/cases response');
   });
 });

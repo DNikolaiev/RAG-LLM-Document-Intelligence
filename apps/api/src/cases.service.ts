@@ -13,8 +13,18 @@ import { DeterministicVirusScanner } from '@caselens/providers';
 import type { RequestContext } from './request-context.js';
 import { createDemoCases, type CaseStatus, type DemoCase } from './demo-data.js';
 import { resolveTestProfile, resolveTestTenant } from '@caselens/contracts';
+import {
+  contractCaseSummaryFields,
+  toContractCaseDetail,
+  toContractDocument,
+} from './case-contract.js';
 import { validateIntakeFiles, type IntakeFile } from './intake-validation.js';
 import { resolveTenant } from './tenant.js';
+
+/** Identifies demo-mode extraction as the `ExtractedFactSchema.provider.id` for every fact this
+ *  in-memory service returns - a plain, clearly-synthetic label, not a real model name, since no
+ *  real extraction provider runs in demo mode. */
+const DEMO_FACT_PROVIDER_ID = 'caselens-demo-seed';
 
 export interface DemoJob {
   id: string;
@@ -160,6 +170,10 @@ export class CasesService {
       confidence: null,
       fileName: file.originalname,
       warning: `Awaiting classification; sha256:${sha256}`,
+      mediaType: file.mimetype,
+      byteSize: file.size,
+      sha256,
+      createdAt: timestamp,
     }));
     for (const [index, document] of documents.entries()) {
       const { file } = validated[index]!;
@@ -243,13 +257,21 @@ export class CasesService {
     };
   }
 
-  get(context: RequestContext | string, id: string): DemoCase {
+  get(context: RequestContext | string, id: string) {
     const tenantIds = this.tenantIds(context);
     const item = this.cases.find(
       (candidate) => candidate.id === id && tenantIds.includes(candidate.tenantId),
     );
     if (!item) throw new NotFoundException({ code: 'CASE_NOT_FOUND', message: 'Case not found.' });
-    return structuredClone(item);
+    const clone = structuredClone(item);
+    return toContractCaseDetail(
+      clone,
+      clone.documents,
+      clone.facts,
+      clone.findings,
+      clone.createdAt,
+      DEMO_FACT_PROVIDER_ID,
+    );
   }
 
   correctFact(
@@ -431,6 +453,7 @@ export class CasesService {
     }
     const sha256 = createHash('sha256').update(file.buffer).digest('hex');
     const duplicate = item.documents.find((document) => document.warning?.includes(sha256));
+    const timestamp = new Date().toISOString();
     const document = {
       id: `doc_${ulid()}`,
       name: file.originalname.replace(/\.[^.]+$/, ''),
@@ -442,6 +465,11 @@ export class CasesService {
       warning: duplicate
         ? `Duplicate of ${duplicate.id}; sha256:${sha256}`
         : `Awaiting classification; sha256:${sha256}`,
+      mediaType: file.mimetype,
+      byteSize: file.size,
+      sha256,
+      createdAt: timestamp,
+      ...(duplicate ? { duplicateOf: duplicate.id } : {}),
     };
     item.documents.push(document);
     this.documentContent.set(`${item.tenantId}:${caseId}:${document.id}`, {
@@ -450,8 +478,13 @@ export class CasesService {
       fileName: file.originalname,
     });
     this.touch(item, context, 'document.uploaded', `${file.originalname} accepted for processing`);
-    this.idempotency.set(key, document);
-    return structuredClone(document);
+    const responseDocument = toContractDocument(document, {
+      tenantId: item.tenantId,
+      caseId: item.id,
+      createdAt: item.createdAt,
+    });
+    this.idempotency.set(key, responseDocument);
+    return structuredClone(responseDocument);
   }
 
   getDocumentContent(context: RequestContext, caseId: string, documentId: string) {
@@ -685,6 +718,10 @@ export class CasesService {
           counts[finding.severity] = (counts[finding.severity] ?? 0) + 1;
           return counts;
         }, {}),
+      ...contractCaseSummaryFields(
+        item,
+        item.findings.filter((finding) => finding.status === 'open').length,
+      ),
     };
   }
 

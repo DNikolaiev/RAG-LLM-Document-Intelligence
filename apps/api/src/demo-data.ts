@@ -11,6 +11,25 @@ export interface DemoDocument {
   confidence: number | null;
   fileName?: string;
   warning?: string;
+  /**
+   * Known only for a document whose bytes the running service has actually seen - freshly
+   * uploaded/intake documents (both services) and, for `ProductionCasesService`, seeded fixtures
+   * once `materializeSeedDocuments` reads and hashes the real file. Left unset rather than
+   * fabricated for `CasesService`'s seeded demo documents, which have no backing bytes anywhere -
+   * see the case-contract-alignment plan's report for why a synthetic `sha256` was rejected.
+   */
+  mediaType?: string;
+  byteSize?: number;
+  sha256?: string;
+  /** Set by `uploadDocument`'s existing sha256-based dedup check; never by `intake` or seeding. */
+  duplicateOf?: string;
+  /**
+   * The real upload/intake timestamp, known only for a document a running service actually
+   * created (`intake`, `uploadDocument`) - not for a seeded fixture, which has no per-document
+   * creation time of its own. `toContractDocument` falls back to the case's own `createdAt` when
+   * this is absent.
+   */
+  createdAt?: string;
 }
 
 export interface DemoFact {
@@ -46,6 +65,13 @@ export interface DemoCase {
   reference: string;
   subjectName: string;
   domain: string;
+  /**
+   * Only ever populated for `PersistedCaseProjection` (via `PostgresCaseStore.get`/`list`, which
+   * attach the durable `domain_pack_id` column); absent on `CasesService`'s in-memory `DemoCase`,
+   * which has no separate column to hold it - `domain` doubles for it there instead. See
+   * `resolveDomainPackId` in `case-contract.ts`.
+   */
+  domainPackId?: string;
   domainPackVersion: string;
   status: CaseStatus;
   recommendation: 'request_information' | 'approve' | 'reject' | null;
