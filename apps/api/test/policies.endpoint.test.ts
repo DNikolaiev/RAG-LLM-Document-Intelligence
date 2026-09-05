@@ -6,6 +6,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DomainPackConfigurationSchema } from '@caselens/contracts';
+import { expectMatchesSchema } from './support/contract.js';
 
 /**
  * The Policy Library composes durable stores only under the production-local profile, so the
@@ -144,6 +145,7 @@ describe('GET /v1/policies/domain-pack', () => {
   beforeAll(async () => {
     Object.assign(process.env, durableComposition);
     const { ContextMiddleware } = await import('../src/context.middleware.js');
+    const { ProblemDetailsFilter } = await import('../src/problem.filter.js');
     const { PoliciesController } = await import('../src/policies/policies.controller.js');
     const { PoliciesService } = await import('../src/policies/policies.service.js');
     const module = await Test.createTestingModule({
@@ -151,6 +153,9 @@ describe('GET /v1/policies/domain-pack', () => {
       providers: [PoliciesService],
     }).compile();
     app = module.createNestApplication();
+    // Registered exactly as main.ts does, so error bodies here are the RFC 7807 shape the
+    // client actually receives rather than Nest's raw exception payload.
+    app.useGlobalFilters(new ProblemDetailsFilter());
     const context = new ContextMiddleware();
     app.use(context.use.bind(context));
     await app.init();
@@ -167,7 +172,11 @@ describe('GET /v1/policies/domain-pack', () => {
       .set('x-test-profile-id', 'profile_lena_vogt')
       .expect(200);
 
-    expect(() => DomainPackConfigurationSchema.parse(response.body)).not.toThrow();
+    expectMatchesSchema(
+      DomainPackConfigurationSchema,
+      response.body,
+      'GET /v1/policies/domain-pack response',
+    );
     expect(response.body.domainPack.rules).toContainEqual({
       id: 'insurance-minimum',
       title: 'Liability coverage below policy',
@@ -200,6 +209,11 @@ describe('GET /v1/policies/domain-pack', () => {
       .get('/v1/policies/domain-pack?tenantId=tenant_demo')
       .set('x-test-profile-id', 'profile_lena_vogt')
       .expect(200);
+    expectMatchesSchema(
+      DomainPackConfigurationSchema,
+      response.body,
+      'GET /v1/policies/domain-pack response',
+    );
 
     // Straight from `pack.policyCollections`, so every option the upload form builds from this
     // list is one `POST /v1/policies` will accept.
@@ -216,6 +230,11 @@ describe('GET /v1/policies/domain-pack', () => {
       .get('/v1/policies/domain-pack?tenantId=tenant_demo')
       .set('x-test-profile-id', 'profile_lena_vogt')
       .expect(200);
+    expectMatchesSchema(
+      DomainPackConfigurationSchema,
+      response.body,
+      'GET /v1/policies/domain-pack response',
+    );
 
     // `general-controls` exists so rules that declare no collection have somewhere to be shown.
     // It is not in `pack.policyCollections`, so uploading into it would always be refused.
@@ -231,6 +250,11 @@ describe('GET /v1/policies/domain-pack', () => {
       .get('/v1/policies/domain-pack?tenantId=tenant_demo')
       .set('x-test-profile-id', 'profile_lena_vogt')
       .expect(200);
+    expectMatchesSchema(
+      DomainPackConfigurationSchema,
+      response.body,
+      'GET /v1/policies/domain-pack response',
+    );
 
     expect(response.body.domainPack).not.toHaveProperty('baselineRules');
     expect(response.body.domainPack).not.toHaveProperty('policyRules');
@@ -257,6 +281,7 @@ describe('POST /v1/policies collection creation', () => {
   beforeAll(async () => {
     Object.assign(process.env, durableComposition);
     const { ContextMiddleware } = await import('../src/context.middleware.js');
+    const { ProblemDetailsFilter } = await import('../src/problem.filter.js');
     const { PoliciesController } = await import('../src/policies/policies.controller.js');
     const { PoliciesService } = await import('../src/policies/policies.service.js');
     const module = await Test.createTestingModule({
@@ -264,6 +289,9 @@ describe('POST /v1/policies collection creation', () => {
       providers: [PoliciesService],
     }).compile();
     app = module.createNestApplication();
+    // Registered exactly as main.ts does, so error bodies here are the RFC 7807 shape the
+    // client actually receives rather than Nest's raw exception payload.
+    app.useGlobalFilters(new ProblemDetailsFilter());
     const context = new ContextMiddleware();
     app.use(context.use.bind(context));
     await app.init();

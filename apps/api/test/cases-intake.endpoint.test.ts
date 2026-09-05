@@ -2,6 +2,8 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { CaseIntakeResponseSchema, ProblemDetailSchema } from '@caselens/contracts';
+import { expectMatchesSchema } from './support/contract.js';
 
 /**
  * `ProductionCasesService` composes durable stores only under the production-local profile, so
@@ -159,6 +161,7 @@ describe('POST /v1/cases/intake (durable)', () => {
   beforeAll(async () => {
     Object.assign(process.env, durableComposition);
     const { ContextMiddleware } = await import('../src/context.middleware.js');
+    const { ProblemDetailsFilter } = await import('../src/problem.filter.js');
     const { CasesController } = await import('../src/cases.controller.js');
     const { ProductionCasesService } = await import('../src/production-cases.service.js');
     const { CASES_RUNTIME } = await import('../src/cases-runtime.js');
@@ -167,6 +170,9 @@ describe('POST /v1/cases/intake (durable)', () => {
       providers: [{ provide: CASES_RUNTIME, useClass: ProductionCasesService }],
     }).compile();
     app = module.createNestApplication();
+    // Registered exactly as main.ts does, so error bodies here are the RFC 7807 shape the
+    // client actually receives rather than Nest's raw exception payload.
+    app.useGlobalFilters(new ProblemDetailsFilter());
     const context = new ContextMiddleware();
     app.use(context.use.bind(context));
     await app.init();
@@ -187,6 +193,7 @@ describe('POST /v1/cases/intake (durable)', () => {
       .attach('file', pdf(), { filename: 'certificate.pdf', contentType: 'application/pdf' })
       .expect(201);
 
+    expectMatchesSchema(CaseIntakeResponseSchema, response.body, 'POST /v1/cases/intake 201 body');
     expect(response.body).toMatchObject({
       caseId: expect.any(String),
       reference: expect.any(String),
@@ -214,6 +221,7 @@ describe('POST /v1/cases/intake (durable)', () => {
       .attach('file', pdf(), { filename: 'doc.pdf', contentType: 'application/pdf' })
       .expect(201);
 
+    expectMatchesSchema(CaseIntakeResponseSchema, response.body, 'POST /v1/cases/intake 201 body');
     const stored = seed.cases.get(response.body.caseId as string);
     expect(stored).toMatchObject({ tenantId: 'tenant_legal' });
   });
@@ -228,6 +236,11 @@ describe('POST /v1/cases/intake (durable)', () => {
       .expect(400);
 
     expect(response.body).toMatchObject({ code: 'TENANT_REQUIRED' });
+    expectMatchesSchema(
+      ProblemDetailSchema,
+      response.body,
+      'POST /v1/cases/intake 400 body (TENANT_REQUIRED)',
+    );
   });
 
   it('lets a platform administrator file into a tenant they belong to', async () => {
@@ -240,6 +253,7 @@ describe('POST /v1/cases/intake (durable)', () => {
       .attach('file', pdf(), { filename: 'doc.pdf', contentType: 'application/pdf' })
       .expect(201);
 
+    expectMatchesSchema(CaseIntakeResponseSchema, response.body, 'POST /v1/cases/intake 201 body');
     const stored = seed.cases.get(response.body.caseId as string);
     expect(stored).toMatchObject({ tenantId: 'tenant_legal' });
   });
@@ -262,7 +276,16 @@ describe('POST /v1/cases/intake (durable)', () => {
       .attach('file', pdf(), { filename: 'good-three.pdf', contentType: 'application/pdf' })
       .expect(400);
 
-    expect(response.body).toMatchObject({ code: 'UPLOAD_QUARANTINED', fileName: 'bad-two.pdf' });
+    // The problem-details filter emits only the documented RFC 7807 members, so the thrown
+    // `fileName` extension never reaches a client. What the reviewer actually sees is `detail`,
+    // which the service prefixes with the offending filename - so that is what is asserted.
+    expect(response.body).toMatchObject({ code: 'UPLOAD_QUARANTINED' });
+    expect(response.body.detail).toContain('bad-two.pdf');
+    expectMatchesSchema(
+      ProblemDetailSchema,
+      response.body,
+      'POST /v1/cases/intake 400 body (UPLOAD_QUARANTINED)',
+    );
     // Nothing was created or attached anywhere - not just for this request's own (never minted)
     // case id, but at all: neither of the two GOOD files in the batch was stored either.
     expect(seed.cases.size).toBe(casesBefore);
@@ -284,6 +307,11 @@ describe('POST /v1/cases/intake (durable)', () => {
     }
     const response = await builder.expect(400);
     expect(response.body).toMatchObject({ code: 'TOO_MANY_DOCUMENTS' });
+    expectMatchesSchema(
+      ProblemDetailSchema,
+      response.body,
+      'POST /v1/cases/intake 400 body (TOO_MANY_DOCUMENTS)',
+    );
   });
 
   it('requires at least one file', async () => {
@@ -295,6 +323,11 @@ describe('POST /v1/cases/intake (durable)', () => {
       .expect(400);
 
     expect(response.body).toMatchObject({ code: 'FILE_REQUIRED' });
+    expectMatchesSchema(
+      ProblemDetailSchema,
+      response.body,
+      'POST /v1/cases/intake 400 body (FILE_REQUIRED)',
+    );
   });
 
   it('replays the same idempotency key without re-attaching a document or re-queuing', async () => {
@@ -308,6 +341,7 @@ describe('POST /v1/cases/intake (durable)', () => {
         .attach('file', pdf(), { filename: 'second.pdf', contentType: 'application/pdf' });
 
     const first = await send().expect(201);
+    expectMatchesSchema(CaseIntakeResponseSchema, first.body, 'POST /v1/cases/intake 201 body');
     const caseId = first.body.caseId as string;
     // `createJob` is called with the descriptive durable key (which embeds the case id);
     // `queue.enqueue` is called with the job's own hash id instead - two different strings, so
@@ -360,6 +394,7 @@ describe('POST /v1/cases/:id/documents tenant attribution', () => {
   beforeAll(async () => {
     Object.assign(process.env, durableComposition);
     const { ContextMiddleware } = await import('../src/context.middleware.js');
+    const { ProblemDetailsFilter } = await import('../src/problem.filter.js');
     const { CasesController } = await import('../src/cases.controller.js');
     const { ProductionCasesService } = await import('../src/production-cases.service.js');
     const { CASES_RUNTIME } = await import('../src/cases-runtime.js');
@@ -368,6 +403,9 @@ describe('POST /v1/cases/:id/documents tenant attribution', () => {
       providers: [{ provide: CASES_RUNTIME, useClass: ProductionCasesService }],
     }).compile();
     app = module.createNestApplication();
+    // Registered exactly as main.ts does, so error bodies here are the RFC 7807 shape the
+    // client actually receives rather than Nest's raw exception payload.
+    app.useGlobalFilters(new ProblemDetailsFilter());
     const context = new ContextMiddleware();
     app.use(context.use.bind(context));
     await app.init();
@@ -389,11 +427,12 @@ describe('POST /v1/cases/:id/documents tenant attribution', () => {
       .field('tenantId', 'tenant_legal')
       .attach('file', pdf(), { filename: 'contract.pdf', contentType: 'application/pdf' })
       .expect(201);
+    expectMatchesSchema(CaseIntakeResponseSchema, created.body, 'POST /v1/cases/intake 201 body');
 
     const caseId = created.body.caseId as string;
     seed.recordDocumentCalls.length = 0;
 
-    await request(app.getHttpServer())
+    const uploaded = await request(app.getHttpServer())
       .post(`/v1/cases/${caseId}/documents`)
       .set('x-test-profile-id', 'profile_mara_stein')
       .set('idempotency-key', 'cross-tenant-evidence')
