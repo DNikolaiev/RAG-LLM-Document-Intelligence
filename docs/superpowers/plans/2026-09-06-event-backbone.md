@@ -67,6 +67,17 @@ First three events, chosen because they are what a throughput read model needs: 
 
 **Phase 3 — the hard parts.** Replay to rebuild projections from the outbox, a dead-letter queue with a poison-message test, and deliberate demonstration of consumer lag.
 
+**Phase 4 — retire the second broker (user, 2026-09-06).** Redis exists in this system for exactly one reason: BullMQ. Nothing else opens a connection to it. And BullMQ is a thin transport here — the durable job record, its progress, its status transitions and the notification feed all live in `jobs` and `job_events` in PostgreSQL, written by the worker. What BullMQ actually contributes is claims, stall detection, attempt counting and exponential backoff.
+
+So `process_case` and `process_policy` move onto RabbitMQ and Redis is removed. Deliberately last: migrating the critical work path to a broker that has not yet carried real traffic would be the wrong risk, so RabbitMQ earns that trust on the new event path first.
+
+What has to be rebuilt, and how:
+
+- **Retry with backoff.** RabbitMQ has no native delayed redelivery. Use a retry queue whose messages have a per-message TTL and dead-letter back to the work queue, so an expired message returns for another attempt. Attempt counts travel in a header.
+- **Attempt ceiling and dead lettering.** After the configured attempts, route to a dead-letter queue rather than requeuing forever. BullMQ's `attempts: 3` and `backoff: exponential 1s` are the behaviour to preserve.
+- **Claims and stall detection.** RabbitMQ redelivers an unacknowledged message when a consumer dies, which covers the claim. Long-running work needs the consumer to hold the delivery rather than ack early, and the connection heartbeat has to outlast a slow model call — with a five-minute model timeout, that setting matters.
+- **Idempotency.** Already handled by the deterministic job id and the `jobs` row; redelivery must remain safe, which it is today.
+
 ## Constraints
 
 - The existing BullMQ path is untouched. Commands stay commands; this adds a parallel fact channel rather than replacing the work queue.

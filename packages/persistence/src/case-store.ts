@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { resolveDomainPack } from '@caselens/domain';
 import postgres from 'postgres';
 
@@ -218,7 +219,24 @@ export class PostgresCaseStore {
       >`insert into cases (id, tenant_id, domain_pack_id, reference, subject_name, status, recommendation, assigned_user_id, due_at, metadata, created_at, updated_at, version)
         values (${item.id}, ${item.tenantId}, ${`pack_${item.tenantId}`}, ${item.reference}, ${item.subjectName}, ${item.status}, ${item.recommendation}, ${item.assignedUserId ?? null}, ${item.dueAt}::timestamptz, ${tx.json(asJson({ reviewProjection: item }))}::jsonb, ${item.createdAt}::timestamptz, ${item.updatedAt}::timestamptz, ${item.version})
         on conflict (id) do nothing returning id`;
-      if (rows.length) await this.syncAuditEvents(tx, item);
+      if (rows.length) {
+        await this.syncAuditEvents(tx, item);
+        // Same transaction as the insert above. If the insert conflicted, `rows` is empty and no
+        // event is written either - a case that already existed was not created a second time.
+        await this.appendDomainEventInTransaction(tx, {
+          id: domainEventId(item.id, 'case.created'),
+          tenantId: item.tenantId,
+          type: 'case.created',
+          aggregateType: 'case',
+          aggregateId: item.id,
+          occurredAt: item.createdAt,
+          payload: {
+            reference: item.reference,
+            domainPackId: `pack_${item.tenantId}`,
+            domainPackVersion: item.domainPackVersion,
+          },
+        });
+      }
       return rows.length === 1;
     });
   }
@@ -500,6 +518,66 @@ export class PostgresCaseStore {
     }
   }
 
+  /**
+   * Appends one domain event inside a caller's transaction. Taking the transaction rather than
+   * opening its own is the entire point: the event row and the business row commit together, so a
+   * fact can never survive a rolled-back change, and a committed change can never lose its fact.
+   *
+   * Publishing is somebody else's job. This only records that the fact happened.
+   */
+  private async appendDomainEventInTransaction(
+    tx: postgres.TransactionSql,
+    event: {
+      id: string;
+      tenantId: string;
+      type: string;
+      aggregateType: string;
+      aggregateId: string;
+      occurredAt: string;
+      payload: unknown;
+    },
+  ): Promise<void> {
+    await tx`insert into domain_events (id, tenant_id, type, aggregate_type, aggregate_id, payload, occurred_at)
+      values (${event.id}, ${event.tenantId}, ${event.type}, ${event.aggregateType}, ${event.aggregateId},
+        ${tx.json(asJson(event.payload))}::jsonb, ${event.occurredAt}::timestamptz)
+      on conflict (id) do nothing`;
+  }
+
+  /**
+   * Reads the outbox for the relay: the oldest events not yet handed to the broker, in sequence
+   * order. Deliberately not tenant-scoped - the relay is infrastructure publishing every tenant's
+   * facts, so it runs as a platform actor.
+   */
+  async readUnpublishedEvents(limit = 100): Promise<StoredDomainEvent[]> {
+    return this.withScope({ tenantIds: [], platformAdmin: true }, async (tx) => {
+      const rows = await tx<Array<Record<string, unknown>>>`
+        select id, sequence, tenant_id, type, aggregate_type, aggregate_id, payload, occurred_at
+        from domain_events where published_at is null
+        order by sequence asc limit ${limit}`;
+      return rows.map((row) => ({
+        id: String(row.id),
+        sequence: Number(row.sequence),
+        tenantId: String(row.tenant_id),
+        type: String(row.type),
+        aggregateType: String(row.aggregate_type),
+        aggregateId: String(row.aggregate_id),
+        payload: row.payload,
+        occurredAt: new Date(row.occurred_at as string).toISOString(),
+      }));
+    });
+  }
+
+  /**
+   * Stamps events as handed to the broker. Called after a successful publish, so a crash between
+   * the two republishes on the next pass - at-least-once, which is why consumers dedupe.
+   */
+  async markEventsPublished(ids: readonly string[]): Promise<void> {
+    if (!ids.length) return;
+    await this.withScope({ tenantIds: [], platformAdmin: true }, async (tx) => {
+      await tx`update domain_events set published_at = now() where id in ${tx(ids)}`;
+    });
+  }
+
   private async appendJobEventInTransaction(
     tx: postgres.TransactionSql,
     jobId: string,
@@ -528,6 +606,26 @@ export class PostgresCaseStore {
       return operation(transaction);
     })) as T;
   }
+}
+
+/**
+ * A deterministic event id, so the same fact recorded twice is the same row. Combined with the
+ * outbox's `on conflict (id) do nothing`, an idempotent retry of a business operation cannot
+ * produce a duplicate event.
+ */
+function domainEventId(aggregateId: string, type: string): string {
+  return `evt_${createHash('sha256').update(`${aggregateId}:${type}`).digest('hex').slice(0, 24)}`;
+}
+
+export interface StoredDomainEvent {
+  id: string;
+  sequence: number;
+  tenantId: string;
+  type: string;
+  aggregateType: string;
+  aggregateId: string;
+  payload: unknown;
+  occurredAt: string;
 }
 
 function asJson(value: unknown): postgres.JSONValue {
