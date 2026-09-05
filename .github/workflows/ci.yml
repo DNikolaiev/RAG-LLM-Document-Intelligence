@@ -46,6 +46,10 @@ jobs:
       PGPASSWORD: ci_owner_password
       APP_DATABASE_PASSWORD: ci_runtime_password
       TEST_DATABASE_URL: postgresql://caselens_app:ci_runtime_password@127.0.0.1:5432/caselens
+      # Three of the five integration suites are gated on an owner connection and had been
+      # skipping silently, so the RLS policies, the migration DDL and the pgvector queries were
+      # never actually exercised by CI despite the job being named for them.
+      TEST_ADMIN_DATABASE_URL: postgresql://caselens_owner:ci_owner_password@127.0.0.1:5432/caselens
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -61,6 +65,14 @@ jobs:
             psql --host=127.0.0.1 --username=caselens_owner --dbname=caselens --set=ON_ERROR_STOP=1 --file="$script"
           done
           psql --host=127.0.0.1 --username=caselens_owner --dbname=caselens --set=ON_ERROR_STOP=1 --set=runtime_password="$APP_DATABASE_PASSWORD" --file=infra/postgres/provision/001_runtime_login.sql
+          # The init scripts provision a fresh database; the numbered migrations carry every schema
+          # change made since. The production-local compose applies both in this order, and so must
+          # CI — running init alone leaves out tables the integration tests exercise.
+          # Deliberately `0*.sql`, matching that compose service: 9999_post_drizzle.sql belongs to
+          # the Drizzle-generated path, which infra/postgres/init replaces for container profiles.
+          for migration in packages/persistence/migrations/0*.sql; do
+            psql --host=127.0.0.1 --username=caselens_owner --dbname=caselens --set=ON_ERROR_STOP=1 --file="$migration"
+          done
       - run: npm ci
       - run: npm run test:integration:database
 
