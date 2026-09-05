@@ -21,6 +21,12 @@ export const appConfigSchema = z
     PUBLIC_API_URL: z.url().default('http://localhost:4100'),
     DATABASE_URL: optionalUrl,
     REDIS_URL: optionalUrl,
+    // The event backbone. Distinct from REDIS_URL, which carries commands: this carries facts,
+    // published once and fanned out to whichever services have bound a queue.
+    RABBITMQ_URL: optionalUrl,
+    EVENT_RELAY_ENABLED: environmentBoolean.default(false),
+    EVENT_RELAY_INTERVAL_MS: z.coerce.number().int().min(100).max(60_000).default(1000),
+    EVENT_RELAY_BATCH_SIZE: z.coerce.number().int().min(1).max(1000).default(100),
     S3_ENDPOINT: optionalUrl,
     S3_REGION: z.string().min(1).default('eu-central-1'),
     S3_BUCKET: z.string().min(1).default('caselens'),
@@ -99,6 +105,12 @@ export const appConfigSchema = z
       config.REDIS_URL,
       'REDIS_URL',
       'Required for BullMQ',
+    );
+    required(
+      config.EVENT_RELAY_ENABLED,
+      config.RABBITMQ_URL,
+      'RABBITMQ_URL',
+      'Required to publish domain events',
     );
     required(
       config.STORAGE_PROVIDER === 's3',

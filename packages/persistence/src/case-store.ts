@@ -241,10 +241,19 @@ export class PostgresCaseStore {
     });
   }
 
-  async save(item: PersistedCaseProjection, expectedVersion: number): Promise<void> {
+  async save(
+    item: PersistedCaseProjection,
+    expectedVersion: number,
+    events: readonly PendingDomainEvent[] = [],
+  ): Promise<void> {
     await this.withScope({ tenantIds: [item.tenantId], platformAdmin: false }, async (tx) => {
       await this.saveCase(tx, item, expectedVersion);
       await this.syncAuditEvents(tx, item);
+      // Inside the same transaction as the change. An optimistic-concurrency conflict throws from
+      // `saveCase` above, so a fact is never recorded for a write that lost the race.
+      for (const event of events) {
+        await this.appendDomainEventInTransaction(tx, { ...event, tenantId: item.tenantId });
+      }
     });
   }
 
@@ -612,9 +621,28 @@ export class PostgresCaseStore {
  * A deterministic event id, so the same fact recorded twice is the same row. Combined with the
  * outbox's `on conflict (id) do nothing`, an idempotent retry of a business operation cannot
  * produce a duplicate event.
+ *
+ * `discriminator` separates facts of the same type about the same aggregate that are genuinely
+ * different occurrences - a case decided twice, once to request information and later to approve,
+ * is two facts, and passing the case version keeps them distinct while a retry of either stays
+ * idempotent.
  */
-function domainEventId(aggregateId: string, type: string): string {
-  return `evt_${createHash('sha256').update(`${aggregateId}:${type}`).digest('hex').slice(0, 24)}`;
+export function domainEventId(aggregateId: string, type: string, discriminator = ''): string {
+  const key = discriminator ? `${aggregateId}:${type}:${discriminator}` : `${aggregateId}:${type}`;
+  return `evt_${createHash('sha256').update(key).digest('hex').slice(0, 24)}`;
+}
+
+/**
+ * A fact the caller wants recorded in the same transaction as the change it describes. The caller
+ * decides what happened; the store only guarantees the two commit together.
+ */
+export interface PendingDomainEvent {
+  id: string;
+  type: string;
+  aggregateType: string;
+  aggregateId: string;
+  occurredAt: string;
+  payload: unknown;
 }
 
 export interface StoredDomainEvent {

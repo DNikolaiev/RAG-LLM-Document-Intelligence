@@ -18,6 +18,10 @@ x-app-environment: &app-environment
   SEARCH_PROVIDER: postgres
   QUEUE_PROVIDER: bullmq
   QUEUE_NAME: caselens-processing
+  # Commands travel on Redis/BullMQ above; facts travel here. Two channels on purpose - a work
+  # queue delivers to exactly one consumer, which is the wrong shape for a fact that any number
+  # of services may care about.
+  RABBITMQ_URL: amqp://caselens:${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD}@rabbitmq:5672
   MODEL_PROVIDER: openai-compatible
   EMBEDDING_PROVIDER: openai-compatible
   MODEL_BASE_URL: http://ollama:11434/v1
@@ -196,6 +200,41 @@ services:
       ollama: { condition: service_healthy }
     restart: 'no'
 
+  rabbitmq:
+    image: rabbitmq:4.1-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: caselens
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD}
+    ports:
+      # Management UI only. The AMQP port stays inside the compose network - the exchange and its
+      # bindings are visible at http://localhost:15672 , which is most of why this image was chosen
+      # over the plain one: the routing topology is worth being able to see.
+      - '127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672'
+    volumes: ['production-rabbitmq-data:/var/lib/rabbitmq']
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'check_running']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # A separate server, not another database on the one above. Analytics owning its data is the
+  # point of the exercise, and sharing an instance would leave the boundary as a convention that
+  # one convenient query could cross. Here it cannot reach the transactional tables at all.
+  analytics-postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: caselens_analytics
+      POSTGRES_USER: caselens_analytics
+      POSTGRES_PASSWORD: ${ANALYTICS_DATABASE_PASSWORD:?Set ANALYTICS_DATABASE_PASSWORD}
+    volumes: ['production-analytics-data:/var/lib/postgresql/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U caselens_analytics -d caselens_analytics']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
   ocr:
     build:
       context: ..
@@ -260,6 +299,8 @@ services:
 
 volumes:
   production-postgres-data:
+  production-rabbitmq-data:
+  production-analytics-data:
   production-redis-data:
   production-minio-data:
   production-ollama-data:

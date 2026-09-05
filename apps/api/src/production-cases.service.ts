@@ -16,7 +16,9 @@ import { validateFile } from '@caselens/document-pipeline';
 import {
   PostgresCaseStore,
   PostgresPolicyStore,
+  domainEventId,
   type AccessScope,
+  type PendingDomainEvent,
   type PersistedCaseProjection,
 } from '@caselens/persistence';
 import {
@@ -948,7 +950,24 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
           : 'rejected';
     const priorVersion = item.version;
     this.touch(item, context, 'decision.recorded', `${input.outcome}: ${input.reason}`);
-    await this.save(item, priorVersion);
+    // The fact travels with the change. `caseCreatedAt` rides along because a consumer that had
+    // to ask this service when the case started would be coupled to it at read time - which is
+    // the coupling the event exists to remove.
+    await this.save(item, priorVersion, [
+      {
+        id: domainEventId(item.id, 'case.decided', String(item.version)),
+        type: 'case.decided',
+        aggregateType: 'case',
+        aggregateId: item.id,
+        occurredAt: item.updatedAt,
+        payload: {
+          reference: item.reference,
+          outcome: input.outcome,
+          decidedByUserId: context.userId,
+          caseCreatedAt: item.createdAt,
+        },
+      },
+    ]);
     return { ...structuredClone(item.decision!), caseVersion: item.version };
   }
 
@@ -981,9 +1000,13 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     return `${context.tenantId}:${context.userId}:${caseId}:process:${idempotencyKey}`;
   }
 
-  private async save(item: PersistedCaseProjection, expectedVersion: number): Promise<void> {
+  private async save(
+    item: PersistedCaseProjection,
+    expectedVersion: number,
+    events: readonly PendingDomainEvent[] = [],
+  ): Promise<void> {
     try {
-      await this.#store.save(item, expectedVersion);
+      await this.#store.save(item, expectedVersion, events);
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('VERSION_CONFLICT:'))
         this.versionConflict(expectedVersion + 1);
