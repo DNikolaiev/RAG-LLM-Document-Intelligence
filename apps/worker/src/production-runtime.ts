@@ -1,4 +1,6 @@
 import { Logger } from '@nestjs/common';
+import { EVENT_EXCHANGE } from '@caselens/events';
+import { createEventRelay, startEventRelay } from './events/relay.js';
 import { Worker, type Job } from 'bullmq';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -80,6 +82,24 @@ export async function runProductionWorker(config: AppConfig): Promise<void> {
     secretAccessKey: config.S3_SECRET_KEY!,
     forcePathStyle: true,
   });
+  // The outbox relay. It shares this process because the worker is already long-running, but it
+  // shares nothing else with the job consumer below: it neither reads the queue nor touches case
+  // state, it only drains recorded facts to the broker. Off by default, so a deployment without
+  // RabbitMQ keeps working exactly as before.
+  let relayHandle: { stop: () => Promise<void> } | null = null;
+  if (config.EVENT_RELAY_ENABLED) {
+    const relay = await createEventRelay({
+      url: config.RABBITMQ_URL!,
+      store,
+      batchSize: config.EVENT_RELAY_BATCH_SIZE,
+      onError: (error) => logger.error(`Event relay: ${error.message}`),
+    });
+    relayHandle = startEventRelay(relay, config.EVENT_RELAY_INTERVAL_MS, (error) =>
+      logger.error(`Event relay tick failed: ${error.message}`),
+    );
+    logger.log(`Relaying domain events to ${EVENT_EXCHANGE}`);
+  }
+
   const modelRuntime = createWorkerModelRuntime(config);
   const text = new HttpDocumentTextProvider({
     id: 'local-native-text',
@@ -160,6 +180,7 @@ export async function runProductionWorker(config: AppConfig): Promise<void> {
     process.once('SIGINT', resolve);
     process.once('SIGTERM', resolve);
   });
+  await relayHandle?.stop();
   await worker.close();
   await search.close();
   await storage.close();
