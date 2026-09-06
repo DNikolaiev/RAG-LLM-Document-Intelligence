@@ -1,1 +1,11 @@
+# Line endings are LF in the repository and in the working tree on every platform.
+#
+# Without this, a Windows checkout converts to CRLF and Prettier - which is configured for LF -
+# fails on the whole tree after any rebase, pull or branch switch, while the committed content is
+# perfectly fine. Fixtures are hash-pinned by byte, so a working copy that differs from what CI
+# checks out is worth avoiding for that reason too.
+* text=auto eol=lf
+
+# Binary, and hash-pinned by `scripts/verify-fixtures.py`: never converted.
 *.pdf binary
+*.png binary
