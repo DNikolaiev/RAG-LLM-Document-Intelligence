@@ -32,7 +32,7 @@ So the **outbox table is the log and RabbitMQ is the delivery mechanism**. Event
 ```
 apps/api ──(same tx)──> domain_events (outbox, append-only, in the main database)
                               │
-                        relay (polls unpublished, in sequence)
+                        relay (claims unpublished, in sequence)
                               │  publish
                               v
                   RabbitMQ topic exchange  caselens.events
@@ -61,15 +61,15 @@ First three events, chosen because they are what a throughput read model needs: 
 
 ## Phases
 
-**Phase 1 — the outbox.** Add the `domain_events` table and write those three events from `apps/api` inside the existing transactions. No broker yet. The test that matters: a rolled-back business change leaves no event.
+**Phase 1 — the outbox. Done.** `domain_events` is written from `apps/api` inside the transaction that makes the business change. An integration test proves a rolled-back change leaves no event.
 
-**Phase 2 — transport and the read model.** Add RabbitMQ to the production-local profile, a relay that drains the outbox to the topic exchange, and `apps/analytics` consuming into its own database with dedupe on event id. One question answered end to end: cases decided per tenant per day, and median time from creation to decision.
+**Phase 2 — transport and the read model. Half done.** The relay drains the outbox to the `caselens.events` topic exchange on a confirm channel, claims its batch under `FOR UPDATE SKIP LOCKED` so several relays partition the backlog, and quarantines a row it can never publish instead of letting it starve the batch. **`apps/analytics` does not exist yet**, so the exchange has no bindings and every message is discarded on arrival — recoverable only from the outbox, which is the property the outbox exists to provide.
 
-**Phase 3 — the hard parts.** Replay to rebuild projections from the outbox, a dead-letter queue with a poison-message test, and deliberate demonstration of consumer lag.
+**Phase 3 — the hard parts. Not started.** Replay, a dead-letter queue with a poison-message test, and visible consumer lag.
 
-**Phase 4 — retire the second broker (user, 2026-09-06).** Redis exists in this system for exactly one reason: BullMQ. Nothing else opens a connection to it. And BullMQ is a thin transport here — the durable job record, its progress, its status transitions and the notification feed all live in `jobs` and `job_events` in PostgreSQL, written by the worker. What BullMQ actually contributes is claims, stall detection, attempt counting and exponential backoff.
+**Phase 4 — retire the second broker (user, 2026-09-06). Not started, deliberately last.** Redis exists in this system for exactly one reason: BullMQ. Nothing else opens a connection to it. And BullMQ is a thin transport here — the durable job record, its progress, its status transitions and the notification feed all live in `jobs` and `job_events` in PostgreSQL, written by the worker. What BullMQ actually contributes is claims, stall detection, attempt counting and exponential backoff.
 
-So `process_case` and `process_policy` move onto RabbitMQ and Redis is removed. Deliberately last: migrating the critical work path to a broker that has not yet carried real traffic would be the wrong risk, so RabbitMQ earns that trust on the new event path first.
+So `process_case` and `process_policy` move onto RabbitMQ and Redis is removed. Migrating the critical work path to a broker that has not yet carried real traffic would be the wrong risk, so RabbitMQ earns that trust on the new event path first.
 
 What has to be rebuilt, and how:
 
@@ -77,6 +77,71 @@ What has to be rebuilt, and how:
 - **Attempt ceiling and dead lettering.** After the configured attempts, route to a dead-letter queue rather than requeuing forever. BullMQ's `attempts: 3` and `backoff: exponential 1s` are the behaviour to preserve.
 - **Claims and stall detection.** RabbitMQ redelivers an unacknowledged message when a consumer dies, which covers the claim. Long-running work needs the consumer to hold the delivery rather than ack early, and the connection heartbeat has to outlast a slow model call — with a five-minute model timeout, that setting matters.
 - **Idempotency.** Already handled by the deterministic job id and the `jobs` row; redelivery must remain safe, which it is today.
+
+## Next steps, in order
+
+Each step is shippable on its own and teaches one thing. The ordering is not arbitrary — a later step is hard to demonstrate without the one before it.
+
+```mermaid
+flowchart TD
+  S1["1 - apps/analytics<br/>consumer, dedupe, projection"]
+  S2["2 - emit finding.raised<br/>close the contract gap"]
+  S3["3 - dead-letter queue<br/>consumer-side poison"]
+  S4["4 - replay<br/>rebuild from the outbox"]
+  S5["5 - consumer lag<br/>eventual consistency, visible"]
+  S6["6 - Phase 4 decision<br/>retire BullMQ and Redis"]
+
+  S1 --> S2 --> S3 --> S4 --> S5 --> S6
+  S1 -. "nothing to dead-letter<br/>without a consumer" .-> S3
+  S1 -. "nothing to rebuild<br/>without a projection" .-> S4
+  S2 -. "a second dimension<br/>to project" .-> S5
+```
+
+### 1. `apps/analytics` — the first consumer
+
+The point of the whole exercise: a service that learns everything from events, owns its own database, and could be deleted without the case pipeline noticing.
+
+- New workspace app modelled on `apps/worker` (plain Node ESM, `@caselens/config`, `@caselens/events`, `amqplib`), with its own file under `infra/docker/` and a compose service. The `analytics-postgres` container and its volume are already running and empty.
+- Assert a **durable queue** `analytics.events` bound to `caselens.events` with `case.*`. A durable queue and a persistent message are two different things and both are needed.
+- Manual ack with a bounded `prefetch`, so a slow projection applies backpressure instead of buffering the backlog in memory.
+- Its own migrations, separate from `packages/persistence`. Two shapes: `processed_events(event_id PK, sequence, processed_at)` and the projection tables.
+- **Dedupe and project in one transaction.** Delivery is at-least-once, so the consumer will see the same event twice. Recording the id and updating the projection in separate transactions recreates the dual-write problem on the consumer side — the same bug the outbox removed on the publisher side, which is worth running into rather than being told about.
+- Answer the question this plan set: cases decided per tenant per day, and median time from creation to decision. `case.decided` already carries `caseCreatedAt` precisely so this needs no lookup back into the case service.
+- A small read API over the projection.
+
+### 2. Emit `finding.raised`
+
+`packages/events` declares this type and nothing publishes it — the contract advertises an event that does not exist. Findings are written by the worker through `store.saveWithJobUpdate(...)`, which does not accept events yet, so this means threading an `events` parameter through it the way `save()` was extended. Analytics then gains a second dimension: severity mix per tenant.
+
+The alternative, if it turns out not to be worth emitting: delete the type. An advertised event that is never published is worse than one that was never declared.
+
+### 3. Dead-letter queue
+
+Distinct from the quarantine already built. That one is **publisher-side** — a row the relay can never parse. This one is **consumer-side** — a message analytics cannot process, which without a DLQ either blocks the queue on endless redelivery or vanishes on reject.
+
+- `analytics.events` declared with `x-dead-letter-exchange` pointing at `caselens.events.dlx`, and `analytics.events.dlq` bound to it.
+- Reject with `requeue=false` once a delivery has failed enough times, rather than requeuing forever.
+- A test that publishes a deliberately unprocessable message and asserts it lands in the DLQ while the next good message is still processed.
+
+### 4. Replay
+
+The payoff of deciding that the outbox is the log. Drop the projection, rebuild it from `domain_events` in sequence order, and the read model becomes safe to change.
+
+There is a real tension to resolve deliberately rather than by accident: the constraints below say **no consumer reads another service's tables**, and a naive replay has analytics selecting straight from the main database. The options:
+
+- **(a)** Analytics reads `domain_events` directly, for replay only. Simplest, and quietly breaks the invariant that makes the service independent.
+- **(b)** A replay publisher on the worker side re-reads the outbox and republishes to a replay-scoped queue; analytics consumes it exactly as it consumes live traffic.
+- **(c)** An admin endpoint on `apps/api` that streams history.
+
+**(b) is the intended choice** unless it proves awkward in practice: the consumer stays a consumer, and a projection rebuilt through the same code path as live traffic is a rebuild worth trusting.
+
+### 5. Make consumer lag visible
+
+Eventual consistency is the thing everyone accepts in the abstract and is surprised by in practice. Surface `max(sequence)` in the outbox minus the highest sequence analytics has projected — as a number in the read API, and in the console if it is cheap. Then demonstrate it deliberately: pause the consumer, decide a case, watch the number climb and the read model disagree with the write model until it catches up.
+
+### 6. Then decide on Phase 4
+
+By this point RabbitMQ will have carried real traffic on a path where failure is recoverable, which was the stated precondition. Revisit whether removing Redis is worth rebuilding backoff, attempt ceilings and stall detection. The answer may legitimately be no — and that is a better outcome than doing it because it was on a list.
 
 ## Constraints
 
