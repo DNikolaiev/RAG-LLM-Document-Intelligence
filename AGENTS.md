@@ -2,6 +2,35 @@
 
 This file is the repository-level guide for coding agents and contributors. Keep the public README concise; put implementation-specific navigation, constraints, and verification guidance here. A more specific `AGENTS.md` overrides this file within its directory.
 
+## Explaining the work
+
+This repository doubles as a learning base for its owner, so the explanation is part of the deliverable rather than a courtesy. Whenever a change introduces a technology, a service, a protocol, a data structure, or a pattern that was not already here, explain it in the reply — not only in code comments.
+
+An explanation that does the job:
+
+- **Says why this and not the obvious alternative.** Name what was rejected and what it would have cost. "RabbitMQ because it is a message broker" is not a reason; "RabbitMQ has no retention, so the outbox stays the log" is.
+- **Is grounded in this repository.** Quote the real file and line, the real configuration value, the real command output. Generic documentation prose teaches nothing about this system.
+- **Shows the artifact instead of asserting it.** Run the query and paste the plan. List the keys the library actually created. Revert the fix and paste the failing assertion. A measured result outranks a confident claim.
+- **Separates the layers.** Which part is the infrastructure, which is the library, which is code in this repository. Conflating them is where most of the confusion starts.
+- **States the caveat.** What the change does not solve, what is still missing, and whether something simpler would have been enough. Overselling a change is worse than not explaining it.
+- **Corrects a wrong premise in the question** before answering it.
+
+Define a term the first time it appears, in a clause rather than a paragraph. Skip all of this for routine work — a rename, a bug fix inside an existing pattern, another test in an existing suite. The rule is for what is new.
+
+## Keeping the documentation true
+
+`README.md` and `ARCHITECTURE.md` describe the system as it is now. Update them in the same change that would otherwise make them wrong — automatically, without being asked, and never deferred to a follow-up.
+
+This applies to a new service, container, broker, datastore, or external dependency; a change in how components communicate; a new workspace package; a schema change that adds or removes a table or alters a relationship; adopting, rejecting, or removing a technology; and any change to a runtime profile.
+
+Where each thing belongs:
+
+- `README.md` — the components table, "what is stored where", and the runtime narrative.
+- `ARCHITECTURE.md` — the system-shape diagram, the design boundaries, the schema section, and the every-table list.
+- The living plan under `docs/superpowers/plans/` — the decision itself, the options rejected, and why.
+
+A decision that is later reversed stays in the plan with its reasoning intact. The record of why something was _not_ done is worth as much as the record of what was.
+
 ## Read before changing code
 
 Choose the references relevant to the task instead of guessing from framework conventions:
@@ -85,6 +114,7 @@ The complete local production profile is `infra/docker-compose.production-local.
 ## Change expectations
 
 - Preserve existing user changes and keep edits scoped to the requested behavior.
+- Explain anything new in the reply, and update `README.md` and `ARCHITECTURE.md` in the same change. See [Explaining the work](#explaining-the-work) and [Keeping the documentation true](#keeping-the-documentation-true); neither is optional and neither waits to be asked for.
 - Reuse canonical contracts, ports, and helpers instead of creating near-duplicates.
 - Add or update tests at the narrowest useful layer; add a regression test for every bug fix.
 - UI changes must remain usable at desktop and mobile widths, with no horizontal overflow, clipped controls, console errors, or inaccessible enabled buttons.
