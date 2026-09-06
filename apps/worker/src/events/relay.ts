@@ -15,10 +15,33 @@ import type { StoredDomainEvent } from '@caselens/persistence';
  * republishes the event on the next pass. Trying to close that window is the classic mistake:
  * whichever order you choose, some crash loses or duplicates. Duplicating is the recoverable one,
  * so consumers dedupe on event id instead.
+ *
+ * Several relays can run at once. The claim they take is a row lock, not a marker, so two of them
+ * partition the backlog rather than both publishing it.
  */
+export interface PublishOutcome {
+  /** Events the broker confirmed. Only these get stamped. */
+  publishedIds: readonly string[];
+  /**
+   * Events that were tried and could not be delivered. Each one records an attempt; enough
+   * attempts and the store sets the row aside so it stops occupying a slot in every batch.
+   * An event that was never reached - held back behind a refusal - belongs in neither list.
+   */
+  failures?: ReadonlyArray<{ id: string; error: string }>;
+}
+
 export interface RelayStore {
-  readUnpublishedEvents(limit?: number): Promise<StoredDomainEvent[]>;
-  markEventsPublished(ids: readonly string[]): Promise<void>;
+  /**
+   * Claims a batch under `for update skip locked` and publishes it inside that transaction.
+   *
+   * The callback shape is not incidental. A plain read would release the rows the moment it
+   * returned, so a second relay would claim the same batch and publish everything twice; holding
+   * the transaction open across the publish is what makes the claim mean anything.
+   */
+  claimUnpublishedEvents(
+    limit: number,
+    publish: (events: readonly StoredDomainEvent[]) => Promise<PublishOutcome>,
+  ): Promise<number>;
 }
 
 export interface RelayOptions {
@@ -49,61 +72,73 @@ export async function createEventRelay(options: RelayOptions): Promise<EventRela
 
   return {
     async drain(): Promise<number> {
-      const rows = await options.store.readUnpublishedEvents(options.batchSize ?? 100);
-      if (!rows.length) return 0;
+      return options.store.claimUnpublishedEvents(options.batchSize ?? 100, async (rows) => {
+        const publishedIds: string[] = [];
+        const failures: Array<{ id: string; error: string }> = [];
 
-      const published: string[] = [];
-      for (const row of rows) {
-        let event: DomainEvent;
-        try {
-          // Validated on the way out. A row that cannot be parsed is a bug in a publisher, and
-          // shipping it would push the failure into every consumer instead of the one place that
-          // can still see where it came from.
-          event = parseDomainEvent({
-            id: row.id,
-            type: row.type,
-            tenantId: row.tenantId,
-            aggregateType: row.aggregateType,
-            aggregateId: row.aggregateId,
-            occurredAt: row.occurredAt,
-            sequence: row.sequence,
-            payload: row.payload,
+        for (const row of rows) {
+          let event: DomainEvent;
+          try {
+            // Validated on the way out. A row that cannot be parsed is a bug in a publisher, and
+            // shipping it would push the failure into every consumer instead of the one place that
+            // can still see where it came from.
+            event = parseDomainEvent({
+              id: row.id,
+              type: row.type,
+              tenantId: row.tenantId,
+              aggregateType: row.aggregateType,
+              aggregateId: row.aggregateId,
+              occurredAt: row.occurredAt,
+              sequence: row.sequence,
+              payload: row.payload,
+            });
+          } catch (error) {
+            // Recorded as a failed attempt rather than skipped silently. Skipping was the old
+            // behaviour and it meant an unpublishable row came back in every batch forever, so a
+            // handful of them could fill the batch and starve deliverable events while the relay
+            // still reported itself healthy. Counting the attempt lets the store retire the row.
+            //
+            // Not a `break`: this event can never be delivered, so holding the batch behind it
+            // would trade one stuck event for all of them.
+            const message = `Unpublishable event ${row.id} (${row.type}): ${(error as Error).message}`;
+            failures.push({ id: row.id, error: message });
+            options.onError?.(new Error(message));
+            continue;
+          }
+
+          const refusal = await new Promise<Error | undefined>((resolve) => {
+            channel.publish(
+              EVENT_EXCHANGE,
+              event.type,
+              Buffer.from(JSON.stringify(event)),
+              {
+                contentType: 'application/json',
+                // Survives a broker restart. An in-memory message would make the outbox's
+                // durability pointless the moment RabbitMQ bounced.
+                persistent: true,
+                messageId: event.id,
+                type: event.type,
+                timestamp: Math.floor(new Date(event.occurredAt).getTime() / 1000),
+              },
+              (error) => resolve(error ?? undefined),
+            );
           });
-        } catch (error) {
-          // Left unpublished on purpose: it stays visible in the outbox rather than vanishing.
-          options.onError?.(
-            new Error(`Unpublishable event ${row.id} (${row.type}): ${(error as Error).message}`),
-          );
-          continue;
+
+          if (refusal) {
+            // Stop at the first refusal rather than skipping ahead. Events are drained in sequence
+            // order, and a consumer that sees event 5 before event 4 has to cope with reordering it
+            // did not need to. Unlike a parse failure this one is usually the broker, not the row,
+            // so the rest of the batch is left untouched - no attempt counted against events that
+            // were never tried.
+            failures.push({ id: event.id, error: refusal.message });
+            options.onError?.(new Error(`Broker refused event ${event.id}: ${refusal.message}`));
+            break;
+          }
+          publishedIds.push(event.id);
         }
 
-        const accepted = await new Promise<boolean>((resolve) => {
-          channel.publish(
-            EVENT_EXCHANGE,
-            event.type,
-            Buffer.from(JSON.stringify(event)),
-            {
-              contentType: 'application/json',
-              // Survives a broker restart. An in-memory message would make the outbox's
-              // durability pointless the moment RabbitMQ bounced.
-              persistent: true,
-              messageId: event.id,
-              type: event.type,
-              timestamp: Math.floor(new Date(event.occurredAt).getTime() / 1000),
-            },
-            (error) => resolve(!error),
-          );
-        });
-
-        // Stop at the first refusal rather than skipping ahead. Events are drained in sequence
-        // order, and a consumer that sees event 5 before event 4 has to cope with reordering it
-        // did not need to.
-        if (!accepted) break;
-        published.push(event.id);
-      }
-
-      if (published.length) await options.store.markEventsPublished(published);
-      return published.length;
+        return { publishedIds, failures };
+      });
     },
 
     async close(): Promise<void> {

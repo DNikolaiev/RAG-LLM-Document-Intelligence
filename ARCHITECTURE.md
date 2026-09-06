@@ -26,6 +26,18 @@ NestJS workflow worker
         +---- scoped policy retrieval
         +---- deterministic evaluation
         +---- human-review checkpoint
+
+NestJS application API
+        |
+        +---- (same transaction) ----> domain_events outbox in PostgreSQL
+                                              |
+                                        relay in apps/worker
+                                              |
+                                              v
+                                RabbitMQ topic exchange caselens.events
+                                              |
+                                              v
+                                        (no consumers yet)
 ```
 
 The browser never talks directly to PostgreSQL, Redis, MinIO, or Ollama. Next.js forwards the selected local test identity to NestJS; NestJS authorizes every case, policy, source-file, and job request. Source bytes are streamed only after authorization.
@@ -44,6 +56,63 @@ The production-local worker consumes BullMQ jobs and runs the LangGraph state ma
 
 The production-local Compose profile also runs idempotent forward migrations after PostgreSQL provisioning and before API/worker startup, so an existing Docker volume receives job-event and policy-governance schema additions without being deleted.
 
+## Event backbone
+
+BullMQ carries **commands** — "process this case" — addressed to one known consumer. Nothing in the
+system carried **facts** — "this case was decided" — that an unrelated service could react to without
+being wired into the request path. The event backbone adds that second channel; it does not replace
+the first.
+
+### The outbox is the log, RabbitMQ is the delivery
+
+Publishing to a broker inside a request handler is the dual-write problem: the database commit and
+the publish are two systems, and a crash between them either loses a fact or announces one that was
+rolled back. So `apps/api` appends the event to `domain_events` **inside the transaction that made
+the business change**. There is no second system to fail halfway, and no request ever touches the
+broker.
+
+RabbitMQ is a broker, not a log — an acknowledged message is gone. A read model needs replay, so
+`domain_events` is append-only and stays the history; RabbitMQ only moves messages to live
+consumers. Rebuilding a projection reads the table, not the queue.
+
+Three event types are defined in [`packages/events`](packages/events), shared by publisher and
+consumer so the wire format has one definition: `case.created`, `case.decided`, `finding.raised`.
+Each envelope carries `id` (the consumer's idempotency key), `type` (also the routing key),
+`tenantId`, `aggregateType`/`aggregateId`, `occurredAt`, `sequence`, and a typed `payload`.
+
+### The relay claims rather than reads
+
+[`apps/worker/src/events/relay.ts`](apps/worker/src/events/relay.ts) polls the outbox, publishes on
+a **confirm channel**, and stamps `published_at` only after the broker confirms. Delivery is
+at-least-once by construction: a crash between the confirm and the stamp republishes on the next
+pass. Consumers must dedupe on event id; exactly-once is not offered.
+
+Two details are what make more than one relay instance safe, and both were bugs in the first cut:
+
+- **`FOR UPDATE SKIP LOCKED`.** A plain `SELECT` gives two relays the same rows and every event goes
+  out twice. The read is a claim: `LIMIT` sits above `LockRows` in the plan, so a second relay walks
+  past the rows the first holds — refused row by row, never waiting — and accumulates its own batch
+  from what is left. The lock lives only inside the transaction, which is why publishing happens
+  inside `claimUnpublishedEvents` rather than after a read returns.
+- **`publish_attempts` and `failed_at`.** An event that can never be published — a publisher bug, a
+  type the relay's `packages/events` version does not know — used to be skipped without being
+  counted, so it reappeared in every batch forever. Enough of them fill the batch and real events
+  starve while the relay still reports itself healthy. Attempts are now counted, and after five the
+  row is quarantined out of the delivery index. Nothing is deleted: the payload and its place in the
+  sequence survive for replay and for a human to read `last_error`.
+
+A broker refusal stops the batch instead of skipping ahead, so consumers never see event 5 before
+event 4. A parse failure does not stop it — that event can never be delivered, and holding the
+backlog behind it would trade one stuck event for all of them.
+
+### Current status
+
+The exchange `caselens.events` is declared, durable, and receiving messages. **There are no bindings
+yet**, so RabbitMQ discards what it delivers — the facts are recoverable only from the outbox, which
+is exactly the property the outbox exists to provide. `apps/analytics` — a CQRS read model with its
+own PostgreSQL, deduping on event id — is the next phase; see
+[`docs/superpowers/plans/2026-09-06-event-backbone.md`](docs/superpowers/plans/2026-09-06-event-backbone.md).
+
 ## Design boundaries
 
 - `apps/web` contains presentation and interaction logic; the API remains authoritative.
@@ -55,6 +124,7 @@ The production-local Compose profile also runs idempotent forward migrations aft
 - `packages/document-pipeline` preserves document, page, extraction, confidence, and evidence provenance.
 - `packages/retrieval` enforces tenant, domain, pack-version, validity, and revocation scope before ranking evidence.
 - `packages/workflow` owns resumable orchestration and human-review pauses.
+- `packages/events` defines the domain-event envelope and payload schemas shared by publisher and consumer.
 - `packages/persistence` defines the PostgreSQL/pgvector schema, indexes, and tenant RLS policies.
 
 ## Provider interchangeability
@@ -316,7 +386,23 @@ erDiagram
     jsonb state
     integer revision
   }
+  domain_events {
+    text id PK
+    bigserial sequence UK
+    text tenant_id FK
+    text type
+    jsonb payload
+    timestamptz published_at
+    integer publish_attempts
+    timestamptz failed_at
+  }
 ```
+
+`domain_events` is the transactional outbox and has no foreign key to `cases` on purpose: it is an
+append-only log of facts, and a fact must stay readable after the aggregate it describes changes
+shape. `aggregate_id` is a plain reference, not a constraint. `sequence` is unique and monotonic so
+a replay is ordered; `published_at` belongs to the relay alone; `publish_attempts`/`failed_at`
+quarantine a row that can never be delivered. The grants deliberately omit `DELETE`.
 
 `jobs` and `job_events` are the durable job history; Redis coordinates claims, locks and retries but is not the record. `job_events.recipient_user_id` is what scopes the notification feed to the person who enqueued the work. `workflow_checkpoints` has a composite key of `(tenant_id, checkpoint_key)`, so identical keys in different tenants cannot collide.
 
@@ -347,6 +433,7 @@ erDiagram
 | `jobs`                           | `id`                              | `case_id`, `enqueued_by_user_id`                                             |
 | `job_events`                     | `id`                              | `job_id`, `recipient_user_id`, `actor_user_id`                               |
 | `audit_events`                   | `id`                              | `case_id`                                                                    |
+| `domain_events`                  | `id`                              | — (`aggregate_id` is an unconstrained reference)                             |
 | `workflow_checkpoints`           | `tenant_id, checkpoint_key`       | —                                                                            |
 | `field_proposals`                | `id`                              | `domain_pack_id`, `policy_document_id`, `reviewed_by_user_id`                |
 | `field_embeddings`               | `tenant_id, domain_pack_id, path` | `domain_pack_id`                                                             |

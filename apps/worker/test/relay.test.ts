@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EVENT_EXCHANGE } from '@caselens/events';
-import type { StoredDomainEvent } from '@caselens/persistence';
-import { createEventRelay, type RelayStore } from '../src/events/relay.js';
+import { MAX_PUBLISH_ATTEMPTS, type StoredDomainEvent } from '@caselens/persistence';
+import { createEventRelay, type PublishOutcome, type RelayStore } from '../src/events/relay.js';
 
 interface Published {
   exchange: string;
@@ -49,25 +49,62 @@ function fakeBroker(refuseFrom = Number.POSITIVE_INFINITY) {
   };
 }
 
-function storeWith(rows: StoredDomainEvent[]): RelayStore & { marked: string[] } {
-  const marked: string[] = [];
+interface FakeRow {
+  event: StoredDomainEvent;
+  publishedAt: string | null;
+  attempts: number;
+  failedAt: string | null;
+}
+
+/**
+ * Models the store's bookkeeping rather than just handing rows back, because the behaviour under
+ * test lives in that bookkeeping: what a failed attempt costs a row, and when a row stops being
+ * offered. The row locking itself is not modelled here - a fake would only agree with itself, so
+ * that claim is asserted against a real transaction in the persistence integration suite.
+ */
+function storeWith(events: StoredDomainEvent[]): RelayStore & { rows: FakeRow[] } {
+  const rows: FakeRow[] = events.map((event) => ({
+    event,
+    publishedAt: null,
+    attempts: 0,
+    failedAt: null,
+  }));
   return {
-    marked,
-    async readUnpublishedEvents() {
-      return rows.filter((row) => !marked.includes(row.id));
-    },
-    async markEventsPublished(ids) {
-      marked.push(...ids);
+    rows,
+    async claimUnpublishedEvents(
+      limit: number,
+      publish: (batch: readonly StoredDomainEvent[]) => Promise<PublishOutcome>,
+    ) {
+      const claimed = rows
+        .filter((row) => !row.publishedAt && !row.failedAt)
+        .sort((a, b) => a.event.sequence - b.event.sequence)
+        .slice(0, limit);
+      if (!claimed.length) return 0;
+
+      const outcome = await publish(claimed.map((row) => row.event));
+      for (const row of claimed) {
+        if (outcome.publishedIds.includes(row.event.id)) row.publishedAt = 'stamped';
+        const failure = outcome.failures?.find((entry) => entry.id === row.event.id);
+        if (failure) {
+          row.attempts += 1;
+          if (row.attempts >= MAX_PUBLISH_ATTEMPTS) row.failedAt = 'quarantined';
+        }
+      }
+      return outcome.publishedIds.length;
     },
   };
 }
 
-function row(id: string, sequence: number): StoredDomainEvent {
+function publishedIds(store: { rows: FakeRow[] }): string[] {
+  return store.rows.filter((row) => row.publishedAt).map((row) => row.event.id);
+}
+
+function row(id: string, sequence: number, type = 'case.created'): StoredDomainEvent {
   return {
     id,
     sequence,
     tenantId: 'tenant_demo',
-    type: 'case.created',
+    type,
     aggregateType: 'case',
     aggregateId: `case_${id}`,
     occurredAt: '2026-09-06T10:00:00.000Z',
@@ -89,7 +126,7 @@ describe('event relay', () => {
     // Persistent, or a broker restart would discard what the outbox worked to make durable.
     expect(broker.published[0]!.options.persistent).toBe(true);
     expect(broker.published[0]!.options.messageId).toBe('evt_a');
-    expect(store.marked).toEqual(['evt_a']);
+    expect(publishedIds(store)).toEqual(['evt_a']);
   });
 
   it('stamps only what the broker confirmed, and stops at the first refusal', async () => {
@@ -101,8 +138,11 @@ describe('event relay', () => {
     expect(await relay.drain()).toBe(1);
     // evt_b was refused, so it stays unpublished - and evt_c is held back with it rather than
     // jumping the queue, because consumers should not have to cope with reordering.
-    expect(store.marked).toEqual(['evt_a']);
+    expect(publishedIds(store)).toEqual(['evt_a']);
     expect(broker.published).toHaveLength(1);
+    // A refusal is the broker's problem, not the row's: only the event actually tried carries the
+    // attempt, or a flapping broker would quarantine a whole healthy backlog.
+    expect(store.rows.map((entry) => entry.attempts)).toEqual([0, 1, 0]);
 
     // The next pass retries from where it stopped.
     const recovered = fakeBroker();
@@ -112,13 +152,12 @@ describe('event relay', () => {
       connect: recovered.connect,
     });
     expect(await relay2.drain()).toBe(2);
-    expect(store.marked).toEqual(['evt_a', 'evt_b', 'evt_c']);
+    expect(publishedIds(store)).toEqual(['evt_a', 'evt_b', 'evt_c']);
   });
 
   it('leaves an unparseable row in the outbox instead of shipping it to every consumer', async () => {
     const broker = fakeBroker();
-    const bad = { ...row('evt_bad', 1), type: 'case.exploded' };
-    const store = storeWith([bad, row('evt_good', 2)]);
+    const store = storeWith([row('evt_bad', 1, 'case.exploded'), row('evt_good', 2)]);
     const errors: Error[] = [];
     const relay = await createEventRelay({
       url: 'amqp://x',
@@ -129,7 +168,48 @@ describe('event relay', () => {
 
     expect(await relay.drain()).toBe(1);
     expect(broker.published.map((message) => message.options.messageId)).toEqual(['evt_good']);
-    expect(store.marked).toEqual(['evt_good']);
+    expect(publishedIds(store)).toEqual(['evt_good']);
     expect(errors[0]?.message).toContain('evt_bad');
+    // Still in the outbox, unpublished - visible rather than vanished.
+    expect(store.rows[0]!.publishedAt).toBeNull();
+  });
+
+  it('retires a poison row rather than letting it crowd out deliverable events forever', async () => {
+    // The regression this guards: an unparseable row used to be skipped without being counted, so
+    // it came back in every single batch. Enough of them and the batch is nothing but poison while
+    // real events sit behind them and the relay still reports itself healthy.
+    const store = storeWith([
+      row('evt_poison_a', 1, 'case.exploded'),
+      row('evt_poison_b', 2, 'case.exploded'),
+      row('evt_real', 3),
+    ]);
+    const broker = fakeBroker();
+    const relay = await createEventRelay({
+      url: 'amqp://x',
+      store,
+      connect: broker.connect,
+      // A batch of one, so a poison row genuinely occupies the whole batch.
+      batchSize: 1,
+    });
+
+    // Each pass claims only the oldest poison row and gets nowhere.
+    for (let attempt = 1; attempt < MAX_PUBLISH_ATTEMPTS; attempt += 1) {
+      expect(await relay.drain()).toBe(0);
+    }
+    expect(store.rows[0]!.failedAt).toBeNull();
+
+    // The attempt that exhausts the budget sets it aside, and the batch moves on.
+    expect(await relay.drain()).toBe(0);
+    expect(store.rows[0]!.failedAt).toBe('quarantined');
+    // Nothing is deleted: the payload and its place in the sequence survive for a replay.
+    expect(store.rows[0]!.publishedAt).toBeNull();
+
+    // The second poison row now occupies the batch and is retired the same way.
+    for (let attempt = 0; attempt < MAX_PUBLISH_ATTEMPTS; attempt += 1) await relay.drain();
+    expect(store.rows[1]!.failedAt).toBe('quarantined');
+
+    // And the real event, which was never reachable before, is delivered.
+    expect(await relay.drain()).toBe(1);
+    expect(publishedIds(store)).toEqual(['evt_real']);
   });
 });

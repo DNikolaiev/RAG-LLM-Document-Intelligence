@@ -79,8 +79,10 @@ The seed command uses the public API: it uploads each policy, extracts and index
 | `packages/retrieval`         | Tenant/version/date-scoped policy indexing and retrieval for grounded decisions                    | Uses canonical policy chunks in PostgreSQL/pgvector                    |
 | `packages/workflow`          | LangGraph state machine, retries, checkpoints, review pause, and resume                            | Memory checkpoints in demo; PostgreSQL checkpoints in local production |
 | `packages/persistence`       | PostgreSQL/pgvector schema, repositories, indexes, and tenant RLS                                  | Active in local production                                             |
+| `packages/events`            | Domain-event envelope and payload schemas shared by publisher and consumer                         | Used by the API outbox and the worker relay                            |
 | PostgreSQL + pgvector        | Durable records plus hybrid/vector policy search                                                   | Internal production network service                                    |
 | Redis + BullMQ               | Queue handoff, claim coordination, deduplication keys, and retry scheduling between API and worker | Internal production network service; not a business-data store         |
+| RabbitMQ                     | Topic exchange carrying domain facts to independent consumers                                      | Internal production network service; exchange live, no consumers yet   |
 | MinIO                        | Local S3-compatible immutable source-document storage                                              | Active in local production; demo uses memory storage                   |
 | Ollama                       | Free local structured generation and embeddings                                                    | Qwen3 + EmbeddingGemma by default; model names are configurable        |
 | OCR service                  | Native PDF text extraction and Tesseract fallback                                                  | PyMuPDF + Tesseract, internal production network service               |
@@ -93,6 +95,30 @@ Redis is the transport behind BullMQ in local production. After the API has stor
 
 Redis is **not** the source of truth for case progress and is not used as a general cache. PostgreSQL stores cases, document metadata, durable job status/progress, audit events, workflow checkpoints, and pgvector policy chunks. MinIO stores the uploaded file bytes. Ollama runs generation and embeddings. If Redis is unavailable, new processing work cannot be handed to a worker, but already persisted cases and documents remain in PostgreSQL and MinIO.
 
+### What RabbitMQ does here, and why both brokers
+
+BullMQ carries **commands**: "process this case", addressed to one worker that must exist. RabbitMQ
+carries **facts**: "this case was decided", broadcast to whoever cares — or to nobody. They are not
+redundant; they are two different shapes of message, and the second one is what lets a new service
+be added without editing the API.
+
+The API never publishes. It appends the event to the `domain_events` table **inside the same
+transaction as the business change**, so a fact cannot survive a rolled-back change and a committed
+change cannot lose its fact. A relay in the worker drains that table to the exchange
+`caselens.events`, publishing on a confirm channel and stamping `published_at` only once RabbitMQ
+confirms. The routing key is the event type, so a consumer picks what it wants with a binding like
+`case.*` rather than the publisher deciding for it.
+
+Delivery is at-least-once: a crash between the confirm and the stamp republishes the event, so
+consumers dedupe on event id. Several relays can run at once — the batch is claimed with
+`FOR UPDATE SKIP LOCKED`, so they partition the backlog instead of both publishing it. An event that
+can never be published is counted and, after five attempts, quarantined out of the delivery index so
+it cannot crowd out deliverable events; it is never deleted.
+
+Today the exchange has **no bindings**, so the messages are discarded on arrival and the facts live
+only in the outbox — which is the point of having one. The first consumer, an analytics read model
+with its own database, is the next phase.
+
 ## What is stored where
 
 | Data                                                           | Durable owner         | Why                                                                                                |
@@ -103,6 +129,7 @@ Redis is **not** the source of truth for case progress and is not used as a gene
 | Policy chunks and embedding vectors                            | PostgreSQL + pgvector | Hybrid lexical/vector policy retrieval with tenant, domain, version, date, and revocation filters  |
 | Approved deterministic policy rules and rule tests             | PostgreSQL            | Reviewed executable configuration with source citations and immutable history                      |
 | Current job status and user-visible job events                 | PostgreSQL            | Notifications survive browser, API, worker, and Redis restarts                                     |
+| Domain events (the outbox)                                     | PostgreSQL            | Append-only fact log written in the business transaction; the replay source, since a broker is not |
 | Waiting/active/retry queue records                             | Redis through BullMQ  | Fast worker coordination, locks, retries, backoff, cancellation, and bounded operational retention |
 | LangGraph checkpoints                                          | PostgreSQL            | A worker can resume a durable workflow after a restart                                             |
 | Model weights                                                  | Ollama volume         | Free local chat and embedding models without sending documents to a cloud provider                 |

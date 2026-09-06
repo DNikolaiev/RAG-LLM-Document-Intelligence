@@ -63,7 +63,91 @@ describe.skipIf(!databaseUrl || !adminDatabaseUrl)('domain event outbox', () => 
       await store.close();
     }
   });
+
+  it('partitions the backlog between relays instead of handing both the same rows', async () => {
+    // Two relay instances is the normal deployment, not an exotic one. A plain SELECT would give
+    // both of them the same rows and every event would be published twice; `for update skip
+    // locked` turns the read into a claim, and this asserts the claim actually holds. A fake store
+    // cannot prove this - the locking is the behaviour, and only a real transaction has it.
+    const relayA = new PostgresCaseStore(databaseUrl!);
+    const relayB = new PostgresCaseStore(databaseUrl!);
+    const adminSql = postgres(adminDatabaseUrl!, { prepare: false });
+    const suffix = `${Date.now().toString(36)}c`;
+    const tenantId = `tenant_claim_${suffix}`;
+    // Other tests and other runs share this database, so assertions are scoped to the events this
+    // test created rather than to whatever else happens to be unpublished.
+    const mine = new Set<string>();
+    const ours = (ids: readonly string[]) => ids.filter((id) => mine.has(id));
+
+    let releaseA: () => void = () => {};
+    const aIsHolding = new Promise<void>((resolve) => (releaseA = resolve));
+    let announceA: () => void = () => {};
+    const aHasClaimed = new Promise<void>((resolve) => (announceA = resolve));
+
+    try {
+      await seedTenant(relayA, tenantId);
+      for (let index = 0; index < 4; index += 1) {
+        await relayA.insert(makeCase(`case_claim_${suffix}_${index}`, tenantId));
+      }
+      for (const event of await adminSql<Array<{ id: string }>>`
+        select id from domain_events where tenant_id = ${tenantId}`) {
+        mine.add(event.id);
+      }
+      expect(mine.size).toBe(4);
+
+      const batchA: string[] = [];
+      const batchB: string[] = [];
+
+      // A claims two rows and holds its transaction open, exactly as it would while waiting on a
+      // broker confirm.
+      const runA = relayA.claimUnpublishedEvents(2, async (events) => {
+        batchA.push(...events.map((event) => event.id));
+        announceA();
+        await aIsHolding;
+        return { publishedIds: events.map((event) => event.id) };
+      });
+
+      await aHasClaimed;
+
+      // B runs the identical query while A still holds its rows.
+      const runB = relayB.claimUnpublishedEvents(2, async (events) => {
+        batchB.push(...events.map((event) => event.id));
+        return { publishedIds: events.map((event) => event.id) };
+      });
+      await runB;
+      releaseA();
+      await runA;
+
+      const mineA = ours(batchA);
+      const mineB = ours(batchB);
+      expect(mineA).toHaveLength(2);
+      expect(mineB).toHaveLength(2);
+      // The property that matters: no event reached both relays.
+      expect(mineA.filter((id) => mineB.includes(id))).toEqual([]);
+      // Between them they took the whole backlog rather than B coming back empty, which is what a
+      // naive `LIMIT ... FOR UPDATE SKIP LOCKED` plan shape would produce.
+      expect(new Set([...mineA, ...mineB]).size).toBe(4);
+    } finally {
+      releaseA();
+      await adminSql`delete from domain_events where tenant_id = ${tenantId}`;
+      await adminSql`delete from audit_events where tenant_id = ${tenantId}`;
+      await adminSql`delete from cases where tenant_id = ${tenantId}`;
+      await adminSql`delete from domain_packs where tenant_id = ${tenantId}`;
+      await adminSql`delete from tenants where id = ${tenantId}`;
+      await adminSql.end();
+      await relayA.close();
+      await relayB.close();
+    }
+  });
 });
+
+async function seedTenant(store: PostgresCaseStore, tenantId: string): Promise<void> {
+  await store.seed(
+    [{ id: tenantId, name: 'Claim Tenant', domain: 'Commercial contract review' }],
+    [],
+    [],
+  );
+}
 
 function makeCase(id: string, tenantId: string): PersistedCaseProjection {
   const now = new Date().toISOString();

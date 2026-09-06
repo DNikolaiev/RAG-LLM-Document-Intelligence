@@ -553,17 +553,37 @@ export class PostgresCaseStore {
   }
 
   /**
-   * Reads the outbox for the relay: the oldest events not yet handed to the broker, in sequence
-   * order. Deliberately not tenant-scoped - the relay is infrastructure publishing every tenant's
-   * facts, so it runs as a platform actor.
+   * Claims a batch of deliverable events and hands them to `publish` inside one transaction.
+   *
+   * `for update skip locked` is what makes this a claim rather than a read. Two relay instances
+   * running the same query would otherwise both see the same rows and publish everything twice;
+   * with the lock the second skips what the first holds and takes the next batch, so relays
+   * partition the backlog instead of duplicating it.
+   *
+   * The lock exists only inside the transaction, so publishing has to happen here rather than
+   * after a read returns - releasing the lock first would put the duplication straight back.
+   *
+   * Rows already given up on are excluded, so one permanently unpublishable event cannot keep
+   * filling the batch and starving deliverable ones.
    */
-  async readUnpublishedEvents(limit = 100): Promise<StoredDomainEvent[]> {
+  async claimUnpublishedEvents(
+    limit: number,
+    publish: (events: readonly StoredDomainEvent[]) => Promise<{
+      publishedIds: readonly string[];
+      failures?: ReadonlyArray<{ id: string; error: string }>;
+    }>,
+  ): Promise<number> {
     return this.withScope({ tenantIds: [], platformAdmin: true }, async (tx) => {
       const rows = await tx<Array<Record<string, unknown>>>`
-        select id, sequence, tenant_id, type, aggregate_type, aggregate_id, payload, occurred_at
-        from domain_events where published_at is null
-        order by sequence asc limit ${limit}`;
-      return rows.map((row) => ({
+        select id, sequence, tenant_id, type, aggregate_type, aggregate_id, payload, occurred_at,
+          publish_attempts
+        from domain_events
+        where published_at is null and failed_at is null
+        order by sequence asc limit ${limit}
+        for update skip locked`;
+      if (!rows.length) return 0;
+
+      const events: StoredDomainEvent[] = rows.map((row) => ({
         id: String(row.id),
         sequence: Number(row.sequence),
         tenantId: String(row.tenant_id),
@@ -573,17 +593,26 @@ export class PostgresCaseStore {
         payload: row.payload,
         occurredAt: new Date(row.occurred_at as string).toISOString(),
       }));
-    });
-  }
+      const attempts = new Map(rows.map((row) => [String(row.id), Number(row.publish_attempts)]));
 
-  /**
-   * Stamps events as handed to the broker. Called after a successful publish, so a crash between
-   * the two republishes on the next pass - at-least-once, which is why consumers dedupe.
-   */
-  async markEventsPublished(ids: readonly string[]): Promise<void> {
-    if (!ids.length) return;
-    await this.withScope({ tenantIds: [], platformAdmin: true }, async (tx) => {
-      await tx`update domain_events set published_at = now() where id in ${tx(ids)}`;
+      const result = await publish(events);
+
+      if (result.publishedIds.length) {
+        await tx`update domain_events set published_at = now()
+          where id in ${tx(result.publishedIds as string[])}`;
+      }
+      for (const failure of result.failures ?? []) {
+        const nextAttempt = (attempts.get(failure.id) ?? 0) + 1;
+        // Set aside only after repeated failures, so a transient problem - the broker restarting
+        // mid-batch - does not quarantine a perfectly good event.
+        const exhausted = nextAttempt >= MAX_PUBLISH_ATTEMPTS;
+        await tx`update domain_events
+          set publish_attempts = ${nextAttempt},
+            last_error = ${failure.error.slice(0, 1000)},
+            failed_at = ${exhausted ? new Date().toISOString() : null}::timestamptz
+          where id = ${failure.id}`;
+      }
+      return result.publishedIds.length;
     });
   }
 
@@ -644,6 +673,9 @@ export interface PendingDomainEvent {
   occurredAt: string;
   payload: unknown;
 }
+
+/** How many times the relay tries an event before setting it aside. */
+export const MAX_PUBLISH_ATTEMPTS = 5;
 
 export interface StoredDomainEvent {
   id: string;

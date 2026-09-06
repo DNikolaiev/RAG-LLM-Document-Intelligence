@@ -760,9 +760,20 @@ export const domainEvents = pgTable(
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
     publishedAt: timestamp('published_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** How many delivery attempts the relay has spent on this row. */
+    publishAttempts: integer('publish_attempts').notNull().default(0),
+    /**
+     * Set when the relay gives up. A quarantined row keeps its payload and its place in the
+     * sequence - it is excluded from delivery, never deleted, so a replay can still see it.
+     */
+    failedAt: timestamp('failed_at', { withTimezone: true }),
+    lastError: text('last_error'),
   },
   (table) => [
-    index('domain_event_unpublished_idx').on(table.sequence),
+    // The relay's claim: unpublished, not given up on, oldest first. Quarantined rows leave this
+    // index entirely, which is the point - they can no longer crowd out deliverable events.
+    index('domain_event_deliverable_idx').on(table.sequence),
+    index('domain_event_failed_idx').on(table.failedAt),
     index('domain_event_tenant_sequence_idx').on(table.tenantId, table.sequence),
     uniqueIndex('domain_event_sequence_uq').on(table.sequence),
   ],
