@@ -67,16 +67,16 @@ First three events, chosen because they are what a throughput read model needs: 
 
 **Phase 3 — the hard parts. Not started.** Replay, a dead-letter queue with a poison-message test, and visible consumer lag.
 
-**Phase 4 — retire the second broker (user, 2026-09-06). Not started, deliberately last.** Redis exists in this system for exactly one reason: BullMQ. Nothing else opens a connection to it. And BullMQ is a thin transport here — the durable job record, its progress, its status transitions and the notification feed all live in `jobs` and `job_events` in PostgreSQL, written by the worker. What BullMQ actually contributes is claims, stall detection, attempt counting and exponential backoff.
+**Phase 4 — dropped (user, 2026-09-06).** The original plan was to move `process_case` and
+`process_policy` onto RabbitMQ and delete Redis. The user reversed that: the two brokers coexist,
+because they are not carrying the same kind of message. BullMQ carries commands to one known
+consumer; RabbitMQ carries facts to whoever binds. Collapsing them would mean rebuilding delayed
+redelivery, the attempt ceiling, per-job locks and stall detection by hand — RabbitMQ has no native
+delayed redelivery, so that means a TTL retry queue dead-lettering back to the work queue — for the
+sole prize of removing one container.
 
-So `process_case` and `process_policy` move onto RabbitMQ and Redis is removed. Migrating the critical work path to a broker that has not yet carried real traffic would be the wrong risk, so RabbitMQ earns that trust on the new event path first.
-
-What has to be rebuilt, and how:
-
-- **Retry with backoff.** RabbitMQ has no native delayed redelivery. Use a retry queue whose messages have a per-message TTL and dead-letter back to the work queue, so an expired message returns for another attempt. Attempt counts travel in a header.
-- **Attempt ceiling and dead lettering.** After the configured attempts, route to a dead-letter queue rather than requeuing forever. BullMQ's `attempts: 3` and `backoff: exponential 1s` are the behaviour to preserve.
-- **Claims and stall detection.** RabbitMQ redelivers an unacknowledged message when a consumer dies, which covers the claim. Long-running work needs the consumer to hold the delivery rather than ack early, and the connection heartbeat has to outlast a slow model call — with a five-minute model timeout, that setting matters.
-- **Idempotency.** Already handled by the deterministic job id and the `jobs` row; redelivery must remain safe, which it is today.
+This is recorded rather than deleted because the reasoning is the interesting part: two brokers is
+not automatically duplication when each is doing a job the other is bad at.
 
 ## Next steps, in order
 
@@ -89,7 +89,7 @@ flowchart TD
   S3["3 - dead-letter queue<br/>consumer-side poison"]
   S4["4 - replay<br/>rebuild from the outbox"]
   S5["5 - consumer lag<br/>eventual consistency, visible"]
-  S6["6 - Phase 4 decision<br/>retire BullMQ and Redis"]
+  S6["6 - keep both brokers<br/>document why, do not merge them"]
 
   S1 --> S2 --> S3 --> S4 --> S5 --> S6
   S1 -. "nothing to dead-letter<br/>without a consumer" .-> S3
@@ -139,9 +139,13 @@ There is a real tension to resolve deliberately rather than by accident: the con
 
 Eventual consistency is the thing everyone accepts in the abstract and is surprised by in practice. Surface `max(sequence)` in the outbox minus the highest sequence analytics has projected — as a number in the read API, and in the console if it is cheap. Then demonstrate it deliberately: pause the consumer, decide a case, watch the number climb and the read model disagree with the write model until it catches up.
 
-### 6. Then decide on Phase 4
+### 6. Keep both brokers, and write down why
 
-By this point RabbitMQ will have carried real traffic on a path where failure is recoverable, which was the stated precondition. Revisit whether removing Redis is worth rebuilding backoff, attempt ceilings and stall detection. The answer may legitimately be no — and that is a better outcome than doing it because it was on a list.
+Settled, so this is documentation rather than work: Redis/BullMQ keeps the command path, RabbitMQ
+keeps the fact path. The thing worth capturing is what BullMQ actually provides on top of Redis —
+the atomic claim, the per-job lock with a duration, stall recovery, attempt counting, exponential
+backoff, deduplication by job id — because none of that is a Redis feature and all of it would have
+to be rebuilt to remove it.
 
 ## Constraints
 
