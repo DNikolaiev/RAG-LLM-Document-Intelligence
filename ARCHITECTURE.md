@@ -130,6 +130,15 @@ an event processed that never was, and because the id is already recorded no red
 repair it. `insert ... on conflict do nothing` makes the insert itself the claim - if it changed no
 row, another delivery already won.
 
+**Deliveries are settled one at a time.** `prefetch` bounds what the broker may push, not what the
+consumer may work on: handling deliveries concurrently let a `case.decided` transaction open 2.5ms
+after its `case.created` and before that one committed, so under READ COMMITTED it saw no case
+dimension and attributed a real decision to an unknown domain pack. Chaining the handler keeps
+prefetch's benefit - the next message is already in memory rather than a round trip away - without
+the concurrency that breaks causal order. Note that this only holds because one relay publishes in
+sequence order on one channel; the projection still has to tolerate arriving out of order, which is
+what replay ultimately repairs.
+
 Three details in its topology are equally deliberate:
 
 - **One binding per event type it handles**, never `#`. A binding is a consumer declaring its
@@ -141,6 +150,13 @@ Three details in its topology are equally deliberate:
   immutable in RabbitMQ: redeclaring a queue with different arguments is refused with
   PRECONDITION_FAILED, so adding the argument later is a destructive migration rather than a
   configuration change.
+
+It projects `case_throughput_daily` (intake and decisions per tenant, day and domain pack) and
+`case_cycle_time` (one row per decided case, so the read API computes real percentiles instead of an
+average that hides the tail). `case_dimensions` is reference data the service accumulates for
+itself: `case.decided` deliberately does not carry the domain pack, because a payload should carry
+what a consumer needs to interpret the fact rather than a copy of a row, so the projection remembers
+what `case.created` told it instead of calling back into the case service.
 
 `projection_state.last_sequence` is the consumer half of the lag measurement: compared against
 `max(sequence)` in the outbox it turns eventual consistency into a number rather than a word.

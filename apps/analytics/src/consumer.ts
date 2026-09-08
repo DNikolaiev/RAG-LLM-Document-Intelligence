@@ -114,7 +114,25 @@ export async function startAnalyticsConsumer(
     }
   };
 
-  await channel.consume(options.queue, (message) => void onMessage(message), { noAck: false });
+  // Deliveries are settled one at a time, in the order the broker sent them.
+  //
+  // `prefetch` bounds how many messages the broker may push, not how many this service may work on
+  // at once. Launching the async handler per delivery and forgetting it - which is what
+  // `void onMessage(message)` does - lets sixteen of them run concurrently, and two events about
+  // the same case then race. That is not hypothetical: a `case.decided` transaction opened 2.5ms
+  // after its `case.created` and before that one had committed, saw no case dimension under READ
+  // COMMITTED, and attributed a real decision to an unknown domain pack.
+  //
+  // Chaining keeps the throughput benefit of prefetch - the next message is already in memory
+  // rather than a round trip away - while removing the concurrency that broke causal order.
+  let settling: Promise<void> = Promise.resolve();
+  await channel.consume(
+    options.queue,
+    (message) => {
+      settling = settling.then(() => onMessage(message)).catch(() => {});
+    },
+    { noAck: false },
+  );
 
   return {
     async close(): Promise<void> {

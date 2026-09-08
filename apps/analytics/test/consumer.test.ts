@@ -56,13 +56,14 @@ function fakeBroker() {
 
   return {
     recorded,
+    /** Hands the consumer a message without waiting, exactly as the broker would. */
+    emit(body: unknown, messageId = 'evt_a') {
+      deliver({ content: Buffer.from(JSON.stringify(body)), properties: { messageId } });
+    },
     /** Hands the consumer a message and waits for its async settle to run. */
     async push(body: unknown, messageId = 'evt_a') {
-      deliver({
-        content: Buffer.from(JSON.stringify(body)),
-        properties: { messageId },
-      });
-      await new Promise((resolve) => setImmediate(resolve));
+      this.emit(body, messageId);
+      await new Promise((resolve) => setTimeout(resolve, 20));
     },
     connect: async () =>
       ({
@@ -168,6 +169,41 @@ describe('analytics consumer', () => {
     expect(broker.recorded.nacked).toEqual([{ id: 'evt_bad', requeue: false }]);
     expect(broker.recorded.acked).toEqual([]);
     expect(errors[0]?.message).toContain('evt_bad');
+  });
+
+  it('settles one delivery at a time, so events about the same aggregate cannot race', async () => {
+    // The regression this guards was found in a live run, not in a test: prefetch bounds what the
+    // broker pushes, not what the consumer works on. Handling deliveries concurrently let a
+    // case.decided transaction open before the case.created it depends on had committed, and a real
+    // decision was attributed to an unknown domain pack.
+    const broker = fakeBroker();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const order: string[] = [];
+
+    await startAnalyticsConsumer({
+      url: 'amqp://x',
+      queue: 'analytics.events',
+      prefetch: 16,
+      handle: async (incoming) => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        order.push(incoming.id);
+        inFlight -= 1;
+      },
+      connect: broker.connect,
+    });
+
+    // Three deliveries pushed back to back, as a broker with prefetch 16 would.
+    broker.emit(event({ id: 'evt_1' }), 'evt_1');
+    broker.emit(event({ id: 'evt_2' }), 'evt_2');
+    broker.emit(event({ id: 'evt_3' }), 'evt_3');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(maxInFlight).toBe(1);
+    expect(order).toEqual(['evt_1', 'evt_2', 'evt_3']);
+    expect(broker.recorded.acked).toEqual(['evt_1', 'evt_2', 'evt_3']);
   });
 
   it('does not ack an event whose projection threw', async () => {

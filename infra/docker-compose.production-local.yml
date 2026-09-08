@@ -304,7 +304,12 @@ services:
       PGPASSWORD: ${ANALYTICS_DATABASE_PASSWORD:?Set ANALYTICS_DATABASE_PASSWORD}
     volumes:
       - ../apps/analytics/migrations:/migrations:ro
-    command: ['sh', '-c', 'psql -v ON_ERROR_STOP=1 -f /migrations/0001_projection_base.sql']
+    command:
+      [
+        'sh',
+        '-c',
+        'psql -v ON_ERROR_STOP=1 -f /migrations/0001_projection_base.sql -f /migrations/0002_case_projections.sql',
+      ]
     depends_on:
       analytics-postgres: { condition: service_healthy }
     restart: 'no'

@@ -1,6 +1,7 @@
 import { loadConfig } from '@caselens/config';
 import { startAnalyticsConsumer } from './consumer.js';
 import { AnalyticsStore } from './store.js';
+import { project } from './projections.js';
 
 /**
  * A deliberately plain logger. This service imports no framework: the point of it is that a second
@@ -22,11 +23,9 @@ export async function bootstrap(): Promise<void> {
     queue: config.ANALYTICS_QUEUE_NAME,
     prefetch: config.ANALYTICS_PREFETCH,
     handle: async (event) => {
-      // The projection body is still empty - the counters arrive with the next step. What runs here
-      // now is the part that has to be right before any counter exists: the same event delivered
-      // twice must move the read model once, and a projection that throws must leave no trace of
-      // having succeeded.
-      const outcome = await store.apply(event, async () => {});
+      // The claim and the projection share one transaction, so a projection that throws leaves no
+      // trace of having succeeded and the event stays deliverable.
+      const outcome = await store.apply(event, (tx) => project(tx, event));
       log(`${event.type} seq=${event.sequence} tenant=${event.tenantId} ${outcome}`);
     },
     onError: (error) => process.stderr.write(`[analytics] ${error.message}\n`),
