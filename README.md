@@ -70,6 +70,7 @@ The seed command uses the public API: it uploads each policy, extracts and index
 | `apps/web`                   | Next.js review console for cases, documents, evidence, findings, corrections, and decisions        | Used by both demo and local production                                 |
 | `apps/api`                   | Authoritative NestJS API enforcing validation, tenant scope, and business invariants               | Memory-backed in demo; PostgreSQL-backed in local production           |
 | `apps/worker`                | Consumes BullMQ jobs and runs document processing plus LangGraph                                   | Deterministic simulator in demo; durable consumer in local production  |
+| `apps/analytics`             | Consumes domain facts from RabbitMQ into its own read model                                        | Local production only; shares no schema or package with the pipeline   |
 | `apps/mcp`                   | Read-only agent interface over the API                                                             | Optional; not started by Compose                                       |
 | `packages/contracts`         | Shared Zod schemas, identifiers, and API/domain types                                              | Used across applications                                               |
 | `packages/config`            | Validates environment variables and provider selections                                            | Used at startup                                                        |
@@ -82,7 +83,7 @@ The seed command uses the public API: it uploads each policy, extracts and index
 | `packages/events`            | Domain-event envelope and payload schemas shared by publisher and consumer                         | Used by the API outbox and the worker relay                            |
 | PostgreSQL + pgvector        | Durable records plus hybrid/vector policy search                                                   | Internal production network service                                    |
 | Redis + BullMQ               | Queue handoff, claim coordination, deduplication keys, and retry scheduling between API and worker | Internal production network service; not a business-data store         |
-| RabbitMQ                     | Topic exchange carrying domain facts to independent consumers                                      | Internal production network service; exchange live, no consumers yet   |
+| RabbitMQ                     | Topic exchange carrying domain facts to independent consumers                                      | Internal production network service; delivering to `apps/analytics`    |
 | MinIO                        | Local S3-compatible immutable source-document storage                                              | Active in local production; demo uses memory storage                   |
 | Ollama                       | Free local structured generation and embeddings                                                    | Qwen3 + EmbeddingGemma by default; model names are configurable        |
 | OCR service                  | Native PDF text extraction and Tesseract fallback                                                  | PyMuPDF + Tesseract, internal production network service               |
@@ -115,9 +116,14 @@ consumers dedupe on event id. Several relays can run at once — the batch is cl
 can never be published is counted and, after five attempts, quarantined out of the delivery index so
 it cannot crowd out deliverable events; it is never deleted.
 
-Today the exchange has **no bindings**, so the messages are discarded on arrival and the facts live
-only in the outbox — which is the point of having one. The first consumer, an analytics read model
-with its own database, is the next phase.
+`apps/analytics` is the first consumer. It binds a durable queue to the exchange, one binding per
+event type it has actually decided to handle — never `#`, which would silently adopt whatever a
+publisher adds to the contract next. It acknowledges a delivery only after processing it, so a crash
+mid-projection redelivers rather than loses; a message it cannot process is dead-lettered to
+`analytics.events.dlq` instead of being discarded or retried in a hot loop.
+
+It shares no schema, no repository and no workspace package with the case pipeline — only the wire
+format in `packages/events`. `apps/api` does not know it exists.
 
 ## What is stored where
 
@@ -211,6 +217,37 @@ Neither a newly approved field nor rule reaches an existing case automatically; 
 ![CaseLens end-to-end pipeline: a versioned domain pack feeds policy upload, model proposal, governance, and case evaluation, with approval looping a new pack version back into the dictionary](docs/assets/pipeline.svg)
 
 This draws the two pipelines above as one loop: a domain pack supplies fields, baseline rules, and collections; a policy upload proposes rules and fields against it; governance approves or blocks; approval mints a new pack version; and case documents are checked against that pack — known field, right type, real quote, best score — before producing findings and a decision.
+
+```text
+┌────────────────────────────────────────────────────────────────────────────┐
+│                          Shared Low-Level Intake                           │
+│    Validate MIME / Safety   ──▶   MinIO Storage   ──▶   PyMuPDF / OCR      │
+└─────────────────┬───────────────────────────────────────┬──────────────────┘
+                  │                                       │
+                  ▼                                       ▼
+┌────────────────────────────────────┐  ┌────────────────────────────────────┐
+│      Case Ingestion Pipeline       │  │        Policy Lab Pipeline         │
+├────────────────────────────────────┤  ├────────────────────────────────────┤
+│ Input:                             │  │ Input:                             │
+│   Case dossier (questionnaires,    │  │   Governance standards (insurance  │
+│   certificates, contracts)         │  │   requirements, GDP rules)         │
+│                                    │  │                                    │
+│ Mission:                           │  │ Mission:                           │
+│   Extract empirical facts about    │  │   Author rules and build the       │
+│   an external entity               │  │   retrieval vector index           │
+│                                    │  │                                    │
+│ LLM Role:                          │  │ LLM Role:                          │
+│   Schema-constrained facts with    │  │   Propose rule ASTs and            │
+│   verbatim page citations          │  │   deduplicate vocabulary fields    │
+│                                    │  │                                    │
+│ Output:                            │  │ Output:                            │
+│   Evidence-backed findings against │  │   pgvector chunks & tested rules   │
+│   active rules ──▶ Human Decision  │  │   ready for admin activation       │
+└─────────────────┬──────────────────┘  └─────────────────┬──────────────────┘
+                  ▲                                       │
+                  │       Retrieves Policy Context        │
+                  └───────────────────────────────────────┘
+```
 
 ### Example: an insurance policy becomes a material finding
 
