@@ -42,6 +42,19 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
+      analytics-postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: caselens_analytics
+          POSTGRES_USER: caselens_analytics
+          POSTGRES_PASSWORD: ci_analytics_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U caselens_analytics -d caselens_analytics"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     env:
       PGPASSWORD: ci_owner_password
       APP_DATABASE_PASSWORD: ci_runtime_password
@@ -50,6 +63,9 @@ jobs:
       # skipping silently, so the RLS policies, the migration DDL and the pgvector queries were
       # never actually exercised by CI despite the job being named for them.
       TEST_ADMIN_DATABASE_URL: postgresql://caselens_owner:ci_owner_password@127.0.0.1:5432/caselens
+      # A second server, not a second database on the first. The projection is meant to survive the
+      # case pipeline's database being down, and a schema sharing the server cannot demonstrate that.
+      TEST_ANALYTICS_DATABASE_URL: postgresql://caselens_analytics:ci_analytics_password@127.0.0.1:5433/caselens_analytics
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -72,6 +88,10 @@ jobs:
           # the Drizzle-generated path, which infra/postgres/init replaces for container profiles.
           for migration in packages/persistence/migrations/0*.sql; do
             psql --host=127.0.0.1 --username=caselens_owner --dbname=caselens --set=ON_ERROR_STOP=1 --file="$migration"
+          done
+          # The projection's schema versions independently of the pipeline's, on its own server.
+          for migration in apps/analytics/migrations/0*.sql; do
+            PGPASSWORD=ci_analytics_password psql --host=127.0.0.1 --port=5433 --username=caselens_analytics --dbname=caselens_analytics --set=ON_ERROR_STOP=1 --file="$migration"
           done
       - run: npm ci
       - run: npm run test:integration:database

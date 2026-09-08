@@ -118,7 +118,19 @@ business from events rather than from the database. It shares no schema, no repo
 workspace package with the case pipeline - only the wire format in `packages/events` - so it can be
 deployed, broken or rebuilt without the pipeline noticing, and `apps/api` does not know it exists.
 
-Three details in its topology are deliberate:
+It has its own PostgreSQL server - not another database on the existing one, which would make
+"analytics is down" and "the case pipeline is down" the same outage. Its schema is hand-written SQL
+migrated separately; it deliberately does not import `packages/persistence`, because a compile-time
+dependency on a schema it must never read would last exactly until someone found a join convenient.
+
+**Idempotency is one transaction.** Delivery is at-least-once and always will be, so the consumer
+records the event id and updates the projection together or not at all. Recording first and
+projecting after is the dual-write problem rebuilt on the consuming side: a crash between them marks
+an event processed that never was, and because the id is already recorded no redelivery can ever
+repair it. `insert ... on conflict do nothing` makes the insert itself the claim - if it changed no
+row, another delivery already won.
+
+Three details in its topology are equally deliberate:
 
 - **One binding per event type it handles**, never `#`. A binding is a consumer declaring its
   interest; a wildcard hands that decision back to the publisher, so a new event type added to the
@@ -130,9 +142,12 @@ Three details in its topology are deliberate:
   PRECONDITION_FAILED, so adding the argument later is a destructive migration rather than a
   configuration change.
 
+`projection_state.last_sequence` is the consumer half of the lag measurement: compared against
+`max(sequence)` in the outbox it turns eventual consistency into a number rather than a word.
+
 Still to come, in [`docs/superpowers/plans/2026-09-06-event-backbone.md`](docs/superpowers/plans/2026-09-06-event-backbone.md):
-the projection itself with idempotent apply, `finding.raised` (declared in the contract but not yet
-emitted), retry-before-dead-letter, replay from the outbox, and consumer lag surfaced as a number.
+the counters themselves and a read API, `finding.raised` (declared in the contract but not yet
+emitted), retry-before-dead-letter, replay from the outbox, and lag surfaced in the console.
 
 ## Design boundaries
 

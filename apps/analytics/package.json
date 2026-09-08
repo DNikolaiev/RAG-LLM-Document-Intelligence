@@ -14,7 +14,8 @@
   "dependencies": {
     "@caselens/config": "0.1.0",
     "@caselens/events": "0.1.0",
-    "amqplib": "^2.0.1"
+    "amqplib": "^2.0.1",
+    "postgres": "^3.4.7"
   },
   "devDependencies": {
     "@types/amqplib": "^0.10.8",

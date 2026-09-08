@@ -122,6 +122,11 @@ publisher adds to the contract next. It acknowledges a delivery only after proce
 mid-projection redelivers rather than loses; a message it cannot process is dead-lettered to
 `analytics.events.dlq` instead of being discarded or retried in a hot loop.
 
+It writes to its own PostgreSQL server, migrated separately — not a second database on the existing
+server, which would make "analytics is down" and "the case pipeline is down" the same outage. The
+idempotency check and the projection write share one transaction, so an event delivered twice moves
+the read model once and a projection that fails leaves no record of having succeeded.
+
 It shares no schema, no repository and no workspace package with the case pipeline — only the wire
 format in `packages/events`. `apps/api` does not know it exists.
 
@@ -136,6 +141,7 @@ format in `packages/events`. `apps/api` does not know it exists.
 | Approved deterministic policy rules and rule tests             | PostgreSQL            | Reviewed executable configuration with source citations and immutable history                      |
 | Current job status and user-visible job events                 | PostgreSQL            | Notifications survive browser, API, worker, and Redis restarts                                     |
 | Domain events (the outbox)                                     | PostgreSQL            | Append-only fact log written in the business transaction; the replay source, since a broker is not |
+| Analytics projections and processed-event ids                  | Analytics PostgreSQL  | A separate server so the read model survives the case pipeline's database being unavailable        |
 | Waiting/active/retry queue records                             | Redis through BullMQ  | Fast worker coordination, locks, retries, backoff, cancellation, and bounded operational retention |
 | LangGraph checkpoints                                          | PostgreSQL            | A worker can resume a durable workflow after a restart                                             |
 | Model weights                                                  | Ollama volume         | Free local chat and embedding models without sending documents to a cloud provider                 |

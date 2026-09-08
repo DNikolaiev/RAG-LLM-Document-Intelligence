@@ -285,9 +285,29 @@ services:
       args: { PACKAGE: '@caselens/analytics' }
     environment:
       <<: *app-environment
+      # Only this service is given the projection's credentials. The others literally cannot reach
+      # it, which is a cheaper guarantee than asking them not to.
+      ANALYTICS_DATABASE_URL: postgresql://caselens_analytics:${ANALYTICS_DATABASE_PASSWORD:?Set ANALYTICS_DATABASE_PASSWORD}@analytics-postgres:5432/caselens_analytics
     depends_on:
       rabbitmq: { condition: service_healthy }
+      analytics-migrate: { condition: service_completed_successfully }
     restart: unless-stopped
+
+  # The projection's own migrations, applied to its own server. Deliberately not folded into
+  # postgres-migrate: the two schemas version independently, which is the point of the split.
+  analytics-migrate:
+    image: postgres:17-alpine
+    environment:
+      PGHOST: analytics-postgres
+      PGDATABASE: caselens_analytics
+      PGUSER: caselens_analytics
+      PGPASSWORD: ${ANALYTICS_DATABASE_PASSWORD:?Set ANALYTICS_DATABASE_PASSWORD}
+    volumes:
+      - ../apps/analytics/migrations:/migrations:ro
+    command: ['sh', '-c', 'psql -v ON_ERROR_STOP=1 -f /migrations/0001_projection_base.sql']
+    depends_on:
+      analytics-postgres: { condition: service_healthy }
+    restart: 'no'
 
   web:
     build:
