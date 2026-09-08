@@ -27,6 +27,11 @@ export const appConfigSchema = z
     EVENT_RELAY_ENABLED: environmentBoolean.default(false),
     EVENT_RELAY_INTERVAL_MS: z.coerce.number().int().min(100).max(60_000).default(1000),
     EVENT_RELAY_BATCH_SIZE: z.coerce.number().int().min(1).max(1000).default(100),
+    ANALYTICS_QUEUE_NAME: z.string().min(1).default('analytics.events'),
+    // How many unacknowledged deliveries the broker may hold in flight for one consumer. Left
+    // modest on purpose: the queue is the right place for a backlog to wait, not the consumer's
+    // heap.
+    ANALYTICS_PREFETCH: z.coerce.number().int().min(1).max(1000).default(16),
     S3_ENDPOINT: optionalUrl,
     S3_REGION: z.string().min(1).default('eu-central-1'),
     S3_BUCKET: z.string().min(1).default('caselens'),

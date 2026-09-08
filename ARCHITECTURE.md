@@ -37,7 +37,13 @@ NestJS application API
                                 RabbitMQ topic exchange caselens.events
                                               |
                                               v
-                                        (no consumers yet)
+                                     queue analytics.events
+                                              |
+                                              v
+                                      apps/analytics ----> its OWN database
+                                              | (unprocessable)
+                                              v
+                                     analytics.events.dlq
 ```
 
 The browser never talks directly to PostgreSQL, Redis, MinIO, or Ollama. Next.js forwards the selected local test identity to NestJS; NestJS authorizes every case, policy, source-file, and job request. Source bytes are streamed only after authorization.
@@ -107,11 +113,26 @@ backlog behind it would trade one stuck event for all of them.
 
 ### Current status
 
-The exchange `caselens.events` is declared, durable, and receiving messages. **There are no bindings
-yet**, so RabbitMQ discards what it delivers — the facts are recoverable only from the outbox, which
-is exactly the property the outbox exists to provide. `apps/analytics` — a CQRS read model with its
-own PostgreSQL, deduping on event id — is the next phase; see
-[`docs/superpowers/plans/2026-09-06-event-backbone.md`](docs/superpowers/plans/2026-09-06-event-backbone.md).
+`apps/analytics` is the first consumer, and the first service in this system that learns about the
+business from events rather than from the database. It shares no schema, no repository and no
+workspace package with the case pipeline - only the wire format in `packages/events` - so it can be
+deployed, broken or rebuilt without the pipeline noticing, and `apps/api` does not know it exists.
+
+Three details in its topology are deliberate:
+
+- **One binding per event type it handles**, never `#`. A binding is a consumer declaring its
+  interest; a wildcard hands that decision back to the publisher, so a new event type added to the
+  contract would start arriving before anyone decided what to do with it.
+- **Acknowledge after processing, never on receipt.** The broker forgets an acknowledged message, so
+  acking first would turn a crash mid-projection into a lost fact.
+- **`x-dead-letter-exchange` declared up front**, before any retry logic uses it. Queue arguments are
+  immutable in RabbitMQ: redeclaring a queue with different arguments is refused with
+  PRECONDITION_FAILED, so adding the argument later is a destructive migration rather than a
+  configuration change.
+
+Still to come, in [`docs/superpowers/plans/2026-09-06-event-backbone.md`](docs/superpowers/plans/2026-09-06-event-backbone.md):
+the projection itself with idempotent apply, `finding.raised` (declared in the contract but not yet
+emitted), retry-before-dead-letter, replay from the outbox, and consumer lag surfaced as a number.
 
 ## Design boundaries
 
@@ -124,6 +145,7 @@ own PostgreSQL, deduping on event id — is the next phase; see
 - `packages/document-pipeline` preserves document, page, extraction, confidence, and evidence provenance.
 - `packages/retrieval` enforces tenant, domain, pack-version, validity, and revocation scope before ranking evidence.
 - `packages/workflow` owns resumable orchestration and human-review pauses.
+- `apps/analytics` consumes domain facts into its own read model and shares no table with any other service.
 - `packages/events` defines the domain-event envelope and payload schemas shared by publisher and consumer.
 - `packages/persistence` defines the PostgreSQL/pgvector schema, indexes, and tenant RLS policies.
 

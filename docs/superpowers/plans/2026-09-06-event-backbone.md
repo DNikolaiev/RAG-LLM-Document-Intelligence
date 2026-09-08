@@ -63,7 +63,7 @@ First three events, chosen because they are what a throughput read model needs: 
 
 **Phase 1 — the outbox. Done.** `domain_events` is written from `apps/api` inside the transaction that makes the business change. An integration test proves a rolled-back change leaves no event.
 
-**Phase 2 — transport and the read model. Half done.** The relay drains the outbox to the `caselens.events` topic exchange on a confirm channel, claims its batch under `FOR UPDATE SKIP LOCKED` so several relays partition the backlog, and quarantines a row it can never publish instead of letting it starve the batch. **`apps/analytics` does not exist yet**, so the exchange has no bindings and every message is discarded on arrival — recoverable only from the outbox, which is the property the outbox exists to provide.
+**Phase 2 — transport and the read model. Half done.** The relay drains the outbox to the `caselens.events` topic exchange on a confirm channel, claims its batch under `FOR UPDATE SKIP LOCKED` so several relays partition the backlog, and quarantines a row it can never publish instead of letting it starve the batch. `apps/analytics` now exists and consumes: a durable queue, explicit bindings per event type, ack-after-processing, and a dead-letter queue for what it cannot process. It has no projection yet, so it logs what arrives. Everything below step 1a remains to be built.
 
 **Phase 3 — the hard parts. Not started.** Replay, a dead-letter queue with a poison-message test, and visible consumer lag.
 
@@ -97,13 +97,13 @@ flowchart TD
   S2 -. "a second dimension<br/>to project" .-> S5
 ```
 
-### 1. `apps/analytics` — the first consumer
+### 1a. `apps/analytics` — the first consumer. Done.
 
 The point of the whole exercise: a service that learns everything from events, owns its own database, and could be deleted without the case pipeline noticing.
 
-- New workspace app modelled on `apps/worker` (plain Node ESM, `@caselens/config`, `@caselens/events`, `amqplib`), with its own file under `infra/docker/` and a compose service. The `analytics-postgres` container and its volume are already running and empty.
-- Assert a **durable queue** `analytics.events` bound to `caselens.events` with `case.*`. A durable queue and a persistent message are two different things and both are needed.
-- Manual ack with a bounded `prefetch`, so a slow projection applies backpressure instead of buffering the backlog in memory.
+- ~~New workspace app modelled on `apps/worker`~~ — done. Plain Node ESM, no NestJS: the point of the service is that a second service can be built against nothing but the event contract, and a framework shared with `apps/api` would quietly make it look like another arm of the same application. It reuses `infra/docker/node.Dockerfile`, which is already parameterised by `PACKAGE`.
+- ~~Assert a **durable queue** bound to the exchange~~ — done, with one binding per handled event type rather than `case.*`, which would have excluded `finding.raised`. The dead-letter exchange is declared now because queue arguments are immutable and adding one later means deleting the queue.
+- ~~Manual ack with a bounded `prefetch`~~ — done, so a slow projection applies backpressure instead of buffering the backlog in memory.
 - Its own migrations, separate from `packages/persistence`. Two shapes: `processed_events(event_id PK, sequence, processed_at)` and the projection tables.
 - **Dedupe and project in one transaction.** Delivery is at-least-once, so the consumer will see the same event twice. Recording the id and updating the projection in separate transactions recreates the dual-write problem on the consumer side — the same bug the outbox removed on the publisher side, which is worth running into rather than being told about.
 - Answer the question this plan set: cases decided per tenant per day, and median time from creation to decision. `case.decided` already carries `caseCreatedAt` precisely so this needs no lookup back into the case service.

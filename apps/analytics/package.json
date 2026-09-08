@@ -1,0 +1,25 @@
+{
+  "name": "@caselens/analytics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/main.ts",
+    "lint": "tsc --noEmit",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@caselens/config": "0.1.0",
+    "@caselens/events": "0.1.0",
+    "amqplib": "^2.0.1"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.8",
+    "tsx": "^4.20.6",
+    "typescript": "^6.0.0",
+    "vitest": "^4.1.11"
+  }
+}

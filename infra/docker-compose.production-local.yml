@@ -275,6 +275,20 @@ services:
       ocr: { condition: service_healthy }
     restart: unless-stopped
 
+  # The first service that learns about the business from events rather than from the database.
+  # It shares no schema, no repository and no package with the case pipeline - only the wire format
+  # in @caselens/events - which is what makes it deployable and breakable on its own.
+  analytics:
+    build:
+      context: ..
+      dockerfile: infra/docker/node.Dockerfile
+      args: { PACKAGE: '@caselens/analytics' }
+    environment:
+      <<: *app-environment
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+    restart: unless-stopped
+
   web:
     build:
       context: ..
