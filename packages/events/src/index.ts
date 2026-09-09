@@ -89,3 +89,33 @@ export function routingKeyFor(type: DomainEventType): string {
 }
 
 export const EVENT_EXCHANGE = 'caselens.events';
+
+/**
+ * Where a replay is published, deliberately not the live exchange.
+ *
+ * Republishing history onto `caselens.events` would deliver it to every bound consumer, so one
+ * service rebuilding its projection would flood services that never asked. A replay is addressed
+ * to whoever chose to bind a replay queue, and nobody else.
+ */
+export const REPLAY_EXCHANGE = 'caselens.events.replay';
+
+/**
+ * The control message that opens a replay stream.
+ *
+ * A replay is not just re-delivery: consumers dedupe on event id, so re-sending history to a
+ * consumer that has already seen it changes nothing. Rebuilding a projection means discarding what
+ * was derived and deriving it again, and this message is what tells a consumer to do that. It
+ * travels ahead of the events on the same queue, so the ordering is the broker's guarantee rather
+ * than a race between two services.
+ */
+export const ReplayStartedSchema = z.object({
+  control: z.literal('replay.started'),
+  replayId: z.string().min(1),
+  startedAt: z.iso.datetime(),
+});
+export type ReplayStarted = z.infer<typeof ReplayStartedSchema>;
+
+/** True when a message on the replay stream is control rather than a fact. */
+export function isReplayControl(input: unknown): input is ReplayStarted {
+  return ReplayStartedSchema.safeParse(input).success;
+}

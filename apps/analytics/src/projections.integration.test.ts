@@ -121,6 +121,62 @@ describe.skipIf(!databaseUrl)('case projections', () => {
       await store.close();
     }
   });
+  it('rebuilds from history after a reset, including facts the live path lost', async () => {
+    // The scenario this exists for, seen for real in this project: a case.decided published on
+    // 2026-09-05 to an exchange that had no bindings. RabbitMQ discarded it on arrival and the relay
+    // stamped published_at, so no redelivery will ever produce it again. The outbox row is the only
+    // surviving copy, and replay is the only path from there to the read model.
+    const store = new AnalyticsStore(databaseUrl!);
+    const sql = postgres(databaseUrl!, { prepare: false });
+    const tenantId = `tenant_replay_${Date.now().toString(36)}`;
+    const caseId = `case_${tenantId}`;
+
+    try {
+      // A stale projection, derived from a history that has since been corrected.
+      const stale = created(caseId, tenantId, '2026-09-01T09:00:00.000Z');
+      await store.apply(stale, (tx) => project(tx, stale));
+      expect(await store.lastSequence()).toBeGreaterThan(0);
+
+      await store.reset();
+
+      // Everything derived is gone, `processed_events` included. Keeping the ids would make the
+      // rebuild a no-op - every event would report itself already applied.
+      expect(
+        await sql`select count(*)::int as count from processed_events where event_id = ${stale.id}`,
+      ).toEqual([{ count: 0 }]);
+      expect(await store.lastSequence()).toBe(0);
+      expect(
+        await sql`select count(*)::int as count from case_throughput_daily where tenant_id = ${tenantId}`,
+      ).toEqual([{ count: 0 }]);
+
+      // The rebuild runs through exactly the code live traffic runs through, which is what makes it
+      // trustworthy: a replay path with its own projection logic could rebuild something the live
+      // path would never produce.
+      for (const event of [
+        created(caseId, tenantId, '2026-09-01T09:00:00.000Z'),
+        decided(caseId, tenantId, '2026-09-05T09:00:00.000Z', {
+          outcome: 'approve',
+          caseCreatedAt: '2026-09-01T09:00:00.000Z',
+        }),
+      ]) {
+        expect(await store.apply(event, (tx) => project(tx, event))).toBe('applied');
+      }
+
+      expect(
+        await sql`select sum(created)::int as created, sum(decided)::int as decided
+          from case_throughput_daily where tenant_id = ${tenantId}`,
+      ).toEqual([{ created: 1, decided: 1 }]);
+      // Attributed rather than 'unknown': the replay carried the creation too, so the decision has
+      // its dimension back. That is the gap replay closes.
+      expect(
+        await sql`select domain_pack_id from case_throughput_daily
+          where tenant_id = ${tenantId} and decided > 0`,
+      ).toEqual([{ domain_pack_id: 'pack_a' }]);
+    } finally {
+      await cleanup(sql, tenantId, caseId);
+      await store.close();
+    }
+  });
 });
 
 async function cleanup(sql: postgres.Sql, tenantId: string, caseId: string): Promise<void> {

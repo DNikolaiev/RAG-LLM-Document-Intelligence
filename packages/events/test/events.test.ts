@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { parseDomainEvent, routingKeyFor, type DomainEvent } from '../src/index.js';
+import {
+  isReplayControl,
+  parseDomainEvent,
+  routingKeyFor,
+  type DomainEvent,
+} from '../src/index.js';
 
 const decided = {
   id: 'evt_01',
@@ -42,5 +47,39 @@ describe('domain events', () => {
 
   it('routes on the event type', () => {
     expect(routingKeyFor('case.decided')).toBe('case.decided');
+  });
+});
+
+describe('replay control', () => {
+  it('is distinguishable from a fact without guessing', () => {
+    // Control and facts share one queue so their order is the broker's guarantee rather than a race
+    // between two services. That only works if a consumer can tell them apart unambiguously.
+    expect(
+      isReplayControl({
+        control: 'replay.started',
+        replayId: 'replay_1',
+        startedAt: '2026-09-09T10:00:00.000Z',
+      }),
+    ).toBe(true);
+    expect(
+      isReplayControl({
+        id: 'evt_a',
+        type: 'case.created',
+        tenantId: 'tenant_demo',
+        aggregateType: 'case',
+        aggregateId: 'case_a',
+        occurredAt: '2026-09-09T10:00:00.000Z',
+        sequence: 1,
+        payload: { reference: 'A', domainPackId: 'p', domainPackVersion: '1.0.0' },
+      }),
+    ).toBe(false);
+    // A fact type that merely looks controlling is still a fact, and vice versa.
+    expect(
+      isReplayControl({
+        control: 'replay.finished',
+        replayId: 'r',
+        startedAt: '2026-09-09T10:00:00.000Z',
+      }),
+    ).toBe(false);
   });
 });

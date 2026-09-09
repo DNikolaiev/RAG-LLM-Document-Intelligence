@@ -123,7 +123,7 @@ Distinct from the quarantine already built. That one is **publisher-side** — a
 - Reject with `requeue=false` once a delivery has failed enough times, rather than requeuing forever.
 - A test that publishes a deliberately unprocessable message and asserts it lands in the DLQ while the next good message is still processed.
 
-### 4. Replay
+### 4. Replay. Done.
 
 The payoff of deciding that the outbox is the log. Drop the projection, rebuild it from `domain_events` in sequence order, and the read model becomes safe to change.
 
@@ -133,7 +133,7 @@ There is a real tension to resolve deliberately rather than by accident: the con
 - **(b)** A replay publisher on the worker side re-reads the outbox and republishes to a replay-scoped queue; analytics consumes it exactly as it consumes live traffic.
 - **(c)** An admin endpoint on `apps/api` that streams history.
 
-**(b) is the intended choice** unless it proves awkward in practice: the consumer stays a consumer, and a projection rebuilt through the same code path as live traffic is a rebuild worth trusting.
+**(b) was built.** A `replay.started` control message opens the stream on a replay-specific exchange, analytics clears its projections and `processed_events` in one transaction on seeing it, and the history that follows runs through exactly the consumer code live traffic runs through. The consumer stayed a consumer.
 
 ### 5. Make consumer lag visible
 

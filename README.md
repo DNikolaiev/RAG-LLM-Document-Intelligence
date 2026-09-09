@@ -132,6 +132,13 @@ and 90th-percentile time from creation to decision, and how far the read model h
 console reaches it as a second upstream, never through `apps/api`, and does not wait for it to
 start — if the read model is down that page says so and nothing else notices.
 
+A projection can be rebuilt from history with
+`docker compose ... run --rm worker npm run replay`, which republishes the outbox to a
+replay-specific exchange. That is what the outbox is for: a broker forgets an acknowledged message,
+so a fact published before this service existed — accepted by RabbitMQ, matched to no queue,
+discarded — is unrecoverable by any redelivery, and still sitting in `domain_events` in sequence
+order.
+
 It shares no schema, no repository and no workspace package with the case pipeline — only the wire
 format in `packages/events`. `apps/api` does not know it exists.
 

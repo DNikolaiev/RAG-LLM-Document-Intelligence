@@ -171,9 +171,41 @@ Keycloak tokens (see the production backlog) is a change to one function instead
 The console does not `depends_on` analytics: the read-model page reports that it cannot answer and
 nothing else in the console notices, which is the independence the separate service is for.
 
+### Replay
+
+A broker forgets an acknowledged message, so a projection can never be rebuilt from it. The outbox
+can, and this is what that decision was for.
+
+The need is not hypothetical here. `case.decided` sequence 1 was published on 2026-09-05 to an
+exchange that had no bindings yet: RabbitMQ accepted it, matched it to zero queues, and discarded
+it. `published_at` is stamped, so the relay will never send it again. The fact exists, correctly
+recorded inside the transaction that made the decision, and no amount of redelivery will ever put it
+in the read model.
+
+`npm run replay --workspace=@caselens/worker` re-reads `domain_events` in sequence order and
+republishes it. Four things about how:
+
+- **On the publisher's side.** Letting analytics select from `domain_events` would be less code and
+  would break the invariant that makes it independent - a consumer able to read another service's
+  tables is coupled to that schema whether or not it currently joins on it.
+- **To `caselens.events.replay`, not the live exchange.** History republished to `caselens.events`
+  would reach every bound consumer, so one service rebuilding would flood services that never asked.
+- **Opened by a `replay.started` control message** on the same queue as the facts, so the ordering
+  between "discard what you derived" and "here is the history" is the broker's guarantee rather than
+  a race between two services. Analytics answers it by clearing its projections **and**
+  `processed_events` in one transaction: keeping the ids would make the rebuild a no-op, since every
+  event would report itself already applied.
+- **Through the same consumer code as live traffic.** A replay path with its own projection logic
+  could rebuild something the live path would never produce, which is the one thing a rebuild must
+  not do.
+
+A row the current contract cannot parse is skipped rather than aborting the run - history
+accumulates across schema versions - but a broker refusal stops it, because a projection rebuilt
+from a hole in the middle of history is worse than the stale one it replaced.
+
 Still to come, in [`docs/superpowers/plans/2026-09-06-event-backbone.md`](docs/superpowers/plans/2026-09-06-event-backbone.md):
-`finding.raised` (declared in the contract but not yet emitted), retry-before-dead-letter, replay
-from the outbox, and full consumer lag - which needs the outbox high-water mark from the publisher
+`finding.raised` (declared in the contract but not yet emitted), retry-before-dead-letter, and full
+consumer lag - which needs the outbox high-water mark from the publisher
 side, since lag is a statement about two systems and cannot be measured from inside one of them.
 
 ## Design boundaries

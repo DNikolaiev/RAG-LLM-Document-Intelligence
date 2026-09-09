@@ -179,6 +179,27 @@ export class AnalyticsStore {
     };
   }
 
+  /**
+   * Discards everything derived, so a replay can derive it again.
+   *
+   * `processed_events` goes with the projections and that is the whole point. Leaving it would make
+   * a replay a no-op: every id is already recorded, so `apply` would report `duplicate` for the
+   * entire history and the stale projection would survive untouched. Idempotency protects against
+   * redelivery, and forgetting on purpose is how a rebuild gets past it.
+   *
+   * One transaction, so a crash mid-reset cannot leave counters cleared while the ids that would
+   * let them be rebuilt are still in place - a projection that is empty and believes it is complete.
+   */
+  async reset(): Promise<void> {
+    await this.#sql.begin(async (tx) => {
+      await tx`delete from case_throughput_daily`;
+      await tx`delete from case_cycle_time`;
+      await tx`delete from case_dimensions`;
+      await tx`delete from processed_events`;
+      await tx`delete from projection_state`;
+    });
+  }
+
   /** The highest sequence this projection has applied; the consumer half of the lag measurement. */
   async lastSequence(): Promise<number> {
     const rows = await this.#sql<Array<{ last_sequence: string }>>`

@@ -616,6 +616,37 @@ export class PostgresCaseStore {
     });
   }
 
+  /**
+   * Reads history for a replay: every event in sequence order, whatever its delivery state.
+   *
+   * Deliberately ignores `published_at` and `failed_at`. Those columns record what the *relay* did
+   * with a row; a replay is not re-delivery, it is re-derivation, and a consumer rebuilding its
+   * projection needs the whole log - including facts that were published years ago to an exchange
+   * with no bindings, which is exactly how a fact ends up recorded and yet never seen.
+   *
+   * Paged by sequence rather than offset so a long replay cannot skip or repeat rows if the table
+   * grows underneath it.
+   */
+  async readEventsForReplay(afterSequence: number, limit: number): Promise<StoredDomainEvent[]> {
+    return this.withScope({ tenantIds: [], platformAdmin: true }, async (tx) => {
+      const rows = await tx<Array<Record<string, unknown>>>`
+        select id, sequence, tenant_id, type, aggregate_type, aggregate_id, payload, occurred_at
+        from domain_events
+        where sequence > ${afterSequence}
+        order by sequence asc limit ${limit}`;
+      return rows.map((row) => ({
+        id: String(row.id),
+        sequence: Number(row.sequence),
+        tenantId: String(row.tenant_id),
+        type: String(row.type),
+        aggregateType: String(row.aggregate_type),
+        aggregateId: String(row.aggregate_id),
+        payload: row.payload,
+        occurredAt: new Date(row.occurred_at as string).toISOString(),
+      }));
+    });
+  }
+
   private async appendJobEventInTransaction(
     tx: postgres.TransactionSql,
     jobId: string,

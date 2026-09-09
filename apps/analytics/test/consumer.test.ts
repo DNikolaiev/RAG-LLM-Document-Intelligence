@@ -63,7 +63,7 @@ function fakeBroker() {
     /** Hands the consumer a message and waits for its async settle to run. */
     async push(body: unknown, messageId = 'evt_a') {
       this.emit(body, messageId);
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await settle();
     },
     connect: async () =>
       ({
@@ -71,6 +71,19 @@ function fakeBroker() {
         close: async () => {},
       }) as never,
   };
+}
+
+/**
+ * Lets every pending promise resolve, without depending on wall-clock time.
+ *
+ * `setImmediate` runs after the microtask queue drains, so a few turns of it settle the consumer's
+ * chain deterministically. A `setTimeout` version passes on an idle machine and fails under a loaded
+ * test runner - which is exactly how this file first went red.
+ */
+async function settle(): Promise<void> {
+  for (let turn = 0; turn < 4; turn += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
 }
 
 function event(overrides: Partial<DomainEvent> = {}): Record<string, unknown> {
@@ -176,21 +189,20 @@ describe('analytics consumer', () => {
     // broker pushes, not what the consumer works on. Handling deliveries concurrently let a
     // case.decided transaction open before the case.created it depends on had committed, and a real
     // decision was attributed to an unknown domain pack.
+    //
+    // Asserted with gates rather than delays. A sleep-based version passes on an idle machine and
+    // fails under a loaded runner, which makes it a source of noise rather than a guard.
     const broker = fakeBroker();
-    let inFlight = 0;
-    let maxInFlight = 0;
-    const order: string[] = [];
+    const started: string[] = [];
+    const gates: Array<() => void> = [];
 
     await startAnalyticsConsumer({
       url: 'amqp://x',
       queue: 'analytics.events',
       prefetch: 16,
       handle: async (incoming) => {
-        inFlight += 1;
-        maxInFlight = Math.max(maxInFlight, inFlight);
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        order.push(incoming.id);
-        inFlight -= 1;
+        started.push(incoming.id);
+        await new Promise<void>((resolve) => gates.push(resolve));
       },
       connect: broker.connect,
     });
@@ -199,10 +211,22 @@ describe('analytics consumer', () => {
     broker.emit(event({ id: 'evt_1' }), 'evt_1');
     broker.emit(event({ id: 'evt_2' }), 'evt_2');
     broker.emit(event({ id: 'evt_3' }), 'evt_3');
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await settle();
 
-    expect(maxInFlight).toBe(1);
-    expect(order).toEqual(['evt_1', 'evt_2', 'evt_3']);
+    // Only the first has been offered to the projection; the other two are waiting their turn.
+    expect(started).toEqual(['evt_1']);
+
+    gates[0]!();
+    await settle();
+    expect(started).toEqual(['evt_1', 'evt_2']);
+    expect(broker.recorded.acked).toEqual(['evt_1']);
+
+    gates[1]!();
+    await settle();
+    expect(started).toEqual(['evt_1', 'evt_2', 'evt_3']);
+
+    gates[2]!();
+    await settle();
     expect(broker.recorded.acked).toEqual(['evt_1', 'evt_2', 'evt_3']);
   });
 

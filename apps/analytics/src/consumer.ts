@@ -1,5 +1,11 @@
 import amqp, { type Channel, type ChannelModel, type ConsumeMessage } from 'amqplib';
-import { EVENT_EXCHANGE, parseDomainEvent, type DomainEvent } from '@caselens/events';
+import {
+  EVENT_EXCHANGE,
+  isReplayControl,
+  parseDomainEvent,
+  type DomainEvent,
+  type ReplayStarted,
+} from '@caselens/events';
 
 /**
  * Where a message goes when analytics cannot process it.
@@ -20,9 +26,17 @@ export const EVENT_DLX = 'caselens.events.dlx';
  */
 export const ANALYTICS_BINDINGS = ['case.created', 'case.decided', 'finding.raised'] as const;
 
+/**
+ * A replay stream carries the same facts plus the control message that opens it, so its queue binds
+ * one extra key. Still enumerated rather than `#`, for the same reason.
+ */
+export const ANALYTICS_REPLAY_BINDINGS = ['replay.started', ...ANALYTICS_BINDINGS] as const;
+
 export interface AnalyticsConsumerOptions {
   url: string;
   queue: string;
+  /** Defaults to the live exchange; a replay consumer points at the replay one instead. */
+  exchange?: string;
   /**
    * How many unacknowledged messages the broker may have in flight. Without a limit RabbitMQ pushes
    * the entire backlog at once and a slow projection buffers it in memory instead of leaving it
@@ -31,6 +45,11 @@ export interface AnalyticsConsumerOptions {
   prefetch: number;
   bindings?: readonly string[];
   handle: (event: DomainEvent) => Promise<void>;
+  /**
+   * Called for a control message rather than a fact. Absent on the live stream, where a control
+   * message would be a publisher bug and is dead-lettered like anything else unreadable.
+   */
+  onControl?: (control: ReplayStarted) => Promise<void>;
   /** Injectable so a test can assert topology and ack behaviour without a broker. */
   connect?: (url: string) => Promise<ChannelModel>;
   onError?: (error: Error) => void;
@@ -59,7 +78,8 @@ export async function startAnalyticsConsumer(
   // Both sides assert the topology they depend on. The relay declares the exchange too, so either
   // service can start first, in any order, on an empty broker - and neither has to be taught about
   // the other's deployment.
-  await channel.assertExchange(EVENT_EXCHANGE, 'topic', { durable: true });
+  const exchange = options.exchange ?? EVENT_EXCHANGE;
+  await channel.assertExchange(exchange, 'topic', { durable: true });
   await channel.assertExchange(EVENT_DLX, 'topic', { durable: true });
 
   const deadLetterQueue = `${options.queue}.dlq`;
@@ -75,7 +95,7 @@ export async function startAnalyticsConsumer(
     arguments: { 'x-dead-letter-exchange': EVENT_DLX },
   });
   for (const pattern of options.bindings ?? ANALYTICS_BINDINGS) {
-    await channel.bindQueue(options.queue, EVENT_EXCHANGE, pattern);
+    await channel.bindQueue(options.queue, exchange, pattern);
   }
   await channel.prefetch(options.prefetch);
 
@@ -85,7 +105,16 @@ export async function startAnalyticsConsumer(
 
     let event: DomainEvent;
     try {
-      event = parseDomainEvent(JSON.parse(message.content.toString()));
+      const body: unknown = JSON.parse(message.content.toString());
+      if (options.onControl && isReplayControl(body)) {
+        // Control is settled the same way a fact is: acknowledged only once acted on, so a crash
+        // mid-reset redelivers the instruction rather than dropping it and replaying history onto a
+        // projection that was never cleared.
+        await options.onControl(body);
+        channel.ack(message);
+        return;
+      }
+      event = parseDomainEvent(body);
     } catch (error) {
       // Requeueing would be a hot loop: nothing about this message improves by trying it again.
       options.onError?.(
