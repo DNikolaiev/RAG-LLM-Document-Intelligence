@@ -1,6 +1,6 @@
-# CaseLens [![verify](https://github.com/DNikolaiev/caselens/actions/workflows/ci.yml/badge.svg)](https://github.com/DNikolaiev/caselens/actions/workflows/ci.yml)
+# Document Intelligence [![verify](https://github.com/DNikolaiev/caselens/actions/workflows/ci.yml/badge.svg)](https://github.com/DNikolaiev/caselens/actions/workflows/ci.yml)
 
-CaseLens is a domain-neutral document-intelligence and compliance-review application. It turns a business dossier into traceable facts, evidence-backed findings, and a human-reviewed decision. The included example evaluates a pharmaceutical supplier; domain packs let the same engine support legal, insurance, or manufacturing workflows.
+This is a domain-neutral document-intelligence and compliance-review application. It turns a business dossier into traceable facts, evidence-backed findings, and a human-reviewed decision. The included example evaluates a pharmaceutical supplier; domain packs let the same engine support legal, insurance, or manufacturing workflows.
 
 ## Run the deterministic demo
 
