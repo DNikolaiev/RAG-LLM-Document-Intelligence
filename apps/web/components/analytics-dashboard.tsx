@@ -36,7 +36,12 @@ interface Loaded {
   days: ThroughputDay[];
   cycle: CycleTime;
   rules: RuleRow[];
-  lastProjectedSequence: number;
+  /**
+   * Both halves of consumer lag, or null for a reviewer who may not see them. They are global
+   * sequence counters across every tenant, so a single-tenant reviewer reading them would learn how
+   * much work everybody else is doing - lag is an operator's question.
+   */
+  lag: { projected: number; recorded: number } | null;
 }
 
 type Result = { ok: true; data: Loaded } | { ok: false };
@@ -48,26 +53,32 @@ type Result = { ok: true; data: Loaded } | { ok: false };
  */
 async function fetchAnalytics(): Promise<Result> {
   try {
-    const [throughput, cycle, rules, state] = await Promise.all([
+    const [throughput, cycle, rules, projected, recorded] = await Promise.all([
       fetch('/api/analytics/throughput', { cache: 'no-store' }),
       fetch('/api/analytics/cycle-time', { cache: 'no-store' }),
       fetch('/api/analytics/rules', { cache: 'no-store' }),
       fetch('/api/analytics/state', { cache: 'no-store' }),
+      fetch('/api/events/state', { cache: 'no-store' }),
     ]);
-    if (!throughput.ok || !cycle.ok || !rules.ok || !state.ok) return { ok: false };
-    const days = ((await throughput.json()) as { days: ThroughputDay[] }).days;
+    // The lag pair is allowed to be forbidden - that is a reviewer seeing the page, not an outage -
+    // so only the projection queries decide whether the read model answered at all.
+    if (!throughput.ok || !cycle.ok || !rules.ok) return { ok: false };
+    // Defaulted rather than trusted. A response whose shape is not what this page expects - a
+    // proxy error body, a version skew between console and service - should degrade to an empty
+    // table, not throw during render and take the whole page down with it.
+    const days = ((await throughput.json()) as { days?: ThroughputDay[] }).days ?? [];
     const summary = (await cycle.json()) as CycleTime;
-    const ruleRows = ((await rules.json()) as { rules: RuleRow[] }).rules;
-    const projected = (await state.json()) as { lastProjectedSequence: number };
-    return {
-      ok: true,
-      data: {
-        days,
-        cycle: summary,
-        rules: ruleRows,
-        lastProjectedSequence: projected.lastProjectedSequence,
-      },
-    };
+    const ruleRows = ((await rules.json()) as { rules?: RuleRow[] }).rules ?? [];
+    const lag =
+      projected.ok && recorded.ok
+        ? {
+            projected: ((await projected.json()) as { lastProjectedSequence: number })
+              .lastProjectedSequence,
+            recorded: ((await recorded.json()) as { lastRecordedSequence: number })
+              .lastRecordedSequence,
+          }
+        : null;
+    return { ok: true, data: { days, cycle: summary, rules: ruleRows, lag } };
   } catch {
     return { ok: false };
   }
@@ -140,11 +151,13 @@ export function AnalyticsDashboard() {
               value={duration(data.cycle.p90Seconds)}
               hint="The slowest tenth, which an average would hide"
             />
-            <Tile
-              label="Events projected"
-              value={String(data.lastProjectedSequence)}
-              hint="Highest outbox sequence this read model has applied"
-            />
+            {data.lag ? (
+              <Tile
+                label="Read model lag"
+                value={lagLabel(data.lag)}
+                hint={`Projected ${data.lag.projected} of ${data.lag.recorded} recorded facts`}
+              />
+            ) : null}
           </div>
 
           <h2>Outcomes</h2>
@@ -262,6 +275,19 @@ function Tile({ label, value, hint }: { label: string; value: string; hint?: str
       {hint ? <small>{hint}</small> : null}
     </article>
   );
+}
+
+/**
+ * The gap between what has been recorded and what has been projected.
+ *
+ * Negative is impossible by construction - the projection watermark only ever moves forward, and
+ * only to sequences the outbox already assigned - so anything below zero would mean the two numbers
+ * came from different systems than they claim to.
+ */
+function lagLabel(lag: { projected: number; recorded: number }): string {
+  const behind = Math.max(0, lag.recorded - lag.projected);
+  if (behind === 0) return 'Up to date';
+  return behind === 1 ? '1 event behind' : `${behind} events behind`;
 }
 
 function duration(seconds: number | null): string {

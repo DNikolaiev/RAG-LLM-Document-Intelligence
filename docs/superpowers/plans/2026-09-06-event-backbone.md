@@ -65,7 +65,7 @@ First three events, chosen because they are what a throughput read model needs: 
 
 **Phase 2 — transport and the read model. Half done.** The relay drains the outbox to the `caselens.events` topic exchange on a confirm channel, claims its batch under `FOR UPDATE SKIP LOCKED` so several relays partition the backlog, and quarantines a row it can never publish instead of letting it starve the batch. `apps/analytics` now exists and consumes: a durable queue, explicit bindings per event type, ack-after-processing, and a dead-letter queue for what it cannot process. It has no projection yet, so it logs what arrives. Everything below step 1a remains to be built.
 
-**Phase 3 — the hard parts. Not started.** Replay, a dead-letter queue with a poison-message test, and visible consumer lag.
+**Phase 3 — the hard parts. Done.** Replay, a dead-letter queue with a poison-message test, and visible consumer lag.
 
 **Phase 4 — dropped (user, 2026-09-06).** The original plan was to move `process_case` and
 `process_policy` onto RabbitMQ and delete Redis. The user reversed that: the two brokers coexist,
@@ -135,7 +135,7 @@ There is a real tension to resolve deliberately rather than by accident: the con
 
 **(b) was built.** A `replay.started` control message opens the stream on a replay-specific exchange, analytics clears its projections and `processed_events` in one transaction on seeing it, and the history that follows runs through exactly the consumer code live traffic runs through. The consumer stayed a consumer.
 
-### 5. Make consumer lag visible
+### 5. Make consumer lag visible. Done.
 
 Eventual consistency is the thing everyone accepts in the abstract and is surprised by in practice. Surface `max(sequence)` in the outbox minus the highest sequence analytics has projected — as a number in the read API, and in the console if it is cheap. Then demonstrate it deliberately: pause the consumer, decide a case, watch the number climb and the read model disagree with the write model until it catches up.
 

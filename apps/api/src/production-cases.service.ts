@@ -202,6 +202,24 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     await Promise.all([this.#store.close(), this.#policies.close()]);
   }
 
+  /**
+   * The outbox high-water mark, for measuring how far a read model has fallen behind.
+   *
+   * Platform administrators only. The number counts every fact the system has recorded across every
+   * tenant, so handing it to a single-tenant reviewer would tell them how much work everybody else
+   * is doing - the same reason the analytics read API scopes its counts. Lag is an operator's
+   * question anyway.
+   */
+  async outboxState(context: RequestContext): Promise<{ lastRecordedSequence: number }> {
+    if (!context.platformAdmin) {
+      throw new ForbiddenException({
+        code: 'ROLE_FORBIDDEN',
+        message: 'Only a platform administrator can read the event backbone state.',
+      });
+    }
+    return { lastRecordedSequence: await this.#store.outboxHighWaterMark() };
+  }
+
   async health(): Promise<{ persistence: string; queue: string; storage: string }> {
     await this.#store.health();
     const [queue, storage] = await Promise.all([this.#queue.health(), this.#storage.health()]);

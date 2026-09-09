@@ -623,6 +623,24 @@ export class PostgresCaseStore {
   }
 
   /**
+   * The highest sequence the outbox has recorded.
+   *
+   * The publisher's half of consumer lag. The consumer knows how far it has projected and nothing
+   * else; this is the number it is behind. Neither service can compute the gap alone, which is not
+   * an inconvenience but the honest shape of the thing: lag is a statement about two systems.
+   *
+   * Counts every event, published or not, because a fact the relay has not yet delivered is
+   * genuinely something the read model is behind on.
+   */
+  async outboxHighWaterMark(): Promise<number> {
+    return this.withScope({ tenantIds: [], platformAdmin: true }, async (tx) => {
+      const rows = await tx<Array<{ high_water_mark: string | null }>>`
+        select max(sequence)::text as high_water_mark from domain_events`;
+      return Number(rows[0]?.high_water_mark ?? 0);
+    });
+  }
+
+  /**
    * Reads history for a replay: every event in sequence order, whatever its delivery state.
    *
    * Deliberately ignores `published_at` and `failed_at`. Those columns record what the *relay* did

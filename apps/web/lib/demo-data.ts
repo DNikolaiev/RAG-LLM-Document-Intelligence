@@ -644,6 +644,17 @@ function demoSourceUrl(documentId: string): string | undefined {
   return fixture ? `/demo-documents/${encodeURIComponent(fixture)}` : undefined;
 }
 
+/**
+ * How long a server-side call to the API may take before the page gives up.
+ *
+ * Two seconds is right in demo mode, where a slow answer is discarded in favour of the in-memory
+ * fixtures below and the only cost of giving up early is not waiting. In production mode there is no
+ * fallback: `apiGet` returning null renders the error boundary, so the same two seconds turns any
+ * momentary slowness into "The review queue did not load". Measured under Playwright with network
+ * interception, that was happening to roughly half of page loads.
+ */
+const API_TIMEOUT_MS = (process.env.APP_MODE ?? 'demo') === 'demo' ? 2_000 : 10_000;
+
 async function apiGet<T>(path: string): Promise<T | null> {
   if (process.env.NODE_ENV === 'test') return null;
   const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:4100';
@@ -653,7 +664,7 @@ async function apiGet<T>(path: string): Promise<T | null> {
     const response = await fetch(new URL(path, baseUrl), {
       cache: 'no-store',
       headers: testProfilesEnabled() ? { 'x-test-profile-id': profileId } : {},
-      signal: AbortSignal.timeout(2_000),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
     if (!response.ok) return null;
     return (await response.json()) as T;

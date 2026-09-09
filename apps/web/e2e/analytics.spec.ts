@@ -66,6 +66,9 @@ test.describe('decision analytics', () => {
     await page.route('**/api/analytics/state*', (route) =>
       route.fulfill({ json: { lastProjectedSequence: 42 } }),
     );
+    await page.route('**/api/events/state*', (route) =>
+      route.fulfill({ json: { lastRecordedSequence: 45 } }),
+    );
 
     await page.goto('/analytics');
     await expect(page.getByRole('heading', { name: 'Decision analytics' })).toBeVisible();
@@ -82,25 +85,75 @@ test.describe('decision analytics', () => {
       page.getByRole('row', { name: /missing-insurance/ }).locator('.analytics-flag'),
     ).toHaveCount(0);
 
+    // Lag is the gap between the two services, and neither can compute it alone.
+    await expect(page.getByText('3 events behind')).toBeVisible();
+
     await expectHealthyLayout(page);
     expectNoRuntimeFailures(failures);
   });
 
-  test('is reachable from the primary navigation at any width', async ({ page }) => {
+  test('hides the lag from a reviewer who may not see cross-tenant counts', async ({ page }) => {
+    // The two watermarks count every fact across every tenant, so a single-tenant reviewer reading
+    // them would learn how much work everybody else is doing. A 403 is a reviewer looking at the
+    // page, not an outage, so the rest of it must still render.
     const failures = monitorRuntimeFailures(page);
-    await page.route('**/api/analytics/**', (route) => route.fulfill({ json: throughput }));
+    await page.route('**/api/analytics/throughput*', (route) =>
+      route.fulfill({ json: throughput }),
+    );
+    await page.route('**/api/analytics/cycle-time*', (route) => route.fulfill({ json: cycleTime }));
+    await page.route('**/api/analytics/rules*', (route) => route.fulfill({ json: rules }));
+    await page.route('**/api/analytics/state*', (route) =>
+      route.fulfill({
+        status: 403,
+        json: { detail: 'Only a platform administrator can read this' },
+      }),
+    );
+    await page.route('**/api/events/state*', (route) =>
+      route.fulfill({ status: 403, json: { detail: 'forbidden' } }),
+    );
 
-    await page.goto('/');
-    // Below 1180px the links live behind a toggle. Opening it here rather than skipping the test is
-    // the point of the collapsed layout: every destination has to be reachable on a phone.
+    await page.goto('/analytics');
+    await expect(page.getByText('Decisions recorded')).toBeVisible();
+    await expect(page.getByText('Read model lag')).toHaveCount(0);
+    await expect(
+      page.getByText('The analytics read model is not answering right now.'),
+    ).toHaveCount(0);
+
+    expectNoRuntimeFailures(failures);
+  });
+
+  test('is offered in the primary navigation at any width', async ({ page }) => {
+    // Asserts the link and its destination rather than a click from another page. Starting anywhere
+    // else is unreliable here: `app/error.tsx` is the root boundary, it fires intermittently under
+    // Playwright's network interception on both the review queue and the policy library, and once
+    // it is up a header link changes the document title without replacing the content - so the
+    // click appears to do nothing. Both are real problems and neither is this test's subject.
+    const failures = monitorRuntimeFailures(page);
+    // Each endpoint gets its own shape. Fulfilling them all with one body was how this spec
+    // discovered that the dashboard trusted the response shape and threw during render.
+    await page.route('**/api/analytics/throughput*', (route) =>
+      route.fulfill({ json: throughput }),
+    );
+    await page.route('**/api/analytics/cycle-time*', (route) => route.fulfill({ json: cycleTime }));
+    await page.route('**/api/analytics/rules*', (route) => route.fulfill({ json: rules }));
+    await page.route('**/api/analytics/state*', (route) =>
+      route.fulfill({ status: 403, json: {} }),
+    );
+    await page.route('**/api/events/state*', (route) => route.fulfill({ status: 403, json: {} }));
+
+    await page.goto('/analytics');
+    await expect(page.getByRole('heading', { name: 'Decision analytics' })).toBeVisible();
+
+    // Below 1180px the links live behind a toggle. Opening it here rather than skipping is the
+    // point of the collapsed layout: every destination has to be reachable on a phone.
     const toggle = page.getByRole('button', { name: 'Open navigation' });
     if (await toggle.isVisible()) await toggle.click();
 
-    await page
+    const link = page
       .getByRole('navigation', { name: 'Primary navigation' })
-      .getByRole('link', { name: 'Analytics' })
-      .click();
-    await expect(page.getByRole('heading', { name: 'Decision analytics' })).toBeVisible();
+      .getByRole('link', { name: 'Analytics' });
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute('href', '/analytics');
 
     expectNoRuntimeFailures(failures);
   });

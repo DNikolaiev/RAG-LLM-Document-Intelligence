@@ -196,6 +196,23 @@ data the service accumulates for itself: `case.decided` deliberately does not ca
 what a consumer needs to interpret the fact rather than a copy of a row, so the projection remembers
 what `case.created` told it instead of calling back into the case service.
 
+### Consumer lag
+
+`projection_state.last_sequence` in the read model and `max(sequence)` in the outbox are the two
+halves of consumer lag, and neither service can compute it alone - analytics has no access to the
+publisher's database and should not have. The console fetches both and subtracts, which is the
+honest shape: lag is a statement about two systems, so it cannot be measured from inside one.
+
+Both numbers are platform-administrator only. Each counts every fact recorded across every tenant,
+so handing either to a single-tenant reviewer would tell them how much work everybody else is doing
+
+- the same reason the projection's own counts are tenant-scoped. The watermark cannot be scoped,
+  because it is not per tenant. A reviewer sees the rest of the page and no lag tile; a 403 there is
+  a reviewer looking at the page, not an outage, and must not be rendered as one.
+
+Demonstrated by stopping the relay, recording three facts, and watching the console read "3 events
+behind - projected 37 of 40 recorded facts" until the relay came back.
+
 `projection_state.last_sequence` is the consumer half of the lag measurement: compared against
 `max(sequence)` in the outbox it turns eventual consistency into a number rather than a word.
 
@@ -240,9 +257,8 @@ A row the current contract cannot parse is skipped rather than aborting the run 
 accumulates across schema versions - but a broker refusal stops it, because a projection rebuilt
 from a hole in the middle of history is worse than the stale one it replaced.
 
-Still to come, in [`docs/superpowers/plans/2026-09-06-event-backbone.md`](docs/superpowers/plans/2026-09-06-event-backbone.md):
-full consumer lag - which needs the outbox high-water mark from the publisher
-side, since lag is a statement about two systems and cannot be measured from inside one of them.
+Every concept the plan set out to demonstrate is now built; the record of what was chosen and why
+lives in [`docs/superpowers/plans/2026-09-06-event-backbone.md`](docs/superpowers/plans/2026-09-06-event-backbone.md).
 
 ## Design boundaries
 

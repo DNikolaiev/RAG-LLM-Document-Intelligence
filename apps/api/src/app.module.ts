@@ -4,6 +4,7 @@ import { CasesService } from './cases.service.js';
 import { CASES_RUNTIME } from './cases-runtime.js';
 import { ContextMiddleware } from './context.middleware.js';
 import { DomainPacksController } from './domain-packs.controller.js';
+import { EventsController } from './events.controller.js';
 import { HealthController } from './health.controller.js';
 import { JobsController } from './jobs.controller.js';
 import { loadConfig } from '@caselens/config';
@@ -17,6 +18,7 @@ import { PoliciesService } from './policies/policies.service.js';
     DomainPacksController,
     CasesController,
     JobsController,
+    EventsController,
     PoliciesController,
   ],
   providers: [

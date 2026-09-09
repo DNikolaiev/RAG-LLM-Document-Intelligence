@@ -62,6 +62,14 @@ export function startReadApi(options: ReadApiOptions): Server {
       // belongs to the publisher's database, which this service has no access to and should not
       // have. Comparing them is the caller's job, and that is the honest shape: lag is a statement
       // about two systems, so it cannot be measured from inside one of them.
+      //
+      // Platform administrators only, and for the same reason the publisher's half is: a global
+      // sequence counts every fact recorded across every tenant, so a single-tenant reviewer would
+      // learn how much work everybody else is doing. The projection's counts are scoped; this
+      // number cannot be, because the watermark is not per tenant.
+      if (!caller.platformAdmin) {
+        return send(response, 403, { detail: 'Only a platform administrator can read this' });
+      }
       return send(response, 200, { lastProjectedSequence: await options.store.lastSequence() });
     }
 
