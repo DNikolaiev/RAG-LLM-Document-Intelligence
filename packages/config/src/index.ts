@@ -31,6 +31,7 @@ export const appConfigSchema = z
     // handed only to the service that owns it, so no other service can reach for the projection
     // and no join across the boundary is even possible to write.
     ANALYTICS_DATABASE_URL: optionalUrl,
+    ANALYTICS_PORT: z.coerce.number().int().min(1).max(65_535).default(4200),
     ANALYTICS_QUEUE_NAME: z.string().min(1).default('analytics.events'),
     // How many unacknowledged deliveries the broker may hold in flight for one consumer. Left
     // modest on purpose: the queue is the right place for a backlog to wait, not the consumer's

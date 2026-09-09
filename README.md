@@ -70,7 +70,7 @@ The seed command uses the public API: it uploads each policy, extracts and index
 | `apps/web`                   | Next.js review console for cases, documents, evidence, findings, corrections, and decisions        | Used by both demo and local production                                 |
 | `apps/api`                   | Authoritative NestJS API enforcing validation, tenant scope, and business invariants               | Memory-backed in demo; PostgreSQL-backed in local production           |
 | `apps/worker`                | Consumes BullMQ jobs and runs document processing plus LangGraph                                   | Deterministic simulator in demo; durable consumer in local production  |
-| `apps/analytics`             | Consumes domain facts from RabbitMQ into its own read model                                        | Local production only; shares no schema or package with the pipeline   |
+| `apps/analytics`             | Consumes domain facts into its own read model and serves the analytics API                         | Local production only; shares no schema or package with the pipeline   |
 | `apps/mcp`                   | Read-only agent interface over the API                                                             | Optional; not started by Compose                                       |
 | `packages/contracts`         | Shared Zod schemas, identifiers, and API/domain types                                              | Used across applications                                               |
 | `packages/config`            | Validates environment variables and provider selections                                            | Used at startup                                                        |
@@ -126,6 +126,11 @@ It writes to its own PostgreSQL server, migrated separately — not a second dat
 server, which would make "analytics is down" and "the case pipeline is down" the same outage. The
 idempotency check and the projection write share one transaction, so an event delivered twice moves
 the read model once and a projection that fails leaves no record of having succeeded.
+
+It answers **Decision analytics** in the console header: cases in and decisions out per day, median
+and 90th-percentile time from creation to decision, and how far the read model has consumed. The
+console reaches it as a second upstream, never through `apps/api`, and does not wait for it to
+start — if the read model is down that page says so and nothing else notices.
 
 It shares no schema, no repository and no workspace package with the case pipeline — only the wire
 format in `packages/events`. `apps/api` does not know it exists.

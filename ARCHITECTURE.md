@@ -41,9 +41,10 @@ NestJS application API
                                               |
                                               v
                                       apps/analytics ----> its OWN database
-                                              | (unprocessable)
-                                              v
-                                     analytics.events.dlq
+                                              | (unprocessable)      ^
+                                              v                      | read API
+                                     analytics.events.dlq            |
+                                                        Next.js console (/analytics)
 ```
 
 The browser never talks directly to PostgreSQL, Redis, MinIO, or Ollama. Next.js forwards the selected local test identity to NestJS; NestJS authorizes every case, policy, source-file, and job request. Source bytes are streamed only after authorization.
@@ -161,9 +162,19 @@ what `case.created` told it instead of calling back into the case service.
 `projection_state.last_sequence` is the consumer half of the lag measurement: compared against
 `max(sequence)` in the outbox it turns eventual consistency into a number rather than a word.
 
+Its read API is plain `node:http` on port 4200, reached by the console through
+`apps/web/app/api/analytics`, which is a second upstream beside `apps/api` rather than a passthrough
+through it - routing analytics through the case API would mean teaching that service the analytics
+URL and response shapes, and would take analytics down whenever the case API was. Every handler
+receives a `CallerContext` rather than reading headers itself, so the eventual move to verified
+Keycloak tokens (see the production backlog) is a change to one function instead of to every query.
+The console does not `depends_on` analytics: the read-model page reports that it cannot answer and
+nothing else in the console notices, which is the independence the separate service is for.
+
 Still to come, in [`docs/superpowers/plans/2026-09-06-event-backbone.md`](docs/superpowers/plans/2026-09-06-event-backbone.md):
-the counters themselves and a read API, `finding.raised` (declared in the contract but not yet
-emitted), retry-before-dead-letter, replay from the outbox, and lag surfaced in the console.
+`finding.raised` (declared in the contract but not yet emitted), retry-before-dead-letter, replay
+from the outbox, and full consumer lag - which needs the outbox high-water mark from the publisher
+side, since lag is a statement about two systems and cannot be measured from inside one of them.
 
 ## Design boundaries
 

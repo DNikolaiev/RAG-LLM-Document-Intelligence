@@ -2,6 +2,7 @@ import { loadConfig } from '@caselens/config';
 import { startAnalyticsConsumer } from './consumer.js';
 import { AnalyticsStore } from './store.js';
 import { project } from './projections.js';
+import { startReadApi } from './read-api.js';
 
 /**
  * A deliberately plain logger. This service imports no framework: the point of it is that a second
@@ -32,10 +33,20 @@ export async function bootstrap(): Promise<void> {
   });
   log(`Consuming ${config.ANALYTICS_QUEUE_NAME} with prefetch ${config.ANALYTICS_PREFETCH}`);
 
+  const api = startReadApi({
+    store,
+    port: config.ANALYTICS_PORT,
+    onError: (error) =>
+      process.stderr.write(`[analytics] ${error.message}
+`),
+  });
+  log(`Read API listening on ${config.ANALYTICS_PORT}`);
+
   await new Promise<void>((resolve) => {
     process.once('SIGINT', resolve);
     process.once('SIGTERM', resolve);
   });
+  await new Promise<void>((resolve) => api.close(() => resolve()));
   await consumer.close();
   await store.close();
 }

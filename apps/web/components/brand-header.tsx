@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { BookOpenCheck, LayoutDashboard, ScanSearch } from 'lucide-react';
+import { BarChart3, BookOpenCheck, LayoutDashboard, ScanSearch } from 'lucide-react';
 import { TEST_PROFILES } from '@caselens/contracts';
 import { getSelectedProfile, testProfilesEnabled } from '@/lib/session-profile';
 import { ProfileSwitcher } from './profile-switcher';
@@ -30,6 +30,10 @@ export async function BrandHeader() {
         <Link href="/policies">
           <BookOpenCheck aria-hidden="true" size={16} />
           Policy library
+        </Link>
+        <Link href="/analytics">
+          <BarChart3 aria-hidden="true" size={16} />
+          Analytics
         </Link>
       </nav>
 

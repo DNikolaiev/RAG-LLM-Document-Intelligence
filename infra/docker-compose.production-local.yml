@@ -22,6 +22,9 @@ x-app-environment: &app-environment
   # queue delivers to exactly one consumer, which is the wrong shape for a fact that any number
   # of services may care about.
   RABBITMQ_URL: amqp://caselens:${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD}@rabbitmq:5672
+  # The web proxy forwards analytics queries here. Deliberately not the analytics database URL:
+  # apps/web talks to a service, never to another service's schema.
+  ANALYTICS_API_URL: http://analytics:4200
   EVENT_RELAY_ENABLED: 'true'
   MODEL_PROVIDER: openai-compatible
   EMBEDDING_PROVIDER: openai-compatible
@@ -288,6 +291,8 @@ services:
       # Only this service is given the projection's credentials. The others literally cannot reach
       # it, which is a cheaper guarantee than asking them not to.
       ANALYTICS_DATABASE_URL: postgresql://caselens_analytics:${ANALYTICS_DATABASE_PASSWORD:?Set ANALYTICS_DATABASE_PASSWORD}@analytics-postgres:5432/caselens_analytics
+    # Bound to loopback: the read API is reached through the web proxy, not from the internet.
+    ports: ['127.0.0.1:4200:4200']
     depends_on:
       rabbitmq: { condition: service_healthy }
       analytics-migrate: { condition: service_completed_successfully }
@@ -329,7 +334,11 @@ services:
       AUTH_MODE: test-profiles
       ENABLE_TEST_IDENTITY_SWITCHER: 'true'
       PUBLIC_API_URL: http://api:4100
+      ANALYTICS_API_URL: http://analytics:4200
     ports: ['127.0.0.1:3000:3000']
+    # Deliberately not `depends_on: analytics`. The console must start, and every other page must
+    # work, whether or not the read model is running - which is the independence the separate
+    # service is for. The analytics page says it cannot answer; nothing else notices.
     depends_on:
       api: { condition: service_healthy }
     healthcheck:
