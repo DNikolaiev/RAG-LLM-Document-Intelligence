@@ -109,7 +109,7 @@ The point of the whole exercise: a service that learns everything from events, o
 - Answer the question this plan set: cases decided per tenant per day, and median time from creation to decision. `case.decided` already carries `caseCreatedAt` precisely so this needs no lookup back into the case service.
 - A small read API over the projection.
 
-### 2. Emit `finding.raised`
+### 2. Emit `finding.raised`. Done.
 
 `packages/events` declares this type and nothing publishes it — the contract advertises an event that does not exist. Findings are written by the worker through `store.saveWithJobUpdate(...)`, which does not accept events yet, so this means threading an `events` parameter through it the way `save()` was extended. Analytics then gains a second dimension: severity mix per tenant.
 

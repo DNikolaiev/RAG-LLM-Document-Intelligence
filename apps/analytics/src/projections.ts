@@ -17,9 +17,30 @@ export const UNKNOWN_PACK = 'unknown';
 export async function project(tx: postgres.TransactionSql, event: DomainEvent): Promise<void> {
   if (event.type === 'case.created') return projectCaseCreated(tx, event);
   if (event.type === 'case.decided') return projectCaseDecided(tx, event);
-  // `finding.raised` is bound and will arrive once the worker emits it; it has no counters yet, so
-  // it is claimed and ignored rather than dead-lettered. Ignoring is the right default for a
-  // consumer that has simply not caught up with the contract.
+  if (event.type === 'finding.raised') return projectFindingRaised(tx, event);
+  // Anything else is claimed and ignored rather than dead-lettered - the right default for a
+  // consumer that has simply not caught up with a contract the publisher already advanced.
+}
+
+async function projectFindingRaised(
+  tx: postgres.TransactionSql,
+  event: DomainEvent,
+): Promise<void> {
+  const payload = event.payload as { caseId: string; ruleKey: string; severity: string };
+
+  // Remembered so the decision that arrives later can be attributed to the rules that fired. The
+  // same rule firing twice on one case is one statement about that rule, so a repeat changes
+  // nothing.
+  await tx`
+    insert into case_findings (case_id, rule_key, tenant_id, severity)
+    values (${payload.caseId}, ${payload.ruleKey}, ${event.tenantId}, ${payload.severity})
+    on conflict (case_id, rule_key) do nothing`;
+
+  await tx`
+    insert into rule_effectiveness (tenant_id, rule_key, severity, times_raised)
+    values (${event.tenantId}, ${payload.ruleKey}, ${payload.severity}, 1)
+    on conflict (tenant_id, rule_key, severity) do update
+      set times_raised = rule_effectiveness.times_raised + 1`;
 }
 
 async function projectCaseCreated(tx: postgres.TransactionSql, event: DomainEvent): Promise<void> {
@@ -77,6 +98,25 @@ async function projectCaseDecided(tx: postgres.TransactionSql, event: DomainEven
         outcome = excluded.outcome`;
 
   if (!isFirstDecision) return;
+
+  // Every rule that fired on this case now learns what the case was decided. Only on the first
+  // decision, for the same reason throughput is: re-deciding one case must not make a rule look
+  // twice as consequential as it was.
+  const column =
+    payload.outcome === 'approve'
+      ? 'then_approved'
+      : payload.outcome === 'reject'
+        ? 'then_rejected'
+        : 'then_information_requested';
+  await tx`
+    update rule_effectiveness set
+      then_approved = then_approved + case when ${column} = 'then_approved' then 1 else 0 end,
+      then_rejected = then_rejected + case when ${column} = 'then_rejected' then 1 else 0 end,
+      then_information_requested = then_information_requested
+        + case when ${column} = 'then_information_requested' then 1 else 0 end
+    where (tenant_id, rule_key, severity) in (
+      select tenant_id, rule_key, severity from case_findings where case_id = ${event.aggregateId})`;
+
   await bumpThroughput(tx, event.tenantId, event.occurredAt, packId, {
     decided: 1,
     approved: payload.outcome === 'approve' ? 1 : 0,

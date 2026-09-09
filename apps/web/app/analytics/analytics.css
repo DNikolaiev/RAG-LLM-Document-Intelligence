@@ -110,3 +110,10 @@
   border-radius: 10px;
   color: var(--text-muted, #5b6472);
 }
+
+/* A rule every one of whose decided cases was approved regardless: it costs attention and changes
+   nothing, which is the row worth noticing. */
+.analytics-flag {
+  color: #9a3412;
+  font-weight: 600;
+}

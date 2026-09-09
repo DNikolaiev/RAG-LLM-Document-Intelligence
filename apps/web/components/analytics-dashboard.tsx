@@ -22,9 +22,20 @@ interface CycleTime {
   informationRequested: number;
 }
 
+interface RuleRow {
+  ruleKey: string;
+  severity: string;
+  timesRaised: number;
+  thenApproved: number;
+  thenRejected: number;
+  thenInformationRequested: number;
+  decided: number;
+}
+
 interface Loaded {
   days: ThroughputDay[];
   cycle: CycleTime;
+  rules: RuleRow[];
   lastProjectedSequence: number;
 }
 
@@ -37,18 +48,25 @@ type Result = { ok: true; data: Loaded } | { ok: false };
  */
 async function fetchAnalytics(): Promise<Result> {
   try {
-    const [throughput, cycle, state] = await Promise.all([
+    const [throughput, cycle, rules, state] = await Promise.all([
       fetch('/api/analytics/throughput', { cache: 'no-store' }),
       fetch('/api/analytics/cycle-time', { cache: 'no-store' }),
+      fetch('/api/analytics/rules', { cache: 'no-store' }),
       fetch('/api/analytics/state', { cache: 'no-store' }),
     ]);
-    if (!throughput.ok || !cycle.ok || !state.ok) return { ok: false };
+    if (!throughput.ok || !cycle.ok || !rules.ok || !state.ok) return { ok: false };
     const days = ((await throughput.json()) as { days: ThroughputDay[] }).days;
     const summary = (await cycle.json()) as CycleTime;
+    const ruleRows = ((await rules.json()) as { rules: RuleRow[] }).rules;
     const projected = (await state.json()) as { lastProjectedSequence: number };
     return {
       ok: true,
-      data: { days, cycle: summary, lastProjectedSequence: projected.lastProjectedSequence },
+      data: {
+        days,
+        cycle: summary,
+        rules: ruleRows,
+        lastProjectedSequence: projected.lastProjectedSequence,
+      },
     };
   } catch {
     return { ok: false };
@@ -135,6 +153,53 @@ export function AnalyticsDashboard() {
             <Tile label="Rejected" value={String(data.cycle.rejected)} />
             <Tile label="Information requested" value={String(data.cycle.informationRequested)} />
           </div>
+
+          <h2>Rule effectiveness</h2>
+          {data.rules.length ? (
+            <div className="analytics-table-wrap">
+              <table className="analytics-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Rule</th>
+                    <th scope="col">Severity</th>
+                    <th scope="col">Raised</th>
+                    <th scope="col">Decided since</th>
+                    <th scope="col">Approved anyway</th>
+                    <th scope="col">Rejected</th>
+                    <th scope="col">Info requested</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rules.map((rule) => (
+                    <tr key={`${rule.ruleKey}:${rule.severity}`}>
+                      <td>{rule.ruleKey}</td>
+                      <td>{rule.severity}</td>
+                      <td>{rule.timesRaised}</td>
+                      <td>{rule.decided}</td>
+                      <td
+                        // A rule whose every decided case was approved regardless is costing
+                        // reviewer attention and changing nothing. That is the finding worth
+                        // reading, so it is the one the table calls out.
+                        className={
+                          rule.decided > 0 && rule.thenApproved === rule.decided
+                            ? 'analytics-flag'
+                            : undefined
+                        }
+                      >
+                        {rule.thenApproved}
+                      </td>
+                      <td>{rule.thenRejected}</td>
+                      <td>{rule.thenInformationRequested}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="analytics-empty">
+              No findings have reached the read model yet. They arrive when a case is processed.
+            </p>
+          )}
 
           <h2>Daily throughput</h2>
           {data.days.length ? (

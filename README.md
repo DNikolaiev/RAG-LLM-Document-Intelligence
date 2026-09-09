@@ -128,7 +128,9 @@ idempotency check and the projection write share one transaction, so an event de
 the read model once and a projection that fails leaves no record of having succeeded.
 
 It answers **Decision analytics** in the console header: cases in and decisions out per day, median
-and 90th-percentile time from creation to decision, and how far the read model has consumed. The
+and 90th-percentile time from creation to decision, how far the read model has consumed, and which
+deterministic rules fire without changing the outcome — a rule raising a critical finding on cases
+that are approved anyway costs reviewer attention daily and is invisible from the case list. The
 console reaches it as a second upstream, never through `apps/api`, and does not wait for it to
 start — if the read model is down that page says so and nothing else notices.
 

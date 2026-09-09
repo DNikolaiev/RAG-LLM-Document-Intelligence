@@ -24,6 +24,28 @@ const throughput = {
     },
   ],
 };
+const rules = {
+  rules: [
+    {
+      ruleKey: 'expired-certificate',
+      severity: 'critical',
+      timesRaised: 412,
+      thenApproved: 400,
+      thenRejected: 0,
+      thenInformationRequested: 0,
+      decided: 400,
+    },
+    {
+      ruleKey: 'missing-insurance',
+      severity: 'major',
+      timesRaised: 30,
+      thenApproved: 4,
+      thenRejected: 26,
+      thenInformationRequested: 0,
+      decided: 30,
+    },
+  ],
+};
 const cycleTime = {
   decided: 4,
   medianSeconds: 145_800,
@@ -40,6 +62,7 @@ test.describe('decision analytics', () => {
       route.fulfill({ json: throughput }),
     );
     await page.route('**/api/analytics/cycle-time*', (route) => route.fulfill({ json: cycleTime }));
+    await page.route('**/api/analytics/rules*', (route) => route.fulfill({ json: rules }));
     await page.route('**/api/analytics/state*', (route) =>
       route.fulfill({ json: { lastProjectedSequence: 42 } }),
     );
@@ -49,6 +72,15 @@ test.describe('decision analytics', () => {
     // 145800s is 40.5 hours, which is what a reviewer should read rather than a raw second count.
     await expect(page.getByText('40.5 h')).toBeVisible();
     await expect(page.getByText('2026-09-09')).toBeVisible();
+
+    // A rule raised 412 times whose every decided case was approved anyway is the finding worth
+    // reading, so the table calls it out rather than leaving it to be spotted in a column of digits.
+    const noisy = page.getByRole('row', { name: /expired-certificate/ });
+    await expect(noisy).toBeVisible();
+    await expect(noisy.locator('.analytics-flag')).toHaveText('400');
+    await expect(
+      page.getByRole('row', { name: /missing-insurance/ }).locator('.analytics-flag'),
+    ).toHaveCount(0);
 
     await expectHealthyLayout(page);
     expectNoRuntimeFailures(failures);

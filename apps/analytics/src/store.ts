@@ -32,6 +32,16 @@ export interface ThroughputRow {
   informationRequested: number;
 }
 
+export interface RuleEffectivenessRow {
+  ruleKey: string;
+  severity: string;
+  timesRaised: number;
+  thenApproved: number;
+  thenRejected: number;
+  thenInformationRequested: number;
+  decided: number;
+}
+
 export interface CycleTimeSummary {
   decided: number;
   medianSeconds: number | null;
@@ -142,6 +152,46 @@ export class AnalyticsStore {
   }
 
   /**
+   * Which rules fire, and what happened to the cases they fired on.
+   *
+   * Ordered so the least useful rules surface first: many firings, few of them followed by anything
+   * but an approval. A rule that raises a critical finding four hundred times and is approved anyway
+   * is spending reviewer attention every day and producing nothing, and that is invisible from a
+   * case list.
+   */
+  async ruleEffectiveness(caller: CallerContext): Promise<RuleEffectivenessRow[]> {
+    const tenantIds = tenantScope(caller);
+    const rows = await this.#sql<
+      Array<{
+        rule_key: string;
+        severity: string;
+        times_raised: number;
+        then_approved: number;
+        then_rejected: number;
+        then_information_requested: number;
+      }>
+    >`
+      select rule_key, severity,
+        sum(times_raised)::int as times_raised,
+        sum(then_approved)::int as then_approved,
+        sum(then_rejected)::int as then_rejected,
+        sum(then_information_requested)::int as then_information_requested
+      from rule_effectiveness
+      where (${caller.platformAdmin} or tenant_id = any(${tenantIds}::text[]))
+      group by rule_key, severity
+      order by sum(times_raised) desc, rule_key`;
+    return rows.map((row) => ({
+      ruleKey: row.rule_key,
+      severity: row.severity,
+      timesRaised: row.times_raised,
+      thenApproved: row.then_approved,
+      thenRejected: row.then_rejected,
+      thenInformationRequested: row.then_information_requested,
+      decided: row.then_approved + row.then_rejected + row.then_information_requested,
+    }));
+  }
+
+  /**
    * Median and p90 time from creation to decision.
    *
    * Percentiles rather than an average, computed from the retained per-case rows. An average of two
@@ -195,6 +245,8 @@ export class AnalyticsStore {
       await tx`delete from case_throughput_daily`;
       await tx`delete from case_cycle_time`;
       await tx`delete from case_dimensions`;
+      await tx`delete from case_findings`;
+      await tx`delete from rule_effectiveness`;
       await tx`delete from processed_events`;
       await tx`delete from projection_state`;
     });

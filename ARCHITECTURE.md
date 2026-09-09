@@ -182,10 +182,17 @@ original is requeued rather than acknowledged, because at that point it is the o
 A message that cannot be parsed is never retried: no delay makes a malformed body valid, and
 spending three tiers to reach a conclusion already available now would only postpone it.
 
-It projects `case_throughput_daily` (intake and decisions per tenant, day and domain pack) and
+It projects `case_throughput_daily` (intake and decisions per tenant, day and domain pack),
 `case_cycle_time` (one row per decided case, so the read API computes real percentiles instead of an
-average that hides the tail). `case_dimensions` is reference data the service accumulates for
-itself: `case.decided` deliberately does not carry the domain pack, because a payload should carry
+average that hides the tail), and `rule_effectiveness` - which rules fire and what happened to the
+cases they fired on.
+
+That last one is the question the transactional schema is worst at and nobody would build a page
+for: a rule raising a critical finding four hundred times whose cases are approved anyway is
+spending reviewer attention daily and producing nothing. Answering it means correlating two event
+types across time - `finding.raised` during processing, `case.decided` whenever a human got to it -
+which is exactly the shape a read model is for. `case_dimensions` and `case_findings` are reference
+data the service accumulates for itself: `case.decided` deliberately does not carry the domain pack, because a payload should carry
 what a consumer needs to interpret the fact rather than a copy of a row, so the projection remembers
 what `case.created` told it instead of calling back into the case service.
 
@@ -234,7 +241,7 @@ accumulates across schema versions - but a broker refusal stops it, because a pr
 from a hole in the middle of history is worse than the stale one it replaced.
 
 Still to come, in [`docs/superpowers/plans/2026-09-06-event-backbone.md`](docs/superpowers/plans/2026-09-06-event-backbone.md):
-`finding.raised` (declared in the contract but not yet emitted) and full consumer lag - which needs the outbox high-water mark from the publisher
+full consumer lag - which needs the outbox high-water mark from the publisher
 side, since lag is a statement about two systems and cannot be measured from inside one of them.
 
 ## Design boundaries

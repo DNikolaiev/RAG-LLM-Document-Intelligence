@@ -313,7 +313,7 @@ services:
       [
         'sh',
         '-c',
-        'psql -v ON_ERROR_STOP=1 -f /migrations/0001_projection_base.sql -f /migrations/0002_case_projections.sql',
+        'psql -v ON_ERROR_STOP=1 -f /migrations/0001_projection_base.sql -f /migrations/0002_case_projections.sql -f /migrations/0003_rule_effectiveness.sql',
       ]
     depends_on:
       analytics-postgres: { condition: service_healthy }

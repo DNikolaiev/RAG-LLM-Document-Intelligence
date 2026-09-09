@@ -264,6 +264,7 @@ export class PostgresCaseStore {
     jobPatch: JobUpdate,
     documentStatus: 'ready' | 'needs_review',
     ruleRun?: RuleRunSnapshot,
+    events: readonly PendingDomainEvent[] = [],
   ): Promise<void> {
     await this.withScope(
       { tenantIds: [item.tenantId], platformAdmin: false, systemActor: true },
@@ -273,6 +274,11 @@ export class PostgresCaseStore {
         if (ruleRun) await this.syncRuleRun(tx, item, ruleRun);
         await tx`update documents set processing_status = ${documentStatus}, updated_at = now(), version = version + 1 where case_id = ${item.id}`;
         await this.updateJobInTransaction(tx, jobId, jobPatch);
+        // Same transaction as the findings themselves, for the same reason the API's events are:
+        // a fact must not survive a write that rolled back, and a committed write must not lose it.
+        for (const event of events) {
+          await this.appendDomainEventInTransaction(tx, { ...event, tenantId: item.tenantId });
+        }
       },
     );
   }

@@ -187,12 +187,86 @@ describe.skipIf(!databaseUrl)('case projections', () => {
       await store.close();
     }
   });
+  it('shows which rules fire without changing the outcome', async () => {
+    // The metric that justifies the service. A rule raising a critical finding on every case that is
+    // then approved anyway is spending reviewer attention daily and producing nothing - invisible
+    // from a case list, and only answerable by correlating two event types across time.
+    const store = new AnalyticsStore(databaseUrl!);
+    const sql = postgres(databaseUrl!, { prepare: false });
+    const tenantId = `tenant_rules_${Date.now().toString(36)}`;
+    const noisy = `${tenantId}_noisy`;
+    const useful = `${tenantId}_useful`;
+
+    try {
+      for (const [caseId, ruleKey, outcome] of [
+        [noisy, 'expired-certificate', 'approve'],
+        [`${noisy}_2`, 'expired-certificate', 'approve'],
+        [useful, 'missing-insurance', 'reject'],
+      ] as const) {
+        const create = created(caseId, tenantId, '2026-09-01T09:00:00.000Z');
+        await store.apply(create, (tx) => project(tx, create));
+
+        const finding = raised(caseId, tenantId, ruleKey);
+        await store.apply(finding, (tx) => project(tx, finding));
+
+        const decision = decided(caseId, tenantId, '2026-09-02T09:00:00.000Z', {
+          outcome,
+          caseCreatedAt: '2026-09-01T09:00:00.000Z',
+          id: `${caseId}_d`,
+        });
+        await store.apply(decision, (tx) => project(tx, decision));
+      }
+
+      const rules = await store.ruleEffectiveness({ tenantIds: [tenantId], platformAdmin: false });
+      // Ordered by how often each fired, so the noisiest rule is the first thing read.
+      expect(rules).toEqual([
+        {
+          ruleKey: 'expired-certificate',
+          severity: 'critical',
+          timesRaised: 2,
+          thenApproved: 2,
+          thenRejected: 0,
+          thenInformationRequested: 0,
+          decided: 2,
+        },
+        {
+          ruleKey: 'missing-insurance',
+          severity: 'critical',
+          timesRaised: 1,
+          thenApproved: 0,
+          thenRejected: 1,
+          thenInformationRequested: 0,
+          decided: 1,
+        },
+      ]);
+    } finally {
+      await sql`delete from case_findings where tenant_id = ${tenantId}`;
+      await sql`delete from rule_effectiveness where tenant_id = ${tenantId}`;
+      await cleanup(sql, tenantId, tenantId);
+      await store.close();
+    }
+  });
 });
+
+function raised(caseId: string, tenantId: string, ruleKey: string): DomainEvent {
+  return {
+    id: `evt_${caseId}_${ruleKey}`,
+    type: 'finding.raised',
+    tenantId,
+    aggregateType: 'finding',
+    aggregateId: `finding_${caseId}_${ruleKey}`,
+    occurredAt: '2026-09-01T12:00:00.000Z',
+    sequence: Math.floor(Math.random() * 1_000_000),
+    payload: { caseId, ruleKey, severity: 'critical' },
+  } as DomainEvent;
+}
 
 async function cleanup(sql: postgres.Sql, tenantId: string, caseId: string): Promise<void> {
   await sql`delete from case_throughput_daily where tenant_id = ${tenantId}`;
   await sql`delete from case_cycle_time where tenant_id = ${tenantId}`;
   await sql`delete from case_dimensions where tenant_id = ${tenantId}`;
+  await sql`delete from case_findings where tenant_id = ${tenantId}`;
+  await sql`delete from rule_effectiveness where tenant_id = ${tenantId}`;
   await sql`delete from processed_events where event_id like ${`%${caseId}%`}`;
   await sql`delete from projection_state where name = ${PROJECTION_NAME}`;
   await sql.end();

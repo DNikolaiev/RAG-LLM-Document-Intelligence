@@ -53,6 +53,10 @@ export function startReadApi(options: ReadApiOptions): Server {
       return send(response, 200, await options.store.cycleTime(caller));
     }
 
+    if (url.pathname === '/v1/analytics/rules') {
+      return send(response, 200, { rules: await options.store.ruleEffectiveness(caller) });
+    }
+
     if (url.pathname === '/v1/analytics/state') {
       // Only the consumer's half of consumer lag. The other half - the outbox high-water mark -
       // belongs to the publisher's database, which this service has no access to and should not

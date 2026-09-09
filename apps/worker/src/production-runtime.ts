@@ -11,7 +11,12 @@ import {
   resolvePersistedDomainPack,
   type DomainPack,
 } from '@caselens/domain';
-import { PostgresCaseStore, PostgresPolicyStore } from '@caselens/persistence';
+import {
+  domainEventId,
+  PostgresCaseStore,
+  PostgresPolicyStore,
+  type PendingDomainEvent,
+} from '@caselens/persistence';
 import {
   HttpDocumentTextProvider,
   HttpOcrProvider,
@@ -717,6 +722,7 @@ async function processJob(
           remediation: finding.remediation,
         })),
       },
+      findingEvents(item),
     );
   } catch (error) {
     const priorVersion = startingVersion;
@@ -765,6 +771,33 @@ async function processJob(
   } finally {
     await checkpoint.close();
   }
+}
+
+/**
+ * A `finding.raised` fact per deterministic finding on the case.
+ *
+ * The event id is derived from the finding's own id, which is already stable per case and rule, so
+ * a re-run of the same job produces the same ids and the outbox's `on conflict do nothing` keeps
+ * one copy. That matters here more than elsewhere: unlike a decision, processing is retried
+ * automatically.
+ *
+ * A consequence worth knowing: if a re-run raises the same rule at a different severity, the
+ * original fact stands. "Raised" happened once, and the vocabulary has no event for a finding
+ * changing its mind - which would be `finding.reassessed`, a different fact, if it were ever needed.
+ */
+export function findingEvents(item: { id: string; updatedAt: string }): PendingDomainEvent[] {
+  const findings = (item as { findings?: Array<{ id: string; ruleKey: string; severity: string }> })
+    .findings;
+  return (findings ?? []).map((finding) => ({
+    id: domainEventId(finding.id, 'finding.raised'),
+    type: 'finding.raised',
+    // The finding is the aggregate; the case it belongs to travels in the payload, because a
+    // consumer counting rules needs to know which case fired without asking anybody.
+    aggregateType: 'finding',
+    aggregateId: finding.id,
+    occurredAt: item.updatedAt,
+    payload: { caseId: item.id, ruleKey: finding.ruleKey, severity: finding.severity },
+  }));
 }
 
 async function processPolicyJob(
