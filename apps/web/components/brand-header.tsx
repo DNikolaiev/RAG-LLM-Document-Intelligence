@@ -1,7 +1,8 @@
 import Link from 'next/link';
-import { BarChart3, BookOpenCheck, LayoutDashboard, ScanSearch } from 'lucide-react';
+import { ScanSearch } from 'lucide-react';
 import { TEST_PROFILES } from '@caselens/contracts';
 import { getSelectedProfile, testProfilesEnabled } from '@/lib/session-profile';
+import { PrimaryNavigation } from './primary-navigation';
 import { ProfileSwitcher } from './profile-switcher';
 import { NotificationCenter } from './notification-center';
 
@@ -21,21 +22,7 @@ export async function BrandHeader() {
         </span>
       </Link>
 
-      <nav className="primary-navigation" aria-label="Primary navigation">
-        <Link href="/">
-          <LayoutDashboard aria-hidden="true" size={16} />
-          Review queue
-          <span>Live</span>
-        </Link>
-        <Link href="/policies">
-          <BookOpenCheck aria-hidden="true" size={16} />
-          Policy library
-        </Link>
-        <Link href="/analytics">
-          <BarChart3 aria-hidden="true" size={16} />
-          Analytics
-        </Link>
-      </nav>
+      <PrimaryNavigation />
 
       <div className="header-context" aria-label="Current workspace">
         <span className="environment-mark">

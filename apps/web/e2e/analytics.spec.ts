@@ -54,18 +54,16 @@ test.describe('decision analytics', () => {
     expectNoRuntimeFailures(failures);
   });
 
-  test('is reachable from the primary navigation', async ({ page, viewport }) => {
-    // `.primary-navigation` is hidden below 1180px and this console has no mobile menu, so every
-    // secondary destination - the policy library as much as this one - is unreachable from the
-    // header on a phone. Pre-existing, and recorded here rather than silently skipped.
-    test.skip(
-      (viewport?.width ?? 0) <= 1180,
-      'The header navigation is hidden below 1180px; there is no mobile menu yet',
-    );
+  test('is reachable from the primary navigation at any width', async ({ page }) => {
     const failures = monitorRuntimeFailures(page);
     await page.route('**/api/analytics/**', (route) => route.fulfill({ json: throughput }));
 
     await page.goto('/');
+    // Below 1180px the links live behind a toggle. Opening it here rather than skipping the test is
+    // the point of the collapsed layout: every destination has to be reachable on a phone.
+    const toggle = page.getByRole('button', { name: 'Open navigation' });
+    if (await toggle.isVisible()) await toggle.click();
+
     await page
       .getByRole('navigation', { name: 'Primary navigation' })
       .getByRole('link', { name: 'Analytics' })

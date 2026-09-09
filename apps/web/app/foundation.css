@@ -156,6 +156,10 @@ code {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* Guaranteed clearance between the three header regions. The navigation used to be pulled out of
+     flow and centred on the header, which meant nothing separated it from the workspace context on
+     its right - a third link simply grew into it. */
+  gap: 28px;
   padding: 0 30px;
   background: rgb(255 255 255 / 86%);
   border-bottom: 1px solid rgb(213 217 232 / 80%);
@@ -481,10 +485,37 @@ code {
   border-radius: 2px;
 }
 
+/* In flow, taking the space between the lockup and the workspace context and centring its links
+   within it. Near-centred on the header whenever the two side regions are similar widths, and
+   incapable of colliding with either when they are not. */
 .primary-navigation {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  gap: 4px;
+}
+
+/* Only ever visible in the collapsed layout below. */
+.navigation-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid rgb(213 217 232 / 80%);
+  border-radius: 10px;
+  background: #fff;
+  color: #555d76;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.navigation-toggle:hover {
+  background: var(--iris-soft);
+  color: var(--blueprint-deep);
 }
 
 .primary-navigation a:hover {
@@ -1049,9 +1080,38 @@ code {
   background: #eaf8f2;
 }
 
+/* Collapsed layout. The links no longer fit beside the workspace context, so they move behind a
+   toggle rather than disappearing - hiding them outright left every destination except the review
+   queue unreachable on a phone. */
 @media (max-width: 1180px) {
+  .navigation-toggle {
+    display: inline-flex;
+  }
+
   .primary-navigation {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+    z-index: 60;
     display: none;
+    flex: none;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px;
+    background: rgb(255 255 255 / 98%);
+    border-bottom: 1px solid rgb(213 217 232 / 80%);
+    box-shadow: 0 18px 32px rgb(36 43 82 / 10%);
+    backdrop-filter: blur(18px) saturate(145%);
+  }
+
+  .primary-navigation.is-open {
+    display: flex;
+  }
+
+  .primary-navigation a {
+    min-height: 44px;
+    justify-content: flex-start;
   }
 }
 
