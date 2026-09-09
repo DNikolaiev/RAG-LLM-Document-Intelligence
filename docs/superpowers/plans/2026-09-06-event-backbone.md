@@ -115,7 +115,7 @@ The point of the whole exercise: a service that learns everything from events, o
 
 The alternative, if it turns out not to be worth emitting: delete the type. An advertised event that is never published is worse than one that was never declared.
 
-### 3. Dead-letter queue
+### 3. Dead-letter queue. Done.
 
 Distinct from the quarantine already built. That one is **publisher-side** — a row the relay can never parse. This one is **consumer-side** — a message analytics cannot process, which without a DLQ either blocks the queue on endless redelivery or vanishes on reject.
 

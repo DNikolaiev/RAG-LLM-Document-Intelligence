@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { EVENT_EXCHANGE } from '@caselens/events';
 import type { DomainEvent } from '@caselens/events';
-import { ANALYTICS_BINDINGS, EVENT_DLX, startAnalyticsConsumer } from '../src/consumer.js';
+import {
+  ANALYTICS_BINDINGS,
+  ATTEMPT_HEADER,
+  EVENT_DLX,
+  RETRY_DELAYS_MS,
+  retryQueueName,
+  startAnalyticsConsumer,
+} from '../src/consumer.js';
 
 interface Recorded {
   exchanges: Array<{ name: string; type: string; durable: boolean }>;
@@ -10,6 +17,7 @@ interface Recorded {
   prefetch: number | null;
   acked: string[];
   nacked: Array<{ id: string; requeue: boolean }>;
+  sent: Array<{ queue: string; attempt: number; id: string }>;
 }
 
 /**
@@ -17,7 +25,7 @@ interface Recorded {
  * delivery. Topology is worth asserting rather than eyeballing: a queue declared without its
  * dead-letter argument cannot be corrected later without deleting it.
  */
-function fakeBroker() {
+function fakeBroker(refuseSend = false) {
   const recorded: Recorded = {
     exchanges: [],
     queues: [],
@@ -25,6 +33,7 @@ function fakeBroker() {
     prefetch: null,
     acked: [],
     nacked: [],
+    sent: [],
   };
   let deliver: (message: unknown) => void = () => {};
 
@@ -51,6 +60,24 @@ function fakeBroker() {
     nack(message: { properties: { messageId: string } }, _all: boolean, requeue: boolean) {
       recorded.nacked.push({ id: message.properties.messageId, requeue });
     },
+    sendToQueue(
+      queue: string,
+      _content: Buffer,
+      options: { headers?: Record<string, unknown>; messageId?: string },
+      callback: (error?: Error) => void,
+    ) {
+      if (refuseSend) {
+        callback(new Error('broker refused the retry'));
+        return true;
+      }
+      recorded.sent.push({
+        queue,
+        attempt: Number(options.headers?.[ATTEMPT_HEADER] ?? 0),
+        id: options.messageId ?? 'unknown',
+      });
+      callback();
+      return true;
+    },
     async close() {},
   };
 
@@ -58,16 +85,22 @@ function fakeBroker() {
     recorded,
     /** Hands the consumer a message without waiting, exactly as the broker would. */
     emit(body: unknown, messageId = 'evt_a') {
-      deliver({ content: Buffer.from(JSON.stringify(body)), properties: { messageId } });
+      deliver({
+        content: Buffer.from(JSON.stringify(body)),
+        properties: { messageId, headers: {} },
+      });
     },
     /** Hands the consumer a message and waits for its async settle to run. */
-    async push(body: unknown, messageId = 'evt_a') {
-      this.emit(body, messageId);
+    async push(body: unknown, messageId = 'evt_a', headers: Record<string, unknown> = {}) {
+      deliver({
+        content: Buffer.from(JSON.stringify(body)),
+        properties: { messageId, headers },
+      });
       await settle();
     },
     connect: async () =>
       ({
-        createChannel: async () => channel,
+        createConfirmChannel: async () => channel,
         close: async () => {},
       }) as never,
   };
@@ -125,8 +158,17 @@ describe('analytics consumer', () => {
     const work = broker.recorded.queues.find((queue) => queue.name === 'analytics.events');
     expect(work?.options).toEqual({
       durable: true,
-      arguments: { 'x-dead-letter-exchange': EVENT_DLX },
+      arguments: {
+        'x-dead-letter-exchange': EVENT_DLX,
+        // Keyed by queue name so this consumer's DLQ receives only this consumer's failures.
+        'x-dead-letter-routing-key': 'analytics.events',
+      },
     });
+    // Not `#`: a wildcard binding on a shared dead-letter exchange gives every consumer every other
+    // consumer's poison messages.
+    expect(
+      broker.recorded.bindings.find((binding) => binding.queue === 'analytics.events.dlq'),
+    ).toEqual({ queue: 'analytics.events.dlq', exchange: EVENT_DLX, pattern: 'analytics.events' });
     expect(broker.recorded.queues.map((queue) => queue.name)).toContain('analytics.events.dlq');
 
     // One binding per event type analytics has actually decided to handle - not `#`, which would
@@ -230,7 +272,10 @@ describe('analytics consumer', () => {
     expect(broker.recorded.acked).toEqual(['evt_1', 'evt_2', 'evt_3']);
   });
 
-  it('does not ack an event whose projection threw', async () => {
+  it('delays a failed projection instead of dead-lettering it immediately', async () => {
+    // A projection failure is usually the projection's fault - the database briefly unreachable, a
+    // lock timeout - not the message's. Dead-lettering on the first stumble means a two-second blip
+    // silently costs the read model every event in flight.
     const broker = fakeBroker();
     const errors: Error[] = [];
     await startAnalyticsConsumer({
@@ -244,11 +289,112 @@ describe('analytics consumer', () => {
       onError: (error) => errors.push(error),
     });
 
-    await broker.push(event());
+    await broker.push(event(), 'evt_a');
 
-    // Acking on receipt would lose the fact outright; the broker has already forgotten it.
-    expect(broker.recorded.acked).toEqual([]);
-    expect(broker.recorded.nacked).toEqual([{ id: 'evt_a', requeue: false }]);
+    // Moved to the shortest tier and stamped with the attempt, then acknowledged - the retry copy
+    // is now the live one.
+    expect(broker.recorded.sent).toEqual([
+      { queue: retryQueueName('analytics.events', RETRY_DELAYS_MS[0]!), attempt: 1, id: 'evt_a' },
+    ]);
+    expect(broker.recorded.acked).toEqual(['evt_a']);
+    expect(broker.recorded.nacked).toEqual([]);
     expect(errors[0]?.message).toContain('projection database unreachable');
+  });
+
+  it('backs off through the tiers and only then gives up', async () => {
+    const broker = fakeBroker();
+    const errors: Error[] = [];
+    await startAnalyticsConsumer({
+      url: 'amqp://x',
+      queue: 'analytics.events',
+      prefetch: 16,
+      handle: async () => {
+        throw new Error('still failing');
+      },
+      connect: broker.connect,
+      onError: (error) => errors.push(error),
+    });
+
+    // Each redelivery arrives carrying the attempt the previous one stamped on it. The count lives
+    // in a header rather than the body, because the body is a fact and must not be edited to record
+    // what the transport did with it.
+    for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt += 1) {
+      await broker.push(event(), 'evt_a', { [ATTEMPT_HEADER]: attempt });
+    }
+    expect(broker.recorded.sent.map((entry) => entry.queue)).toEqual(
+      RETRY_DELAYS_MS.map((delay) => retryQueueName('analytics.events', delay)),
+    );
+    expect(broker.recorded.sent.map((entry) => entry.attempt)).toEqual([1, 2, 3]);
+
+    // The delivery that arrives with every attempt spent is set aside rather than retried forever.
+    await broker.push(event(), 'evt_a', { [ATTEMPT_HEADER]: RETRY_DELAYS_MS.length });
+    expect(broker.recorded.sent).toHaveLength(RETRY_DELAYS_MS.length);
+    expect(broker.recorded.nacked).toEqual([{ id: 'evt_a', requeue: false }]);
+    expect(errors.at(-1)?.message).toContain('Giving up');
+  });
+
+  it('keeps the original when the retry itself cannot be published', async () => {
+    // Acknowledging here would discard the only copy. Requeueing is safe precisely because nothing
+    // was published - this is not a hot loop, it is the last remaining copy of the event.
+    const broker = fakeBroker(true);
+    await startAnalyticsConsumer({
+      url: 'amqp://x',
+      queue: 'analytics.events',
+      prefetch: 16,
+      handle: async () => {
+        throw new Error('projection failed');
+      },
+      connect: broker.connect,
+    });
+
+    await broker.push(event(), 'evt_a');
+    expect(broker.recorded.acked).toEqual([]);
+    expect(broker.recorded.nacked).toEqual([{ id: 'evt_a', requeue: true }]);
+  });
+
+  it('never retries a message that can never parse', async () => {
+    // Distinct from a processing failure: no delay makes this body valid, so spending three tiers
+    // to reach a conclusion already available now would only postpone it.
+    const broker = fakeBroker();
+    await startAnalyticsConsumer({
+      url: 'amqp://x',
+      queue: 'analytics.events',
+      prefetch: 16,
+      handle: async () => {},
+      connect: broker.connect,
+    });
+
+    await broker.push({ id: 'evt_bad', type: 'case.exploded' }, 'evt_bad');
+    expect(broker.recorded.sent).toEqual([]);
+    expect(broker.recorded.nacked).toEqual([{ id: 'evt_bad', requeue: false }]);
+  });
+
+  it('declares one retry queue per delay, each expiring back to the work queue', async () => {
+    const broker = fakeBroker();
+    await startAnalyticsConsumer({
+      url: 'amqp://x',
+      queue: 'analytics.events',
+      prefetch: 16,
+      handle: async () => {},
+      connect: broker.connect,
+    });
+
+    for (const delay of RETRY_DELAYS_MS) {
+      const queue = broker.recorded.queues.find(
+        (entry) => entry.name === retryQueueName('analytics.events', delay),
+      );
+      // A queue only expires the message at its head, so a single queue with per-message TTLs would
+      // let one long wait block every shorter one behind it. One queue per delay cannot.
+      expect(queue?.options).toEqual({
+        durable: true,
+        arguments: {
+          'x-message-ttl': delay,
+          // The empty exchange is the default one, which routes by queue name - so an expired
+          // message returns to the work queue rather than to the dead-letter queue.
+          'x-dead-letter-exchange': '',
+          'x-dead-letter-routing-key': 'analytics.events',
+        },
+      });
+    }
   });
 });

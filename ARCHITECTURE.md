@@ -147,10 +147,40 @@ Three details in its topology are equally deliberate:
   contract would start arriving before anyone decided what to do with it.
 - **Acknowledge after processing, never on receipt.** The broker forgets an acknowledged message, so
   acking first would turn a crash mid-projection into a lost fact.
-- **`x-dead-letter-exchange` declared up front**, before any retry logic uses it. Queue arguments are
+- **`x-dead-letter-exchange` declared up front**, before any retry logic used it. Queue arguments are
   immutable in RabbitMQ: redeclaring a queue with different arguments is refused with
   PRECONDITION_FAILED, so adding the argument later is a destructive migration rather than a
-  configuration change.
+  configuration change. That was proven the hard way when the dead-letter routing key had to be
+  added afterwards - the queues had to be deleted and recreated.
+- **Each dead-letter queue is bound to its own queue's name, never `#`.** Two consumers sharing one
+  dead-letter exchange with wildcard bindings both receive every dead letter, so each DLQ fills with
+  the other's failures and the first thing anyone reads during an incident lists problems that may
+  belong to a different service.
+
+### Retry before dead-letter
+
+A projection failure is usually the projection's fault - the database briefly unreachable, a lock
+timeout - not the message's, so dead-lettering on the first stumble means a two-second blip silently
+costs the read model every event in flight.
+
+RabbitMQ has no delayed redelivery, which is the one thing BullMQ provides for free and this does
+not. It is reconstructed with queues whose messages expire and dead-letter back to the work queue:
+`analytics.events.retry.1s`, `.5s` and `.25s`, each with `x-message-ttl` and an
+`x-dead-letter-routing-key` naming the queue they came from. The attempt count travels in a header,
+because the body is a fact and must not be edited to record what the transport did with it.
+
+One queue per delay rather than a per-message TTL on a single queue: a queue only expires the
+message at its head, so with mixed TTLs one message waiting twenty-five seconds holds up every
+message behind it however short its own wait. That is the classic trap in this pattern.
+
+A failed delivery is republished to the next tier and only then acknowledged. That is not atomic, so
+a crash between the two produces a duplicate - the same at-least-once bargain the pipeline already
+makes, which the consumer's dedupe absorbs. Acknowledging first would lose the event outright on the
+same crash, and a lost fact cannot be absorbed by anything. If the retry publish is refused, the
+original is requeued rather than acknowledged, because at that point it is the only copy.
+
+A message that cannot be parsed is never retried: no delay makes a malformed body valid, and
+spending three tiers to reach a conclusion already available now would only postpone it.
 
 It projects `case_throughput_daily` (intake and decisions per tenant, day and domain pack) and
 `case_cycle_time` (one row per decided case, so the read API computes real percentiles instead of an
@@ -204,8 +234,7 @@ accumulates across schema versions - but a broker refusal stops it, because a pr
 from a hole in the middle of history is worse than the stale one it replaced.
 
 Still to come, in [`docs/superpowers/plans/2026-09-06-event-backbone.md`](docs/superpowers/plans/2026-09-06-event-backbone.md):
-`finding.raised` (declared in the contract but not yet emitted), retry-before-dead-letter, and full
-consumer lag - which needs the outbox high-water mark from the publisher
+`finding.raised` (declared in the contract but not yet emitted) and full consumer lag - which needs the outbox high-water mark from the publisher
 side, since lag is a statement about two systems and cannot be measured from inside one of them.
 
 ## Design boundaries
