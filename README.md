@@ -133,7 +133,7 @@ console reaches it as a second upstream, never through `apps/api`, and does not 
 start — if the read model is down that page says so and nothing else notices.
 
 A projection can be rebuilt from history with
-`docker compose ... run --rm worker npm run replay`, which republishes the outbox to a
+`docker compose ... run --rm --no-deps worker npm run replay --workspace=@caselens/worker`, which republishes the outbox to a
 replay-specific exchange. That is what the outbox is for: a broker forgets an acknowledged message,
 so a fact published before this service existed — accepted by RabbitMQ, matched to no queue,
 discarded — is unrecoverable by any redelivery, and still sitting in `domain_events` in sequence

@@ -7,3 +7,11 @@ Workflow tests cover native text, OCR fallback, mixed/rotated/multilingual pages
 API tests cover tenant isolation, roles, RFC-style problem details, validation, cursor pagination, idempotency keys, uploads, corrections with reasons, final decisions, export, liveness, and readiness. UI tests cover keyboard review, focus visibility, narrow layouts, reduced motion, loading/empty/error recovery, evidence navigation, and the expected MediSupply recommendation.
 
 PDF verification regenerates fixtures deterministically, checks hashes/page counts/phrases, renders pages through Poppler, inspects layout, and confirms fixture copies. `scripts/verify-fixtures.py` applies those checks to every manifest-described corpus: the pharmacy corpus with its quarantine and duplicate dispositions, the multi-tenant policy/evidence pack, and the policy-lab pack behind [`policy-lab-upload-runbook.md`](policy-lab-upload-runbook.md); the latter two additionally generate twice into scratch directories and assert identical SHA-256 values. MCP tests verify structured/text parity, tenant headers, pagination, errors, and stable evaluation questions.
+
+## Disposable databases
+
+`TEST_DATABASE_URL`, `TEST_ADMIN_DATABASE_URL` and `TEST_ANALYTICS_DATABASE_URL` must point at
+databases that can be emptied. Most integration suites clean up only the rows they created, but the
+analytics rebuild test exercises `AnalyticsStore.reset`, whose entire purpose is to truncate the
+projection so a replay can rebuild it. Aimed at a running local stack it will empty that stack's
+read model. Replaying the outbox restores it.

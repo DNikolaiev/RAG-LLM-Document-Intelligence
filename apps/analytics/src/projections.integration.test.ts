@@ -6,6 +6,16 @@ import { project, UNKNOWN_PACK } from './projections.js';
 
 const databaseUrl = process.env.TEST_ANALYTICS_DATABASE_URL;
 
+/**
+ * DESTRUCTIVE. The rebuild test calls `AnalyticsStore.reset`, which truncates every projection
+ * table and `processed_events` - that total erasure is the behaviour under test, not a side effect
+ * to be scoped away. `TEST_ANALYTICS_DATABASE_URL` must therefore point at a disposable database.
+ *
+ * Pointing it at a running local stack will empty that projection. Nothing is lost that cannot be
+ * rebuilt - replaying the outbox restores it, which is the whole point of the mechanism - but the
+ * dashboard reads empty until someone does.
+ */
+
 describe.skipIf(!databaseUrl)('case projections', () => {
   it('counts intake and decisions, and measures the gap between them', async () => {
     const store = new AnalyticsStore(databaseUrl!);
