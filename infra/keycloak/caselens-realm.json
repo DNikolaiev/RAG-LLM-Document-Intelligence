@@ -1,0 +1,184 @@
+{
+  "realm": "caselens",
+  "displayName": "CaseLens",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "revokeRefreshToken": false,
+  "roles": {
+    "realm": [
+      { "name": "intake", "description": "Opens cases and uploads documents" },
+      { "name": "reviewer", "description": "Reviews evidence and findings" },
+      { "name": "approver", "description": "Records final decisions" },
+      { "name": "auditor", "description": "Reads cases and the audit trail" },
+      { "name": "admin", "description": "Administers one tenant workspace" },
+      {
+        "name": "platform_admin",
+        "description": "Operates every tenant workspace and the platform itself"
+      }
+    ]
+  },
+  "groups": [
+    { "name": "tenant_demo" },
+    { "name": "tenant_legal" },
+    { "name": "tenant_insurance" },
+    { "name": "tenant_manufacturing" }
+  ],
+  "clients": [
+    {
+      "clientId": "caselens-web",
+      "name": "CaseLens console",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${OIDC_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "redirectUris": ["http://localhost:3000/auth/callback"],
+      "webOrigins": ["http://localhost:3000"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/auth/signed-out"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience caselens-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "caselens-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "audience caselens-analytics",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "caselens-analytics",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "tenant memberships",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "tenants",
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "application roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "id": "profile_lena_vogt",
+      "username": "lena.vogt",
+      "email": "lena.vogt@example.test",
+      "emailVerified": true,
+      "firstName": "Lena",
+      "lastName": "Vogt",
+      "enabled": true,
+      "credentials": [
+        { "type": "password", "value": "${KEYCLOAK_TEST_USER_PASSWORD}", "temporary": false }
+      ],
+      "realmRoles": ["admin"],
+      "groups": ["/tenant_demo"]
+    },
+    {
+      "id": "profile_jonas_feld",
+      "username": "jonas.feld",
+      "email": "jonas.feld@example.test",
+      "emailVerified": true,
+      "firstName": "Jonas",
+      "lastName": "Feld",
+      "enabled": true,
+      "credentials": [
+        { "type": "password", "value": "${KEYCLOAK_TEST_USER_PASSWORD}", "temporary": false }
+      ],
+      "realmRoles": ["admin"],
+      "groups": ["/tenant_legal"]
+    },
+    {
+      "id": "profile_amara_okafor",
+      "username": "amara.okafor",
+      "email": "amara.okafor@example.test",
+      "emailVerified": true,
+      "firstName": "Amara",
+      "lastName": "Okafor",
+      "enabled": true,
+      "credentials": [
+        { "type": "password", "value": "${KEYCLOAK_TEST_USER_PASSWORD}", "temporary": false }
+      ],
+      "realmRoles": ["admin"],
+      "groups": ["/tenant_insurance"]
+    },
+    {
+      "id": "profile_mateo_klein",
+      "username": "mateo.klein",
+      "email": "mateo.klein@example.test",
+      "emailVerified": true,
+      "firstName": "Mateo",
+      "lastName": "Klein",
+      "enabled": true,
+      "credentials": [
+        { "type": "password", "value": "${KEYCLOAK_TEST_USER_PASSWORD}", "temporary": false }
+      ],
+      "realmRoles": ["admin"],
+      "groups": ["/tenant_manufacturing"]
+    },
+    {
+      "id": "profile_mara_stein",
+      "username": "mara.stein",
+      "email": "mara.stein@example.test",
+      "emailVerified": true,
+      "firstName": "Mara",
+      "lastName": "Stein",
+      "enabled": true,
+      "credentials": [
+        { "type": "password", "value": "${KEYCLOAK_TEST_USER_PASSWORD}", "temporary": false }
+      ],
+      "realmRoles": ["platform_admin"],
+      "groups": ["/tenant_demo", "/tenant_legal", "/tenant_insurance", "/tenant_manufacturing"]
+    }
+  ]
+}

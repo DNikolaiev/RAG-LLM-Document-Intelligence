@@ -39,51 +39,69 @@ describe('loadConfig', () => {
     ).toMatchObject({ MODEL_PROVIDER: 'anthropic-compatible', OCR_PROVIDER: 'http' });
   });
 
+  const productionProviders = {
+    APP_MODE: 'production',
+    PERSISTENCE_PROVIDER: 'postgres',
+    DATABASE_URL: 'postgresql://app:secret@postgres/caselens',
+    QUEUE_PROVIDER: 'bullmq',
+    REDIS_URL: 'redis://:secret@redis:6379',
+    STORAGE_PROVIDER: 's3',
+    S3_ENDPOINT: 'http://minio:9000',
+    S3_ACCESS_KEY: 'app',
+    S3_SECRET_KEY: 'secret',
+    SEARCH_PROVIDER: 'postgres',
+    MODEL_PROVIDER: 'openai-compatible',
+    MODEL_BASE_URL: 'http://ollama:11434/v1',
+    MODEL_API_KEY: 'ollama',
+    EMBEDDING_PROVIDER: 'openai-compatible',
+    OCR_PROVIDER: 'http',
+    OCR_BASE_URL: 'http://ocr:8080/v1/ocr',
+  } as const;
+  const verifiedIdentity = {
+    AUTH_MODE: 'oidc',
+    OIDC_ISSUER: 'http://localhost:8080/realms/caselens',
+    OIDC_AUDIENCE: 'caselens-api',
+    OIDC_JWKS_URL: 'http://keycloak:8080/realms/caselens/protocol/openid-connect/certs',
+  } as const;
+
   it('rejects production when the local identity switcher is not explicitly enabled', () => {
+    // Asserted by message. The earlier version accepted any ConfigurationError, and with its
+    // incomplete provider set it was passing on the embedding check rather than the one it named.
     expect(() =>
       loadConfig({
-        APP_MODE: 'production',
+        ...productionProviders,
         AUTH_MODE: 'test-profiles',
-        PERSISTENCE_PROVIDER: 'postgres',
-        DATABASE_URL: 'postgresql://app:secret@postgres/caselens',
-        QUEUE_PROVIDER: 'bullmq',
-        REDIS_URL: 'redis://:secret@redis:6379',
-        STORAGE_PROVIDER: 's3',
-        S3_ENDPOINT: 'http://minio:9000',
-        S3_ACCESS_KEY: 'app',
-        S3_SECRET_KEY: 'secret',
-        SEARCH_PROVIDER: 'postgres',
-        MODEL_PROVIDER: 'openai-compatible',
-        MODEL_BASE_URL: 'http://ollama:11434/v1',
-        MODEL_API_KEY: 'ollama',
-        EMBEDDING_PROVIDER: 'openai-compatible',
-        OCR_PROVIDER: 'http',
-        OCR_BASE_URL: 'http://ocr:8080/v1/ocr',
       }),
-    ).toThrow(ConfigurationError);
+    ).toThrow(/AUTH_MODE: The production runtime requires verified identity/);
   });
 
-  it('rejects OIDC mode until a verified-token adapter is installed', () => {
+  it('accepts production under verified identity', () => {
+    // This test used to assert the opposite: OIDC was refused until a verified-token adapter
+    // existed. That guard was a placeholder for exactly this, so it now inverts.
+    expect(loadConfig({ ...productionProviders, ...verifiedIdentity })).toMatchObject({
+      AUTH_MODE: 'oidc',
+      OIDC_AUDIENCE: 'caselens-api',
+    });
+  });
+
+  it('rejects verified identity that cannot actually verify anything', () => {
+    for (const missing of ['OIDC_ISSUER', 'OIDC_AUDIENCE', 'OIDC_JWKS_URL'] as const) {
+      const incomplete: Record<string, string> = { ...productionProviders, ...verifiedIdentity };
+      delete incomplete[missing];
+      expect(() => loadConfig(incomplete)).toThrow(new RegExp(missing));
+    }
+  });
+
+  it('refuses to run the test identity switcher alongside verified identity', () => {
+    // The switcher would be a second, unsigned way to become any user: a header that outranks the
+    // token. It is only safe where nothing is real, and verified identity means something is.
     expect(() =>
       loadConfig({
-        APP_MODE: 'production',
-        AUTH_MODE: 'oidc',
-        PERSISTENCE_PROVIDER: 'postgres',
-        DATABASE_URL: 'postgresql://app:secret@postgres/caselens',
-        QUEUE_PROVIDER: 'bullmq',
-        REDIS_URL: 'redis://:secret@redis:6379',
-        STORAGE_PROVIDER: 's3',
-        S3_ENDPOINT: 'http://minio:9000',
-        S3_ACCESS_KEY: 'app',
-        S3_SECRET_KEY: 'secret',
-        SEARCH_PROVIDER: 'postgres',
-        MODEL_PROVIDER: 'openai-compatible',
-        MODEL_BASE_URL: 'http://ollama:11434/v1',
-        MODEL_API_KEY: 'ollama',
-        OCR_PROVIDER: 'http',
-        OCR_BASE_URL: 'http://ocr:8080/v1/ocr',
+        ...productionProviders,
+        ...verifiedIdentity,
+        ENABLE_TEST_IDENTITY_SWITCHER: 'true',
       }),
-    ).toThrow(/OIDC remains disabled/);
+    ).toThrow(/switcher must be disabled/);
   });
 
   it('accepts the complete production-like local provider composition', () => {

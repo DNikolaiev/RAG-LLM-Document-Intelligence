@@ -21,7 +21,7 @@ const DESTINATIONS: readonly Destination[] = [
  * The header's primary destinations, as one navigation landmark in both layouts.
  *
  * Wide viewports show it inline. Narrow ones collapse it behind a toggle, because the links do not
- * fit beside the workspace context - and until now they were simply hidden below 1180px, which left
+ * fit beside the workspace context - below 1080px, measured - and before this they were simply hidden, which left
  * every destination except the review queue unreachable on a phone.
  *
  * One `<nav>` rather than two: a second landmark with the same label would be announced twice by a

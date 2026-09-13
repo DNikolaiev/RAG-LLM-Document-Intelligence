@@ -1080,10 +1080,24 @@ code {
   background: #eaf8f2;
 }
 
-/* Collapsed layout. The links no longer fit beside the workspace context, so they move behind a
-   toggle rather than disappearing - hiding them outright left every destination except the review
-   queue unreachable on a phone. */
-@media (max-width: 1180px) {
+/* Medium widths. Measured, not guessed: with the longest tenant name and the sign-out control, the
+   whole header inline needs 1196px. Dropping the runtime pill - the least useful thing in it, since
+   nobody acts on "local production" mid-review - brings that to 1066px and keeps every destination
+   one click away down to 1080px instead of hiding them behind a menu with room to spare. */
+@media (max-width: 1199px) {
+  .environment-mark,
+  .header-divider {
+    display: none;
+  }
+}
+
+/* Collapsed layout. Below 1080px the links genuinely no longer fit beside the workspace context, so
+   they move behind a toggle rather than disappearing - hiding them outright left every destination
+   except the review queue unreachable on a phone. This used to trigger at 1180px, a number left
+   over from when the navigation was positioned absolutely and would collide; once it was in flow
+   with a guaranteed gap that number stopped meaning anything, and the menu appeared on screens that
+   had plenty of room. */
+@media (max-width: 1079px) {
   .navigation-toggle {
     display: inline-flex;
   }
@@ -1235,4 +1249,29 @@ code {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+
+/* Under verified identity the test switcher is replaced by who is signed in and a way out. */
+.session-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.session-initials {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: #262b5c;
+  color: #fff;
+  font: 600 12px/1 var(--mono);
+}
+
+.session-sign-out {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
 }

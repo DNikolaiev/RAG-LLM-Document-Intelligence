@@ -61,6 +61,7 @@ For work under `apps/web`, also follow [`apps/web/AGENTS.md`](apps/web/AGENTS.md
 - Preserve provenance from document and page through evidence, extracted fact, finding, correction, and decision.
 - Deterministic rules own thresholds and approval gates; model output is advisory and schema validated.
 - Preserve tenant scoping, optimistic concurrency, idempotency, and append-only audit behavior across all state changes.
+- Under `AUTH_MODE=oidc`, identity comes only from a verified bearer token. Never read a test-identity header on that path, and never let the test switcher run alongside it.
 - Do not weaken the deliberate production guard: `APP_MODE=production` must refuse startup until durable repositories, verified identity, queue consumption, object storage, and readiness checks are composed.
 - Demo mode is deterministic and application-layer in-memory. Do not describe the running PostgreSQL, Redis, or MinIO containers as proof of durable end-to-end persistence.
 
@@ -77,6 +78,7 @@ For work under `apps/web`, also follow [`apps/web/AGENTS.md`](apps/web/AGENTS.md
 - `packages/retrieval`: tenant- and version-scoped policy retrieval.
 - `packages/workflow`: conditional, resumable orchestration and human-review pauses.
 - `packages/persistence`: PostgreSQL/pgvector schema and migrations.
+- `packages/auth`: bearer-token verification and claim mapping shared by every service that accepts a token.
 - `fixtures`: sample domain packs, source documents, quarantine cases, and expected outputs.
 - `infra`: Docker Compose and container build/runtime files.
 
@@ -109,7 +111,7 @@ docker compose -f infra/docker-compose.demo.yml up --build -d
 
 When it is running, execute browser coverage with `npm run test:e2e`. The default Playwright target is `http://127.0.0.1:3000`; override it with `PLAYWRIGHT_BASE_URL`. Tests run serially against desktop Chromium and a Pixel 7 profile. They intentionally mock browser-originated mutations so repeated runs do not alter shared demo state.
 
-The complete local production profile is `infra/docker-compose.production-local.yml`. Copy `infra/.env.production-local.example` to ignored `infra/.env.production-local`, then start it with the matching `--env-file`. It composes durable repositories, BullMQ consumption, MinIO, Ollama, OCR, and dependency-backed readiness. The test identity switcher is local-only and does not replace public authentication.
+The complete local production profile is `infra/docker-compose.production-local.yml`. Copy `infra/.env.production-local.example` to ignored `infra/.env.production-local`, then start it with the matching `--env-file`. It composes durable repositories, BullMQ consumption, MinIO, Ollama, OCR, and dependency-backed readiness. The test identity switcher is local-only and does not replace public authentication. Layer `infra/docker-compose.keycloak.yml` on top for verified OIDC identity through Keycloak; the browser suite drives the switcher, so run it against the base profile.
 
 ## Change expectations
 

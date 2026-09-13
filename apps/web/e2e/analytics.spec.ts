@@ -144,7 +144,7 @@ test.describe('decision analytics', () => {
     await page.goto('/analytics');
     await expect(page.getByRole('heading', { name: 'Decision analytics' })).toBeVisible();
 
-    // Below 1180px the links live behind a toggle. Opening it here rather than skipping is the
+    // Below 1080px the links live behind a toggle. Opening it here rather than skipping is the
     // point of the collapsed layout: every destination has to be reachable on a phone.
     const toggle = page.getByRole('button', { name: 'Open navigation' });
     if (await toggle.isVisible()) await toggle.click();

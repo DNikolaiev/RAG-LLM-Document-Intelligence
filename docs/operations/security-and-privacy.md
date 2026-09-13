@@ -14,6 +14,17 @@ Every application command carries tenant, user, role, and correlation context. T
 
 Queue notifications have a narrower boundary than tenant data: normal users may select only jobs/events whose enqueueing or recipient user ID matches `app.user_id`, including when two users share a tenant. Worker writes use a separately asserted system-actor transaction context. The browser receives no Redis password and no direct queue access.
 
+## Identity and sessions
+
+Under `AUTH_MODE=oidc` identity comes only from a verified bearer token. The API and the analytics service never read `x-test-profile-id`, `x-user-id`, `x-role` or `x-tenant-id` in that mode, and configuration refuses to run the test switcher alongside it. The `x-caselens-tenant` header can narrow a request to one of the tenants the token grants, never widen it.
+
+- **Sign-in** is the authorisation code flow with PKCE (S256), `state` and `nonce`, by a confidential client. The realm disables the implicit flow, the password grant and service accounts for the console, allows exactly one redirect URI, blocks self-registration and slows password guessing.
+- **Sessions** are encrypted `httpOnly`, `SameSite=Lax` cookies keyed from `SESSION_SECRET` (at least 32 characters; load it from the secret manager) and bound to their purpose. A fresh session is minted at every sign-in, so a planted cookie cannot be upgraded. `returnTo` is reduced to a same-site path, checked again after URL normalisation, and the callback refuses any destination off the configured origin.
+- **Sign-out** ends the identity provider's session as well as ours, is POST-only and refuses cross-origin requests.
+- **Tokens** are verified with the algorithm pinned to RS256 and issuer, audience and lifetime checked; each service requires its own audience. Health probes are the only unauthenticated API routes.
+- **Production requirements**: TLS on every hop to the identity provider (the ID token is accepted over the direct channel to the token endpoint rather than by signature), Keycloak in `start` mode on its own database, `COOKIE_SECURE=true`, a rotated client secret, and alerting on repeated 401 and 403 responses.
+- **Revocation** takes up to one access-token lifetime (five minutes) plus the API's five-minute subject cache. Treat that as the window when disabling an account.
+
 ## Data minimization
 
 Domain packs identify PII fields and outbound redaction rules. External provider calls receive only required pages/chunks. Logs contain IDs and metrics, not document bodies, raw prompts, secrets, or extracted PII. Provider retention and training settings must be reviewed before activation.

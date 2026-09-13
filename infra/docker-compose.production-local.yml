@@ -342,7 +342,10 @@ services:
     depends_on:
       api: { condition: service_healthy }
     healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/']
+      # A dedicated route outside the sign-in gate. Probing `/` stopped working under verified
+      # identity: it redirects to the identity provider's public address, which does not exist inside
+      # this container, so the probe failed with the console perfectly healthy.
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/healthz']
       interval: 10s
       timeout: 5s
       retries: 30

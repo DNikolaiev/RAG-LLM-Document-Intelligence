@@ -2,17 +2,16 @@ import { expect, test } from '@playwright/test';
 
 import { expectHealthyLayout, monitorRuntimeFailures } from './support/ui-assertions';
 
-const COLLAPSE_BREAKPOINT = 1180;
+/** The widest viewport that collapses. Measured: the full inline header needs 1196px, and 1066px
+ * without the runtime pill, so the menu only appears below 1080px. */
+const COLLAPSE_BREAKPOINT = 1079;
 
 test.describe('header navigation', () => {
   test('keeps the links clear of the workspace context when they are inline', async ({
     page,
     viewport,
   }) => {
-    test.skip(
-      (viewport?.width ?? 0) <= COLLAPSE_BREAKPOINT,
-      'The inline layout starts above 1180px',
-    );
+    test.skip((viewport?.width ?? 0) <= COLLAPSE_BREAKPOINT, 'The inline layout starts at 1080px');
     await page.goto('/');
 
     // The navigation used to be positioned absolutely and centred on the header, so nothing
@@ -26,11 +25,35 @@ test.describe('header navigation', () => {
     expect(clearance).toBeGreaterThanOrEqual(24);
   });
 
-  test('collapses behind a toggle on narrow viewports', async ({ page, viewport }) => {
+  test('keeps the links inline at medium widths, making room by dropping the runtime pill', async ({
+    page,
+    viewport,
+  }) => {
+    // The regression this guards: the menu used to take over at 1180px, a breakpoint inherited from
+    // an older layout, so a 1120px window showed a burger beside a header with space to spare.
     test.skip(
-      (viewport?.width ?? 0) > COLLAPSE_BREAKPOINT,
-      'The collapsed layout starts at 1180px',
+      (viewport?.width ?? 0) <= COLLAPSE_BREAKPOINT,
+      'Runs in the desktop project, resized to a medium width',
     );
+    await page.setViewportSize({ width: 1120, height: 900 });
+    await page.goto('/');
+
+    await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open navigation' })).toBeHidden();
+    await expect(page.locator('.environment-mark')).toBeHidden();
+
+    const clearance = await page.evaluate(() => {
+      const links = [...document.querySelectorAll('.primary-navigation a')];
+      const context = document.querySelector('.header-context');
+      if (!links.length || !context) return -1;
+      return context.getBoundingClientRect().left - links.at(-1)!.getBoundingClientRect().right;
+    });
+    expect(clearance).toBeGreaterThanOrEqual(24);
+    await expectHealthyLayout(page);
+  });
+
+  test('collapses behind a toggle on narrow viewports', async ({ page, viewport }) => {
+    test.skip((viewport?.width ?? 0) > COLLAPSE_BREAKPOINT, 'The collapsed layout is below 1080px');
     const failures = monitorRuntimeFailures(page);
     await page.goto('/');
 

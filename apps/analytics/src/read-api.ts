@@ -1,12 +1,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { resolveCaller, type CallerContext } from './caller.js';
+import { AuthError } from '@caselens/auth';
+import { createCallerResolver, type CallerContext, type CallerResolver } from './caller.js';
 import type { AnalyticsStore } from './store.js';
 
 export interface ReadApiOptions {
   store: AnalyticsStore;
   port: number;
-  /** Injectable so a test can drive identity without a real header, and Keycloak can replace it. */
-  resolve?: (profileHeader: string | undefined) => CallerContext;
+  /** How callers are identified - test profiles locally, verified tokens under OIDC. */
+  resolve?: CallerResolver;
   onError?: (error: Error) => void;
 }
 
@@ -22,7 +23,7 @@ export interface ReadApiOptions {
  * query.
  */
 export function startReadApi(options: ReadApiOptions): Server {
-  const resolve = options.resolve ?? resolveCaller;
+  const resolve = options.resolve ?? createCallerResolver({});
 
   const server = createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
@@ -39,8 +40,23 @@ export function startReadApi(options: ReadApiOptions): Server {
 
     if (request.method !== 'GET') return send(response, 405, { detail: 'Method not allowed' });
 
-    const header = request.headers['x-test-profile-id'];
-    const caller = resolve(Array.isArray(header) ? header[0] : header);
+    let caller: CallerContext;
+    try {
+      caller = await resolve(request.headers);
+    } catch (error) {
+      if (!(error instanceof AuthError)) throw error;
+      // Same contract as the API: 401 with `WWW-Authenticate` for "authenticate", 403 for "you may
+      // not", 503 when the signing keys cannot be reached and the answer is genuinely unknown.
+      if (error.status === 401) {
+        response.setHeader(
+          'www-authenticate',
+          error.reason === 'MISSING_TOKEN'
+            ? 'Bearer realm="caselens"'
+            : 'Bearer realm="caselens", error="invalid_token"',
+        );
+      }
+      return send(response, error.status, { code: error.reason, detail: error.message });
+    }
 
     if (url.pathname === '/v1/analytics/throughput') {
       const from = url.searchParams.get('from');

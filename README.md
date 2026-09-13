@@ -46,6 +46,30 @@ Select a fictional identity from the profile menu: Lena administers the pharmacy
 
 Stop the stack without losing data using `docker compose ... down`. To intentionally erase all local CaseLens data and downloaded models, use the same command with `down --volumes`.
 
+### Sign in with Keycloak
+
+By default the local stack uses a **test identity switcher**: pick any profile from the header and the console acts as that person. It is deliberately unauthenticated, which is what makes it useful for the browser suite and dangerous anywhere real.
+
+Layering `infra/docker-compose.keycloak.yml` on top replaces it with **verified identity**:
+
+```bash
+docker compose -f infra/docker-compose.production-local.yml -f infra/docker-compose.keycloak.yml --env-file infra/.env.production-local up -d --build
+```
+
+The console then sends you to Keycloak at http://localhost:8080 to sign in. The five test profiles exist there as real accounts, all with the password in `KEYCLOAK_TEST_USER_PASSWORD` in your `infra/.env.production-local`:
+
+| Username     | Role                                    |
+| ------------ | --------------------------------------- |
+| mara.stein   | Platform administrator, every workspace |
+| lena.vogt    | Admin, Düsseldorf Health Operations     |
+| jonas.feld   | Admin, Rheinland Legal Services         |
+| amara.okafor | Admin, Helios Claims Europe             |
+| mateo.klein  | Admin, RuhrWorks Manufacturing          |
+
+Changing user means signing out and signing in as someone else. There is no switcher, because a way to become anyone without a password is precisely what verified identity removes. The Keycloak admin console is at http://localhost:8080/admin (user `admin`, password `KEYCLOAK_ADMIN_PASSWORD`). Dropping the overlay file returns the stack to the switcher; the browser suite needs that mode.
+
+Underneath: the console's own server completes the sign-in and keeps the tokens in encrypted `httpOnly` cookies, so no token ever reaches browser JavaScript. It attaches the access token when it calls the API or analytics, and each of those checks the signature itself against Keycloak's published keys, without calling Keycloak per request, so an identity-provider outage does not take the API down with it. [`ARCHITECTURE.md`](ARCHITECTURE.md#identity) has the full flow.
+
 ### Seed the expanded multi-tenant fixture pack
 
 The production-local stack includes seven pharmacy documents and four documents each for the legal, insurance, and manufacturing tenants. The companion evidence and the three policy PDFs are synthetic, repeatable fixtures:
@@ -65,28 +89,30 @@ The seed command uses the public API: it uploads each policy, extracts and index
 
 ## Components and why they exist
 
-| Component                    | Purpose                                                                                            | Current runtime status                                                 |
-| ---------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `apps/web`                   | Next.js review console for cases, documents, evidence, findings, corrections, and decisions        | Used by both demo and local production                                 |
-| `apps/api`                   | Authoritative NestJS API enforcing validation, tenant scope, and business invariants               | Memory-backed in demo; PostgreSQL-backed in local production           |
-| `apps/worker`                | Consumes BullMQ jobs and runs document processing plus LangGraph                                   | Deterministic simulator in demo; durable consumer in local production  |
-| `apps/analytics`             | Consumes domain facts into its own read model and serves the analytics API                         | Local production only; shares no schema or package with the pipeline   |
-| `apps/mcp`                   | Read-only agent interface over the API                                                             | Optional; not started by Compose                                       |
-| `packages/contracts`         | Shared Zod schemas, identifiers, and API/domain types                                              | Used across applications                                               |
-| `packages/config`            | Validates environment variables and provider selections                                            | Used at startup                                                        |
-| `packages/domain`            | Versioned domain packs and safe deterministic rule DSL                                             | Used by the workflow and demo data                                     |
-| `packages/providers`         | Vendor-neutral ports plus deterministic, HTTP, S3, pgvector, and BullMQ adapters                   | Selected by environment in both runtime profiles                       |
-| `packages/document-pipeline` | File validation, extraction/OCR strategy, structured facts, confidence, and provenance             | Implemented and tested as a package                                    |
-| `packages/retrieval`         | Tenant/version/date-scoped policy indexing and retrieval for grounded decisions                    | Uses canonical policy chunks in PostgreSQL/pgvector                    |
-| `packages/workflow`          | LangGraph state machine, retries, checkpoints, review pause, and resume                            | Memory checkpoints in demo; PostgreSQL checkpoints in local production |
-| `packages/persistence`       | PostgreSQL/pgvector schema, repositories, indexes, and tenant RLS                                  | Active in local production                                             |
-| `packages/events`            | Domain-event envelope and payload schemas shared by publisher and consumer                         | Used by the API outbox and the worker relay                            |
-| PostgreSQL + pgvector        | Durable records plus hybrid/vector policy search                                                   | Internal production network service                                    |
-| Redis + BullMQ               | Queue handoff, claim coordination, deduplication keys, and retry scheduling between API and worker | Internal production network service; not a business-data store         |
-| RabbitMQ                     | Topic exchange carrying domain facts to independent consumers                                      | Internal production network service; delivering to `apps/analytics`    |
-| MinIO                        | Local S3-compatible immutable source-document storage                                              | Active in local production; demo uses memory storage                   |
-| Ollama                       | Free local structured generation and embeddings                                                    | Qwen3 + EmbeddingGemma by default; model names are configurable        |
-| OCR service                  | Native PDF text extraction and Tesseract fallback                                                  | PyMuPDF + Tesseract, internal production network service               |
+| Component                    | Purpose                                                                                              | Current runtime status                                                 |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `apps/web`                   | Next.js review console for cases, documents, evidence, findings, corrections, and decisions          | Used by both demo and local production                                 |
+| `apps/api`                   | Authoritative NestJS API enforcing validation, tenant scope, and business invariants                 | Memory-backed in demo; PostgreSQL-backed in local production           |
+| `apps/worker`                | Consumes BullMQ jobs and runs document processing plus LangGraph                                     | Deterministic simulator in demo; durable consumer in local production  |
+| `apps/analytics`             | Consumes domain facts into its own read model and serves the analytics API                           | Local production only; shares no schema or package with the pipeline   |
+| `apps/mcp`                   | Read-only agent interface over the API                                                               | Optional; not started by Compose                                       |
+| `packages/contracts`         | Shared Zod schemas, identifiers, and API/domain types                                                | Used across applications                                               |
+| `packages/config`            | Validates environment variables and provider selections                                              | Used at startup                                                        |
+| `packages/domain`            | Versioned domain packs and safe deterministic rule DSL                                               | Used by the workflow and demo data                                     |
+| `packages/providers`         | Vendor-neutral ports plus deterministic, HTTP, S3, pgvector, and BullMQ adapters                     | Selected by environment in both runtime profiles                       |
+| `packages/document-pipeline` | File validation, extraction/OCR strategy, structured facts, confidence, and provenance               | Implemented and tested as a package                                    |
+| `packages/retrieval`         | Tenant/version/date-scoped policy indexing and retrieval for grounded decisions                      | Uses canonical policy chunks in PostgreSQL/pgvector                    |
+| `packages/workflow`          | LangGraph state machine, retries, checkpoints, review pause, and resume                              | Memory checkpoints in demo; PostgreSQL checkpoints in local production |
+| `packages/persistence`       | PostgreSQL/pgvector schema, repositories, indexes, and tenant RLS                                    | Active in local production                                             |
+| `packages/events`            | Domain-event envelope and payload schemas shared by publisher and consumer                           | Used by the API outbox and the worker relay                            |
+| `packages/auth`              | Verifies bearer tokens against the identity provider's published keys and maps claims to an identity | Shared by `apps/api` and `apps/analytics` so both verify identically   |
+| PostgreSQL + pgvector        | Durable records plus hybrid/vector policy search                                                     | Internal production network service                                    |
+| Redis + BullMQ               | Queue handoff, claim coordination, deduplication keys, and retry scheduling between API and worker   | Internal production network service; not a business-data store         |
+| RabbitMQ                     | Topic exchange carrying domain facts to independent consumers                                        | Internal production network service; delivering to `apps/analytics`    |
+| Keycloak                     | OpenID Connect identity provider: sign-in, sessions, users, roles and tenant groups                  | Optional overlay, `infra/docker-compose.keycloak.yml`                  |
+| MinIO                        | Local S3-compatible immutable source-document storage                                                | Active in local production; demo uses memory storage                   |
+| Ollama                       | Free local structured generation and embeddings                                                      | Qwen3 + EmbeddingGemma by default; model names are configurable        |
+| OCR service                  | Native PDF text extraction and Tesseract fallback                                                    | PyMuPDF + Tesseract, internal production network service               |
 
 MinIO is not a business dependency. It is the local S3-compatible implementation of the replaceable `ObjectStorageProvider`; AWS S3, Cloudflare R2, another S3-compatible service, the filesystem adapter, or a new Azure Blob adapter can replace it without changing domain rules.
 

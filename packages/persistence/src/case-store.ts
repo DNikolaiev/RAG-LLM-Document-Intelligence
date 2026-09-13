@@ -623,6 +623,26 @@ export class PostgresCaseStore {
   }
 
   /**
+   * The application user an identity provider's subject was provisioned as, or null.
+   *
+   * `sub` and the application user id are different things and are kept apart on purpose. The
+   * subject is the identity provider's key and can change when an organisation moves providers; the
+   * user id is what every foreign key in this schema points at. `external_subject` is the join, and
+   * it is unique, so one subject can never resolve to two users.
+   *
+   * Null means the person authenticated successfully and was never provisioned here. That must be a
+   * refusal at the edge rather than a user id passed through - an unprovisioned id would satisfy
+   * authentication and then fail a foreign key on the first write, as a 500.
+   */
+  async findUserIdBySubject(subject: string): Promise<string | null> {
+    return this.withScope({ tenantIds: [], platformAdmin: true }, async (tx) => {
+      const rows = await tx<Array<{ id: string }>>`
+        select id from users where external_subject = ${subject}`;
+      return rows[0]?.id ?? null;
+    });
+  }
+
+  /**
    * The highest sequence the outbox has recorded.
    *
    * The publisher's half of consumer lag. The consumer knows how far it has projected and nothing

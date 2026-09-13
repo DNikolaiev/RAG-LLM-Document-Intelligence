@@ -272,6 +272,7 @@ lives in [`docs/superpowers/plans/2026-09-06-event-backbone.md`](docs/superpower
 - `packages/retrieval` enforces tenant, domain, pack-version, validity, and revocation scope before ranking evidence.
 - `packages/workflow` owns resumable orchestration and human-review pauses.
 - `apps/analytics` consumes domain facts into its own read model and shares no table with any other service.
+- `packages/auth` verifies bearer tokens and maps their claims to an identity, shared by every service that accepts one.
 - `packages/events` defines the domain-event envelope and payload schemas shared by publisher and consumer.
 - `packages/persistence` defines the PostgreSQL/pgvector schema, indexes, and tenant RLS policies.
 
@@ -587,6 +588,36 @@ quarantine a row that can never be delivered. The grants deliberately omit `DELE
 | `field_embeddings`               | `tenant_id, domain_pack_id, path` | `domain_pack_id`                                                             |
 
 Migrations live in [`packages/persistence/migrations/`](packages/persistence/migrations/). The numbered files carry every change since the initial schema and are applied after [`infra/postgres/init`](infra/postgres/init) provisions a fresh database — the production-local compose profile and CI both apply them in that order.
+
+## Identity
+
+Two modes, and never both. `AUTH_MODE=test-profiles` with `ENABLE_TEST_IDENTITY_SWITCHER=true` is the local switcher: the console names a profile in a header and every service believes it. `AUTH_MODE=oidc` is verified identity against an OpenID Connect provider - Keycloak, in `infra/docker-compose.keycloak.yml`. Configuration refuses to start with the switcher enabled under `oidc`, because a header that names a user would outrank the signature.
+
+```text
+browser ──> console /auth/login ──> Keycloak login  (PKCE S256, state, nonce)
+                                        │ authorisation code
+browser <── console /auth/callback <────┘
+              │ code exchanged server-to-server, with the client secret
+              │ tokens -> encrypted httpOnly cookies (never visible to page script)
+              v
+         console proxy.ts ── refreshes near expiry; the only code that can set cookies
+              │ Authorization: Bearer <access token>
+              ├──> apps/api        signature, issuer, audience "caselens-api"
+              └──> apps/analytics  signature, issuer, audience "caselens-analytics"
+                     both against Keycloak's JWKS, fetched once and cached - no call per request
+```
+
+**Authentication is centralised, authorisation is not.** Keycloak decides who someone is and which roles and tenant groups they hold; each service decides what those mean for its own data. Teaching the identity provider the domain would turn every feature into an identity-provider change.
+
+**The console is a backend-for-frontend.** A token in `localStorage` is readable by any script on the page, so one XSS bug hands out a bearer credential usable from anywhere until it expires. Here tokens live in `httpOnly`, `SameSite=Lax` cookies encrypted with a key derived from `SESSION_SECRET`, each sealed for one purpose so a value cannot be replayed into another cookie's slot.
+
+**Verification is local and identical everywhere.** `packages/auth` pins the algorithm to RS256 - accepting whatever a token declares is the algorithm-confusion hole - and checks issuer, audience and lifetime. Each service requires its own audience, so a token minted only for the API is refused by analytics. Unreachable signing keys answer 503 rather than 401: telling an authenticated user their credentials are wrong during an identity-provider outage sends them to reset a password that was never the problem.
+
+**A subject is not a user.** The API maps the token's `sub` through `users.external_subject` to the application user every foreign key points at. A subject nobody provisioned is refused with 403 at the edge, rather than passed through to fail a foreign key on its first write. The demo realm pins Keycloak user ids to the seeded profile ids so the two line up.
+
+**Split horizon.** The browser reaches Keycloak at `localhost:8080`, and every token names that as its issuer; containers reach it as `keycloak:8080`. Keycloak runs with `KC_HOSTNAME` set to the public URL and dynamic backchannel URLs, the console rewrites its own server-to-server calls to the private address, and the API and analytics fetch keys from a separately configured JWKS URL. Issuer validation stays on everywhere. Disabling it is the tempting fix, and it removes the check that stops one provider's tokens being accepted as another's.
+
+**Known limits.** Revocation is bounded, not immediate: a disabled user keeps working until their five-minute access token expires, and the API caches a resolved subject for five minutes. Refresh-token rotation is off on purpose - it protects public clients whose refresh tokens can leak from the browser, which ours cannot, and with a page load's parallel requests it would sign people out at random. Publishing `user.deactivated` on the event backbone would make revocation immediate; see the production backlog. Keycloak runs in development mode on a file-backed H2 database; production runs `start` on its own PostgreSQL behind TLS, which is also what the ID token's integrity rests on, because it is accepted over the direct TLS channel to the token endpoint rather than by signature.
 
 ## Safety model
 

@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@caselens/auth": "0.1.0",
     "@caselens/config": "0.1.0",
     "@caselens/contracts": "0.1.0",
     "@caselens/events": "0.1.0",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "@types/amqplib": "^0.10.8",
+    "jose": "^6.2.12",
     "tsx": "^4.20.6",
     "typescript": "^6.0.0",
     "vitest": "^4.1.11"

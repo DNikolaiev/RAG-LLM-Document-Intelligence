@@ -1,11 +1,12 @@
 import type { NextRequest } from 'next/server';
-import { resolveTestProfile } from '@caselens/contracts';
-import { PROFILE_COOKIE, testProfilesEnabled } from '@/lib/session-profile';
+import { upstreamIdentity } from '@/lib/auth/upstream';
 
 export const dynamic = 'force-dynamic';
 
-export function GET(request: NextRequest): Response {
-  const profile = resolveTestProfile(request.cookies.get(PROFILE_COOKIE)?.value);
+export async function GET(request: NextRequest): Promise<Response> {
+  // Read once, when the stream opens. The proxy refreshed the token on the way in, so it is fresh now
+  // and will expire while the stream is still open - see the 401 handling below.
+  const identityHeaders = await upstreamIdentity((name) => request.cookies.get(name)?.value);
   const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:4100';
   const encoder = new TextEncoder();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -19,10 +20,18 @@ export function GET(request: NextRequest): Response {
         }
         try {
           const response = await fetch(new URL('/v1/jobs?limit=30', baseUrl), {
-            headers: testProfilesEnabled() ? { 'x-test-profile-id': profile.id } : {},
+            headers: identityHeaders,
             cache: 'no-store',
             signal: AbortSignal.timeout(4_000),
           });
+          if (response.status === 401) {
+            // The access token captured when the stream opened has expired, and a response that is
+            // already streaming cannot set a refreshed cookie. Closing it makes the browser's
+            // EventSource reconnect, and that new request passes through the proxy, which refreshes
+            // the token before this route runs again.
+            controller.close();
+            return;
+          }
           if (response.ok) {
             const payload = await response.text();
             if (payload !== priorPayload) {

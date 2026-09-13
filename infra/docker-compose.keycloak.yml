@@ -1,0 +1,97 @@
+# Verified identity for the local production stack: Keycloak, and every request-serving service
+# switched from the test-profile switcher to signed tokens.
+#
+# An overlay rather than a change to the base file, because the browser suite drives the console
+# through the profile switcher - fifty-odd specs that would all need a real sign-in otherwise.
+#
+#   docker compose -f infra/docker-compose.production-local.yml -f infra/docker-compose.keycloak.yml \
+#     --env-file infra/.env.production-local up -d --build
+#
+# The realm is imported from infra/keycloak on first start only. Keycloak keeps its state in the
+# `production-keycloak-data` volume, so edits to the realm file apply after that volume is removed.
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3.0
+    # Development mode: a file-backed H2 database and plain HTTP. A real deployment runs `start`
+    # against its own PostgreSQL behind TLS; nothing in the applications changes when it does,
+    # because they only ever see an issuer URL and a key set.
+    command: ['start-dev', '--import-realm']
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD}
+      # Every token names this as its issuer, because it is the address the browser uses.
+      KC_HOSTNAME: http://localhost:8080
+      # ...while services inside this network reach Keycloak as http://keycloak:8080. With this set,
+      # server-to-server endpoints answer on whatever host they were asked on, and the issuer and
+      # the browser-facing endpoints stay public. This is the split-horizon problem, solved at the
+      # identity provider rather than by disabling issuer validation in every client.
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: 'true'
+      KC_HTTP_ENABLED: 'true'
+      KC_HEALTH_ENABLED: 'true'
+      # Substituted into the realm file on import, so neither secret lives in the repository.
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?Set OIDC_CLIENT_SECRET}
+      KEYCLOAK_TEST_USER_PASSWORD: ${KEYCLOAK_TEST_USER_PASSWORD:?Set KEYCLOAK_TEST_USER_PASSWORD}
+    volumes:
+      # The volume covers /opt/keycloak/data, not the h2 directory beneath it. A named volume mounted
+      # over a directory that exists in the image is seeded with that directory's ownership, which
+      # here is the unprivileged keycloak user. Mounted over /opt/keycloak/data/h2 - which does not
+      # exist in the image - Docker created it root-owned, and Keycloak could not write its database.
+      - production-keycloak-data:/opt/keycloak/data
+      - ./keycloak:/opt/keycloak/data/import:ro
+    ports: ['127.0.0.1:8080:8080']
+    healthcheck:
+      # The image ships no curl or wget. Readiness is served on the management port.
+      test:
+        [
+          'CMD',
+          'bash',
+          '-c',
+          "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q UP <&3",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+    restart: unless-stopped
+
+  api:
+    environment:
+      AUTH_MODE: oidc
+      ENABLE_TEST_IDENTITY_SWITCHER: 'false'
+      OIDC_ISSUER: http://localhost:8080/realms/caselens
+      OIDC_AUDIENCE: caselens-api
+      OIDC_JWKS_URL: http://keycloak:8080/realms/caselens/protocol/openid-connect/certs
+    # Deliberately no depends_on keycloak. Keys are fetched on the first verification and cached,
+    # so the API starts and answers health probes whether or not the identity provider is up; a
+    # request that arrives before it is reachable gets 503, not a crash loop.
+
+  analytics:
+    environment:
+      AUTH_MODE: oidc
+      ENABLE_TEST_IDENTITY_SWITCHER: 'false'
+      OIDC_ISSUER: http://localhost:8080/realms/caselens
+      # Its own audience. A token minted only for the API is refused here.
+      OIDC_AUDIENCE: caselens-analytics
+      OIDC_JWKS_URL: http://keycloak:8080/realms/caselens/protocol/openid-connect/certs
+
+  web:
+    build:
+      args:
+        AUTH_MODE: oidc
+        ENABLE_TEST_IDENTITY_SWITCHER: 'false'
+    environment:
+      AUTH_MODE: oidc
+      ENABLE_TEST_IDENTITY_SWITCHER: 'false'
+      OIDC_ISSUER: http://localhost:8080/realms/caselens
+      OIDC_INTERNAL_ISSUER: http://keycloak:8080/realms/caselens
+      OIDC_CLIENT_ID: caselens-web
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?Set OIDC_CLIENT_SECRET}
+      OIDC_REDIRECT_URI: http://localhost:3000/auth/callback
+      OIDC_POST_LOGOUT_REDIRECT_URI: http://localhost:3000/auth/signed-out
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET}
+    depends_on:
+      keycloak: { condition: service_healthy }
+
+volumes:
+  production-keycloak-data:

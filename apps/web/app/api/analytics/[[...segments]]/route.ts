@@ -1,6 +1,5 @@
 import type { NextRequest } from 'next/server';
-import { resolveTestProfile } from '@caselens/contracts';
-import { PROFILE_COOKIE, testProfilesEnabled } from '@/lib/session-profile';
+import { upstreamIdentity } from '@/lib/auth/upstream';
 
 interface RouteContext {
   params: Promise<{ segments?: string[] }>;
@@ -23,8 +22,7 @@ async function forward(request: NextRequest, context: RouteContext): Promise<Res
     baseUrl,
   );
   target.search = request.nextUrl.search;
-  const profile = resolveTestProfile(request.cookies.get(PROFILE_COOKIE)?.value);
-  const identityHeaders = testProfilesEnabled() ? { 'x-test-profile-id': profile.id } : {};
+  const identityHeaders = await upstreamIdentity((name) => request.cookies.get(name)?.value);
 
   try {
     const response = await fetch(target, {

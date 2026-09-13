@@ -67,6 +67,16 @@ export const appConfigSchema = z
     SCANNER_PROVIDER: z.enum(['deterministic', 'http']).default('deterministic'),
     DEMO_TENANT_ID: z.string().min(1).default('tenant_demo'),
     AUTH_MODE: z.enum(['demo', 'test-profiles', 'oidc']).default('demo'),
+    // Verified identity. The issuer is the address printed in tokens, which is the public one the
+    // browser uses. The JWKS URL is where this process fetches signing keys, and on a private
+    // network that is usually a different address for the same server - the split-horizon problem.
+    OIDC_ISSUER: optionalUrl,
+    OIDC_JWKS_URL: optionalUrl,
+    // Each service names itself, so a token minted for one cannot be replayed against another.
+    OIDC_AUDIENCE: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().min(1).optional(),
+    ),
     ENABLE_TEST_IDENTITY_SWITCHER: environmentBoolean.default(false),
     FIXTURE_POLICY_CATALOG_ENABLED: environmentBoolean.default(false),
     WORKER_CHUNK_CHARACTERS: z.coerce.number().int().min(1_000).max(20_000).default(6_000),
@@ -176,15 +186,30 @@ export const appConfigSchema = z
       'OCR_BASE_URL',
       'Required for HTTP OCR',
     );
+    const verifiedIdentity = config.AUTH_MODE === 'oidc';
+    required(verifiedIdentity, config.OIDC_ISSUER, 'OIDC_ISSUER', 'Required to verify tokens');
+    required(verifiedIdentity, config.OIDC_AUDIENCE, 'OIDC_AUDIENCE', 'Required to verify tokens');
+    required(verifiedIdentity, config.OIDC_JWKS_URL, 'OIDC_JWKS_URL', 'Required to verify tokens');
+    // Never both. With verified identity on, the test switcher would be a second, unauthenticated
+    // way to become any user - a header that outranks the token. The switcher's whole safety
+    // argument is that it only exists where nothing is real.
+    if (verifiedIdentity && config.ENABLE_TEST_IDENTITY_SWITCHER) {
+      context.addIssue({
+        code: 'custom',
+        path: ['ENABLE_TEST_IDENTITY_SWITCHER'],
+        message: 'The test identity switcher must be disabled when AUTH_MODE=oidc',
+      });
+    }
     if (
       config.APP_MODE === 'production' &&
+      !verifiedIdentity &&
       !(config.AUTH_MODE === 'test-profiles' && config.ENABLE_TEST_IDENTITY_SWITCHER)
     ) {
       context.addIssue({
         code: 'custom',
         path: ['AUTH_MODE'],
         message:
-          'The local production runtime requires AUTH_MODE=test-profiles with ENABLE_TEST_IDENTITY_SWITCHER=true; OIDC remains disabled until a verified-token adapter is installed',
+          'The production runtime requires verified identity (AUTH_MODE=oidc), or AUTH_MODE=test-profiles with ENABLE_TEST_IDENTITY_SWITCHER=true for the local stack',
       });
     }
     if (config.APP_MODE === 'production') {

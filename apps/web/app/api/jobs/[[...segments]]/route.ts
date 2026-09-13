@@ -1,6 +1,5 @@
 import type { NextRequest } from 'next/server';
-import { resolveTestProfile } from '@caselens/contracts';
-import { PROFILE_COOKIE, testProfilesEnabled } from '@/lib/session-profile';
+import { upstreamIdentity } from '@/lib/auth/upstream';
 
 interface RouteContext {
   params: Promise<{ segments?: string[] }>;
@@ -12,7 +11,7 @@ async function forward(request: NextRequest, context: RouteContext): Promise<Res
   const suffix = segments.length ? `/${segments.map(encodeURIComponent).join('/')}` : '';
   const target = new URL(`/v1/jobs${suffix}`, baseUrl);
   target.search = request.nextUrl.search;
-  const profile = resolveTestProfile(request.cookies.get(PROFILE_COOKIE)?.value);
+  const identityHeaders = await upstreamIdentity((name) => request.cookies.get(name)?.value);
   const body = request.method === 'GET' ? undefined : await request.arrayBuffer();
   try {
     const response = await fetch(target, {
@@ -20,7 +19,7 @@ async function forward(request: NextRequest, context: RouteContext): Promise<Res
       headers: {
         accept: 'application/json',
         'content-type': request.headers.get('content-type') ?? 'application/json',
-        ...(testProfilesEnabled() ? { 'x-test-profile-id': profile.id } : {}),
+        ...identityHeaders,
       },
       ...(body === undefined ? {} : { body }),
       cache: 'no-store',

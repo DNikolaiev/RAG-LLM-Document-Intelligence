@@ -203,6 +203,14 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * The application user an identity provider subject was provisioned as. Consulted by the request
+   * middleware under verified identity; null is a refusal there, never a pass-through.
+   */
+  async resolveSubject(subject: string): Promise<string | null> {
+    return this.#store.findUserIdBySubject(subject);
+  }
+
+  /**
    * The outbox high-water mark, for measuring how far a read model has fallen behind.
    *
    * Platform administrators only. The number counts every fact the system has recorded across every

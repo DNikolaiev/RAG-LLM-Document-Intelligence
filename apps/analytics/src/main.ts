@@ -3,6 +3,8 @@ import { ANALYTICS_REPLAY_BINDINGS, startAnalyticsConsumer } from './consumer.js
 import { AnalyticsStore } from './store.js';
 import { project } from './projections.js';
 import { startReadApi } from './read-api.js';
+import { createCallerResolver } from './caller.js';
+import { createTokenVerifier } from '@caselens/auth';
 import { REPLAY_EXCHANGE } from '@caselens/events';
 
 /**
@@ -60,9 +62,22 @@ export async function bootstrap(): Promise<void> {
   });
   log(`Consuming ${replayQueue} for projection rebuilds`);
 
+  // Verified identity when configured. The audience is this service's own, so a token minted only
+  // for the API is refused here - each resource server accepts tokens meant for it and no others.
+  const resolve = createCallerResolver({
+    verify:
+      config.AUTH_MODE === 'oidc'
+        ? createTokenVerifier({
+            issuer: config.OIDC_ISSUER!,
+            audience: config.OIDC_AUDIENCE!,
+            jwksUrl: config.OIDC_JWKS_URL!,
+          })
+        : null,
+  });
   const api = startReadApi({
     store,
     port: config.ANALYTICS_PORT,
+    resolve,
     onError: (error) => process.stderr.write(`[analytics] ${error.message}\n`),
   });
   log(`Read API listening on ${config.ANALYTICS_PORT}`);

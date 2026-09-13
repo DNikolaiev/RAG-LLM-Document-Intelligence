@@ -23,3 +23,7 @@ Use PostgreSQL/pgvector, BullMQ/Redis, and S3 in a production profile. The memor
 ## Capability failure
 
 Startup fails when a selected provider is missing a required URL, credential, or capability. Runtime failures are normalized into retryable, terminal, rate-limited, or invalid-output errors. The workflow applies bounded retries, preserves its checkpoint, and routes to human review rather than silently selecting a different model. Any configured fallback is explicit and recorded in provenance.
+
+## Identity provider
+
+Verified identity is standard OpenID Connect, so changing provider is configuration rather than code. The console needs `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` and its redirect URIs; the API and analytics need `OIDC_ISSUER`, `OIDC_AUDIENCE` and `OIDC_JWKS_URL`. The provider must issue RS256-signed access tokens carrying the service audiences, a `roles` claim (or `realm_access.roles`) with the CaseLens role names, and a `tenants` claim listing tenant ids. Set `OIDC_INTERNAL_ISSUER` only when the console reaches the provider at a different address from the one printed in its tokens. Every subject must exist as `users.external_subject`.

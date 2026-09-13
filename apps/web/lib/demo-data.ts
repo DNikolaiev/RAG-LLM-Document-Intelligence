@@ -1,7 +1,6 @@
 import { cache } from 'react';
 import { cookies } from 'next/headers';
-import { DEFAULT_TEST_PROFILE_ID } from '@caselens/contracts';
-import { PROFILE_COOKIE, testProfilesEnabled } from './session-profile';
+import { upstreamIdentity } from './auth/upstream';
 
 export type CaseStatus = 'review_needed' | 'processing' | 'ready_for_decision' | 'approved';
 
@@ -659,11 +658,11 @@ async function apiGet<T>(path: string): Promise<T | null> {
   if (process.env.NODE_ENV === 'test') return null;
   const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:4100';
   const store = await cookies();
-  const profileId = store.get(PROFILE_COOKIE)?.value ?? DEFAULT_TEST_PROFILE_ID;
+  const identityHeaders = await upstreamIdentity((name) => store.get(name)?.value);
   try {
     const response = await fetch(new URL(path, baseUrl), {
       cache: 'no-store',
-      headers: testProfilesEnabled() ? { 'x-test-profile-id': profileId } : {},
+      headers: identityHeaders,
       signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
     if (!response.ok) return null;
