@@ -173,7 +173,7 @@ describe('POST /v1/cases/intake (durable)', () => {
     // Registered exactly as main.ts does, so error bodies here are the RFC 7807 shape the
     // client actually receives rather than Nest's raw exception payload.
     app.useGlobalFilters(new ProblemDetailsFilter());
-    const context = new ContextMiddleware();
+    const context = new ContextMiddleware(module.get(CASES_RUNTIME));
     app.use(context.use.bind(context));
     await app.init();
   });
@@ -406,7 +406,7 @@ describe('POST /v1/cases/:id/documents tenant attribution', () => {
     // Registered exactly as main.ts does, so error bodies here are the RFC 7807 shape the
     // client actually receives rather than Nest's raw exception payload.
     app.useGlobalFilters(new ProblemDetailsFilter());
-    const context = new ContextMiddleware();
+    const context = new ContextMiddleware(module.get(CASES_RUNTIME));
     app.use(context.use.bind(context));
     await app.init();
   });

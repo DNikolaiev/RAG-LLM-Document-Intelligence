@@ -1,3 +1,4 @@
+import type { CasesRuntime } from '../src/cases-runtime.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -156,7 +157,10 @@ describe('GET /v1/policies/domain-pack', () => {
     // Registered exactly as main.ts does, so error bodies here are the RFC 7807 shape the
     // client actually receives rather than Nest's raw exception payload.
     app.useGlobalFilters(new ProblemDetailsFilter());
-    const context = new ContextMiddleware();
+    // This module provides no cases runtime. Test-profile mode never consults it - only subject
+    // mapping under verified identity does - so an explicit stub states that rather than hiding it
+    // behind an optional parameter, which would fail open if injection ever went missing in production.
+    const context = new ContextMiddleware({} as CasesRuntime);
     app.use(context.use.bind(context));
     await app.init();
   });
@@ -292,7 +296,10 @@ describe('POST /v1/policies collection creation', () => {
     // Registered exactly as main.ts does, so error bodies here are the RFC 7807 shape the
     // client actually receives rather than Nest's raw exception payload.
     app.useGlobalFilters(new ProblemDetailsFilter());
-    const context = new ContextMiddleware();
+    // This module provides no cases runtime. Test-profile mode never consults it - only subject
+    // mapping under verified identity does - so an explicit stub states that rather than hiding it
+    // behind an optional parameter, which would fail open if injection ever went missing in production.
+    const context = new ContextMiddleware({} as CasesRuntime);
     app.use(context.use.bind(context));
     await app.init();
   });
