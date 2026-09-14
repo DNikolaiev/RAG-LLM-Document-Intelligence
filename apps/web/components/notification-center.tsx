@@ -1,6 +1,15 @@
 'use client';
 
-import { Bell, CheckCircle2, Clock3, LoaderCircle, TriangleAlert, X } from 'lucide-react';
+import {
+  Bell,
+  CheckCircle2,
+  CircleAlert,
+  Clock3,
+  LoaderCircle,
+  TriangleAlert,
+  X,
+} from 'lucide-react';
+import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { JobLifecycleEvent, JobNotification } from '@caselens/contracts';
@@ -21,7 +30,22 @@ const toastEvents = new Set([
   'job.failed',
   'job.cancelled',
   'queue.record_removed',
+  'policy.collection_assigned',
+  'policy.collection_decision_required',
 ]);
+
+/**
+ * A job waiting on a person rather than a worker: today, a policy paused until an administrator
+ * settles its collection. Judged from the job itself - its latest event may be older than any
+ * window the feed reads - and pinned above the rest of the ledger until it is resolved.
+ */
+function needsDecision(job: JobNotification): boolean {
+  return job.status === 'paused' && job.targetType === 'policy_version';
+}
+
+function decisionHref(job: JobNotification): string {
+  return `/policies/${encodeURIComponent(job.targetId)}#collection-decision`;
+}
 
 export function NotificationCenter({
   profileId,
@@ -136,6 +160,9 @@ export function NotificationCenter({
   }, [open]);
 
   const unread = aggregate ? 0 : jobs.filter((job) => job.latestEvent?.readAt === null).length;
+  const decisions = jobs.filter(needsDecision);
+  const activity = jobs.filter((job) => !needsDecision(job));
+  const badge = Math.max(unread, decisions.length);
 
   async function selectJob(job: JobNotification): Promise<void> {
     setSelectedJobId(job.id);
@@ -198,14 +225,22 @@ export function NotificationCenter({
           ref={triggerRef}
           className="notification-trigger"
           type="button"
-          aria-label={`Processing notifications${unread ? `, ${unread} unread` : ''}`}
+          aria-label={`Processing notifications${
+            decisions.length
+              ? `, ${decisions.length} ${decisions.length === 1 ? 'needs' : 'need'} your decision`
+              : ''
+          }${unread ? `, ${unread} unread` : ''}`}
           aria-expanded={open}
           aria-controls="processing-notifications-panel"
           aria-haspopup="dialog"
           onClick={() => setOpen((current) => !current)}
         >
           <Bell aria-hidden="true" size={17} />
-          {unread ? <span>{unread > 9 ? '9+' : unread}</span> : null}
+          {badge ? (
+            <span className={decisions.length ? 'is-decision' : undefined}>
+              {badge > 9 ? '9+' : badge}
+            </span>
+          ) : null}
         </button>
         {open ? (
           <section
@@ -231,10 +266,39 @@ export function NotificationCenter({
                   ? 'Polling for updates'
                   : 'Updates temporarily unavailable'}
             </div>
+            {decisions.length ? (
+              <section className="notification-decisions" aria-label="Needs your decision">
+                <p>Needs your decision</p>
+                <ul>
+                  {decisions.map((job) => (
+                    <li key={job.id}>
+                      <CircleAlert aria-hidden="true" size={17} />
+                      <span>
+                        <strong>
+                          {job.latestEvent?.message ??
+                            "Choose this policy's collection to continue."}
+                        </strong>
+                        <small>
+                          {formatJobContext(job)} · {formatRelative(job.updatedAt)}
+                        </small>
+                        <span className="notification-decision-actions">
+                          <Link href={decisionHref(job)} onClick={() => setOpen(false)}>
+                            Choose collection
+                          </Link>
+                          <button type="button" onClick={() => void selectJob(job)}>
+                            Timeline
+                          </button>
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
             <div className="notification-body">
-              <div className="notification-list" role="list">
-                {jobs.length ? (
-                  jobs.map((job) => {
+              <div className="notification-list" role="list" aria-label="Recent activity">
+                {activity.length ? (
+                  activity.map((job) => {
                     const event = job.latestEvent;
                     return (
                       <button
@@ -256,7 +320,7 @@ export function NotificationCenter({
                       </button>
                     );
                   })
-                ) : (
+                ) : decisions.length ? null : (
                   <div className="notification-empty">
                     <Bell aria-hidden="true" size={20} />
                     <strong>No processing activity</strong>
@@ -273,6 +337,15 @@ export function NotificationCenter({
                         Enqueued by {selectedJob.enqueuedByName ?? selectedJob.enqueuedByUserId}
                       </span>
                     </div>
+                  ) : null}
+                  {selectedJob && needsDecision(selectedJob) ? (
+                    <Link
+                      className="notification-decide"
+                      href={decisionHref(selectedJob)}
+                      onClick={() => setOpen(false)}
+                    >
+                      Choose collection
+                    </Link>
                   ) : null}
                   <ol className="job-event-timeline" aria-label="Job processing timeline">
                     {events.map((event) => (
@@ -324,6 +397,15 @@ export function NotificationCenter({
                 <small>
                   {formatJobContext(toast.job)} · {toast.event.stage ?? 'Processing update'}
                 </small>
+                {needsDecision(toast.job) ? (
+                  <Link
+                    className="toast-decide"
+                    href={decisionHref(toast.job)}
+                    onClick={() => setToast(null)}
+                  >
+                    Choose collection
+                  </Link>
+                ) : null}
               </span>
               <button
                 type="button"
@@ -341,6 +423,7 @@ export function NotificationCenter({
 }
 
 function JobIcon({ status }: { status: string }) {
+  if (status === 'paused') return <CircleAlert aria-hidden="true" size={17} />;
   if (status === 'failed') return <TriangleAlert aria-hidden="true" size={17} />;
   if (['completed', 'needs_review', 'cancelled'].includes(status)) {
     return <CheckCircle2 aria-hidden="true" size={17} />;

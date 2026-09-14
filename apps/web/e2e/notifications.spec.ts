@@ -156,3 +156,65 @@ test.describe('processing notification bell', () => {
     expectNoRuntimeFailures(failures);
   });
 });
+
+test.describe('decisions waiting on a person', () => {
+  test('pins a policy awaiting its collection above the ledger, with a link to decide', async ({
+    page,
+  }) => {
+    const waiting = {
+      ...job,
+      id: 'job_collection_decision',
+      caseId: null,
+      targetType: 'policy_version',
+      targetId: 'policy_anti_bribery',
+      status: 'paused',
+      progress: 30,
+      kind: 'process_policy',
+      caseReference: null,
+      caseSubjectName: null,
+      targetName: 'Anti-bribery policy',
+      latestEvent: {
+        ...job.latestEvent,
+        id: 'job_event_collection_decision',
+        jobId: 'job_collection_decision',
+        type: 'policy.collection_decision_required',
+        stage: 'collection_classification',
+        status: 'paused',
+        progress: 30,
+        message:
+          'CaseLens suggests a new collection, "Anti-Bribery". Accept it, rename it, or choose an existing collection to continue.',
+      },
+    };
+    const page_ = { items: [job, waiting], nextCursor: null };
+    await page.route('**/api/job-events/stream', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: `event: jobs\ndata: ${JSON.stringify(page_)}\n\n`,
+      });
+    });
+    await page.route('**/api/jobs?limit=30', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(page_),
+      });
+    });
+    const failures = monitorRuntimeFailures(page);
+    await page.goto('/');
+
+    const trigger = page.getByRole('button', { name: /1 needs your decision/ });
+    await expect(trigger).toBeVisible();
+    await trigger.click();
+    const pinned = page.getByRole('region', { name: 'Needs your decision' });
+    await expect(pinned).toBeVisible();
+    await expect(pinned.getByRole('link', { name: 'Choose collection' })).toHaveAttribute(
+      'href',
+      '/policies/policy_anti_bribery#collection-decision',
+    );
+    await expectNoPageOverflow(page);
+    await expectVisibleControlsFitViewport(page);
+    await expectHealthyLayout(page);
+    expectNoRuntimeFailures(failures);
+  });
+});

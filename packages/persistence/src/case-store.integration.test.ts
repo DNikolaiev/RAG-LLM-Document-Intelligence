@@ -135,12 +135,44 @@ describe.skipIf(!databaseUrl || !adminDatabaseUrl)('PostgresCaseStore tenant int
       });
       expect(platformJobs.some((job) => job.id === first.id)).toBe(true);
       expect(platformJobs.some((job) => job.id === secondUserJob.id)).toBe(true);
+
+      // A job paused for a person's decision stays first however many newer jobs arrive, and comes
+      // with its own latest event rather than whatever fell inside a recent-events window.
+      const pausedJob = await store.createJob({
+        ...first,
+        id: `job_it_paused_${suffix}`,
+        correlationId: `cor-paused-${suffix}`,
+        idempotencyKey: `job-key-paused-${suffix}`,
+      });
+      await store.updateJob(pausedJob.id, tenantA, {
+        status: 'paused',
+        progress: 30,
+        eventType: 'policy.collection_decision_required',
+        stage: 'collection_classification',
+        message: 'Choose or create its collection to continue.',
+      });
+      await store.updateJob(first.id, tenantA, {
+        status: 'processing',
+        progress: 50,
+        eventType: 'job.progress',
+        message: 'Newer activity on another job.',
+      });
+      expect((await store.listJobs(firstUserScope)).map((job) => job.id)).toEqual([
+        pausedJob.id,
+        first.id,
+      ]);
+      const latest = await store.listLatestJobEvents(firstUserScope, [first.id, pausedJob.id]);
+      expect(Object.fromEntries(latest.map((event) => [event.jobId, event.type]))).toEqual({
+        [first.id]: 'job.progress',
+        [pausedJob.id]: 'policy.collection_decision_required',
+      });
+      expect(await store.listLatestJobEvents(secondUserScope, [pausedJob.id])).toEqual([]);
     } finally {
       try {
         await adminSql.begin(async (tx) => {
           await tx`select set_config('app.tenant_id', '', true), set_config('app.user_id', '', true), set_config('app.platform_admin', 'true', true), set_config('app.system_actor', 'false', true)`;
-          await tx`delete from job_events where job_id in (${`job_it_${suffix}`}, ${`job_duplicate_${suffix}`}, ${`job_it_second_${suffix}`})`;
-          await tx`delete from jobs where id in (${`job_it_${suffix}`}, ${`job_duplicate_${suffix}`}, ${`job_it_second_${suffix}`})`;
+          await tx`delete from job_events where job_id in (${`job_it_${suffix}`}, ${`job_duplicate_${suffix}`}, ${`job_it_second_${suffix}`}, ${`job_it_paused_${suffix}`})`;
+          await tx`delete from jobs where id in (${`job_it_${suffix}`}, ${`job_duplicate_${suffix}`}, ${`job_it_second_${suffix}`}, ${`job_it_paused_${suffix}`})`;
           await tx`delete from cases where id in (${caseA.id}, ${caseB.id})`;
           await tx`delete from memberships where tenant_id in (${tenantA}, ${tenantB})`;
           await tx`delete from domain_packs where tenant_id in (${tenantA}, ${tenantB})`;

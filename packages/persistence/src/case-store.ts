@@ -411,7 +411,9 @@ export class PostgresCaseStore {
           on job.target_type = 'policy_version' and policy_item.id = job.target_id
         left join users enqueuer on enqueuer.id = job.enqueued_by_user_id
         where (${scope.platformAdmin} or job.enqueued_by_user_id = ${scope.userId ?? ''})
-        order by job.updated_at desc, job.id desc limit ${limit}`;
+        -- A job paused for a person's decision stays in the window, first, until it is resolved;
+        -- everything else is most recent first.
+        order by (job.status = 'paused') desc, job.updated_at desc, job.id desc limit ${limit}`;
       return rows.map(mapJob);
     });
   }
@@ -427,6 +429,31 @@ export class PostgresCaseStore {
         where (${jobId ?? null}::text is null or event.job_id = ${jobId ?? null})
           and (${scope.platformAdmin} or event.recipient_user_id = ${scope.userId ?? ''})
         order by event.occurred_at desc, event.sequence desc limit ${limit}`;
+      return rows.map(mapJobEvent);
+    });
+  }
+
+  /**
+   * The latest event of each given job that the caller may see. The feed used to take latest
+   * events from the most recent events overall, so a job whose last event had fallen out of that
+   * window - a policy waiting days for a decision - arrived with none.
+   */
+  async listLatestJobEvents(
+    scope: AccessScope,
+    jobIds: readonly string[],
+  ): Promise<StoredJobEvent[]> {
+    if (!jobIds.length) return [];
+    return this.withScope(scope, async (tx) => {
+      const rows = await tx<Array<Record<string, unknown>>>`
+        select distinct on (event.job_id) event.id, event.job_id, event.tenant_id,
+          event.recipient_user_id, event.actor_user_id, event.sequence, event.event_type,
+          event.stage, event.status, event.progress, event.message, event.metadata,
+          event.occurred_at, event.read_at
+        from job_events event
+        join jobs job on job.id = event.job_id
+        where event.job_id = any(${[...jobIds]}::text[])
+          and (${scope.platformAdmin} or event.recipient_user_id = ${scope.userId ?? ''})
+        order by event.job_id, event.occurred_at desc, event.sequence desc`;
       return rows.map(mapJobEvent);
     });
   }

@@ -826,6 +826,108 @@ code {
   box-shadow: 0 0 0 3px rgb(24 174 179 / 12%);
 }
 
+/* Work waiting on a person, pinned above the ledger until it is resolved. */
+.notification-decisions {
+  padding: 12px 14px;
+  border-bottom: 1px solid #f1d9a8;
+  background: #fff8ea;
+}
+
+.notification-decisions > p {
+  margin: 0 0 8px;
+  color: #8a5300;
+  font: 600 8px/1.2 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.notification-decisions ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notification-decisions li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 9px;
+  color: #8a5300;
+}
+
+.notification-decisions li > span {
+  min-width: 0;
+}
+
+.notification-decisions strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.notification-decisions small {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink-muted);
+  font: 500 8px/1.35 var(--mono);
+  text-transform: uppercase;
+}
+
+.notification-decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.notification-decision-actions a,
+.notification-decide,
+.toast-decide {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 11px;
+  border-radius: 8px;
+  background: #8a5300;
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.notification-decision-actions button {
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid #e3c68c;
+  border-radius: 8px;
+  background: white;
+  color: #8a5300;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.notification-decide {
+  margin: 0 0 12px;
+}
+
+.toast-decide {
+  margin-top: 8px;
+}
+
+.notification-trigger > span.is-decision {
+  background: #9a5b00;
+}
+
+.job-toast.toast-paused {
+  border-left-color: #9a5b00;
+  color: #8a5300;
+}
+
 .notification-empty {
   min-height: 240px;
   display: grid;

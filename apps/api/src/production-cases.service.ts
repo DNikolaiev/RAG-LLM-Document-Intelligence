@@ -880,10 +880,12 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
 
   async listJobs(context: RequestContext, limit = 30) {
     const jobs = await this.#store.listJobs(this.scope(context), limit);
-    const events = await this.#store.listJobEvents(this.scope(context), undefined, limit * 4);
-    const latestByJob = new Map<string, (typeof events)[number]>();
-    for (const event of events)
-      if (!latestByJob.has(event.jobId)) latestByJob.set(event.jobId, event);
+    // One latest event per listed job, however old: a job paused for a decision can wait for days.
+    const events = await this.#store.listLatestJobEvents(
+      this.scope(context),
+      jobs.map((job) => job.id),
+    );
+    const latestByJob = new Map(events.map((event) => [event.jobId, event]));
     return {
       items: jobs.map((job) => ({ ...job, latestEvent: latestByJob.get(job.id) ?? null })),
       nextCursor: null,
