@@ -37,6 +37,36 @@ describe('domain pack catalog', () => {
     expect(resolveCompiledDomainPack('pack_tenant_demo')).toBe(pharmacySupplierPack);
     expect(resolveCompiledDomainPack('pack_tenant_unknown')).toBeNull();
   });
+
+  it('ships real starting collections for every review pack, keeping each placeholder id', () => {
+    for (const pack of [legalContractPack, insuranceClaimsPack, manufacturingQualityPack]) {
+      const ids = pack.policyCollections.map((collection) => collection.id);
+      // Policies filed before 1.1.0 reference the placeholder; renaming it would orphan them.
+      expect(ids, pack.id).toContain(`${pack.id}-policy`);
+      expect(ids.length, pack.id).toBeGreaterThanOrEqual(4);
+      expect(new Set(ids).size, pack.id).toBe(ids.length);
+      // A changed catalog pack must carry a new version, or the seed refuses it.
+      expect(pack.version, pack.id).toBe('1.1.0');
+      for (const collection of pack.policyCollections) {
+        expect(collection.description, collection.id).toMatch(/^[^\n]{20,240}$/);
+      }
+    }
+  });
+
+  it('keeps a collection description optional, as collections created at upload have none', () => {
+    const collections = [
+      { id: 'anti-bribery', label: 'Anti-Bribery', chunkSize: 500, overlap: 50 },
+    ];
+    expect(
+      parseDomainPack({ ...legalContractPack, policyCollections: collections }).policyCollections,
+    ).toEqual(collections);
+    expect(() =>
+      parseDomainPack({
+        ...legalContractPack,
+        policyCollections: [{ ...collections[0]!, description: '' }],
+      }),
+    ).toThrow();
+  });
 });
 
 describe('safe condition DSL', () => {

@@ -95,7 +95,8 @@ describe.skipIf(!databaseUrl || !adminDatabaseUrl)('tenant field dictionary inte
         await policies.getActivePackDefinition(otherTenantId, `pack_${otherTenantId}`),
       ).toBeNull();
 
-      const next = nextMinorVersion('1.0.0');
+      const installed = legalContractPack.version;
+      const next = nextMinorVersion(installed);
       const widened = parseDomainPack({
         ...legalContractPack,
         version: next,
@@ -118,7 +119,7 @@ describe.skipIf(!databaseUrl || !adminDatabaseUrl)('tenant field dictionary inte
         domainPackId,
         definition: widened,
         semanticVersion: next,
-        supersedes: '1.0.0',
+        supersedes: installed,
         actorUserId: userId,
       });
       expect(minted).toEqual({ semanticVersion: next });
@@ -130,7 +131,7 @@ describe.skipIf(!databaseUrl || !adminDatabaseUrl)('tenant field dictionary inte
           domainPackId,
           definition: widened,
           semanticVersion: next,
-          supersedes: '1.0.0',
+          supersedes: installed,
           actorUserId: userId,
         }),
       ).toEqual({ semanticVersion: next });
@@ -138,7 +139,7 @@ describe.skipIf(!databaseUrl || !adminDatabaseUrl)('tenant field dictionary inte
           select semantic_version, status from domain_packs
           where tenant_id = ${tenantId} order by semantic_version`;
       expect(packRows).toEqual([
-        { semantic_version: '1.0.0', status: 'superseded' },
+        { semantic_version: installed, status: 'superseded' },
         { semantic_version: next, status: 'active' },
       ]);
       const auditRows = await sql<Array<{ count: string }>>`
@@ -151,7 +152,7 @@ describe.skipIf(!databaseUrl || !adminDatabaseUrl)('tenant field dictionary inte
 
       // A case pinned to a version reads exactly that version, superseded or not, through the same
       // lineage - and nothing it is not entitled to.
-      expect(await policies.getPackDefinitionVersion(tenantId, domainPackId, '1.0.0')).toEqual(
+      expect(await policies.getPackDefinitionVersion(tenantId, domainPackId, installed)).toEqual(
         parseDomainPack(legalContractPack),
       );
       expect(await policies.getPackDefinitionVersion(tenantId, domainPackId, next)).toEqual(

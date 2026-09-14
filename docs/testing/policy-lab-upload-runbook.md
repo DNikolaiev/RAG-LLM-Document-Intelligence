@@ -69,7 +69,7 @@ proposals cannot be approved at all.
 
 ## Rheinland Legal Services — `tenant_legal`
 
-Collection for both policies: **Commercial contract policy** (`commercial-contract-review-policy`).
+Collection for both policies: **Contracting Standards** (`commercial-contract-review-policy`).
 
 ### Policy 1 — outcome A, an approvable rule
 
@@ -117,7 +117,7 @@ Follow [Running a case](#running-a-case) with `PROFILE=profile_jonas_feld` and
 
 ## Helios Claims Europe — `tenant_insurance`
 
-Collection for both policies: **Claims assessment policy** (`insurance-claims-assessment-policy`).
+Collection for both policies: **Claims Handling Standards** (`insurance-claims-assessment-policy`).
 
 ### Policy 3 — outcome A, an approvable rule
 
@@ -169,7 +169,7 @@ Follow [Running a case](#running-a-case) with `PROFILE=profile_amara_okafor` and
 
 ## RuhrWorks Manufacturing — `tenant_manufacturing`
 
-Collection for all three policies: **Supplier quality policy** (`supplier-quality-assurance-policy`).
+Collection for all three policies: **Supplier Quality Manual** (`supplier-quality-assurance-policy`).
 
 ### Policy 5 — outcome A, an approvable rule
 

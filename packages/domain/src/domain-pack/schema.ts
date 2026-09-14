@@ -87,6 +87,11 @@ export const DomainPackSchema = z.object({
     z.object({
       id: z.string().min(1),
       label: z.string().min(1),
+      /**
+       * One line on what belongs here. A label like "Insurance Requirements" alone is a weak signal
+       * to file a policy by, for a person or for classification.
+       */
+      description: z.string().min(1).max(240).optional(),
       chunkSize: z.number().int().min(100),
       overlap: z.number().int().nonnegative(),
     }),

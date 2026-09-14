@@ -1,3 +1,4 @@
+import { pharmacySupplierPack, resolveDomainPack } from '@caselens/domain';
 export type Severity = 'critical' | 'major' | 'minor';
 export type CaseStatus =
   'processing' | 'needs_review' | 'request_information' | 'approved' | 'rejected';
@@ -99,7 +100,7 @@ export function createDemoCases(): DemoCase[] {
       reference: 'SUP-2026-0142',
       subjectName: 'MediSupply GmbH',
       domain: 'Pharmacy supplier qualification',
-      domainPackVersion: '1.0.0',
+      domainPackVersion: pharmacySupplierPack.version,
       status: 'needs_review',
       recommendation: 'request_information',
       progress: 100,
@@ -327,7 +328,7 @@ export function createDemoCases(): DemoCase[] {
       reference: 'SUP-2026-0141',
       subjectName: 'NordMed Logistics AG',
       domain: 'Pharmacy supplier qualification',
-      domainPackVersion: '1.0.0',
+      domainPackVersion: pharmacySupplierPack.version,
       status: 'processing',
       recommendation: null,
       progress: 64,
@@ -506,7 +507,7 @@ function createDomainCase(input: {
     reference: input.reference,
     subjectName: input.subjectName,
     domain: input.domain,
-    domainPackVersion: '1.0.0',
+    domainPackVersion: resolveDomainPack(input.domain).version,
     status: 'needs_review',
     recommendation: 'request_information',
     progress: 100,

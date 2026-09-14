@@ -11,6 +11,6 @@ Before activation:
 3. Confirm that every material fact/finding has an evidence requirement.
 4. Review time-zone and inclusivity semantics for dates.
 5. Compare expected decisions with subject-matter expert labels.
-6. Activate a new immutable semantic version; never rewrite a version used by a historical case.
+6. Activate a new immutable semantic version; never rewrite a version used by a historical case. For a compiled pack that means bumping its `version`: at API startup the seed mints the new version for every tenant still on the catalog's line, leaves tenants whose administrators have minted their own alone, and refuses a changed pack that kept its old version. Treat a policy collection `id` as permanent once a policy is filed under it - relabel rather than rename - and give each collection a one-line `description` of what belongs in it.
 
 For legal review, replace supplier document types with contracts, exhibits, precedents, and playbooks. For insurance, use submissions, loss runs, policies, and underwriting guides. For manufacturing, use specifications, certificates, PPAP evidence, and quality procedures. The workflow and provider ports do not change.

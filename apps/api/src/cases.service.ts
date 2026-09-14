@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { ulid } from 'ulid';
+import { pharmacySupplierPack, resolveCompiledDomainPack } from '@caselens/domain';
 import { loadConfig } from '@caselens/config';
 import { validateFile } from '@caselens/document-pipeline';
 import { DeterministicVirusScanner } from '@caselens/providers';
@@ -97,7 +98,7 @@ export class CasesService {
       reference: input.reference ?? `CASE-${ulid().slice(-8)}`,
       subjectName: input.subjectName,
       domain: input.domainPackId,
-      domainPackVersion: '1.0.0',
+      domainPackVersion: compiledPackVersion(tenantId, input.domainPackId),
       status: 'processing',
       recommendation: null,
       progress: 0,
@@ -189,7 +190,7 @@ export class CasesService {
       reference: `CASE-${ulid().slice(-8)}`,
       subjectName: input.subjectName,
       domain: domainPackId,
-      domainPackVersion: '1.0.0',
+      domainPackVersion: compiledPackVersion(tenantId, domainPackId),
       status: 'processing',
       recommendation: null,
       progress: 0,
@@ -798,4 +799,16 @@ export class CasesService {
     });
     this.jobEvents.set(job.id, events);
   }
+}
+
+/**
+ * Demo mode keeps no pack history, so a new case is pinned to the compiled version it runs against -
+ * the same answer production gives a tenant that has never minted a version of its own.
+ */
+function compiledPackVersion(tenantId: string, domainPackId: string): string {
+  return (
+    resolveCompiledDomainPack(domainPackId) ??
+    resolveCompiledDomainPack(`pack_${tenantId}`) ??
+    pharmacySupplierPack
+  ).version;
 }

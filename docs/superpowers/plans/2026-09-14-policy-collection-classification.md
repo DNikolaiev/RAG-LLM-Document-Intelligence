@@ -71,7 +71,10 @@ Notifying every administrator of the tenant, not only the uploader, is a later e
 
    Not done: a tenant that has diverged never receives a later catalog release. Offering the catalog's changes to its administrators as a proposal they can merge, with an action-required notification, is the natural follow-up once step 5 exists.
 
-2. **Real starting collections** for the legal, insurance and manufacturing packs, keeping each placeholder id so existing policies stay valid, with descriptions. Released as 1.1.0 through step 1.
+2. **Real starting collections** for the legal, insurance and manufacturing packs, keeping each placeholder id so existing policies stay valid, with descriptions. Released as 1.1.0 through step 1. Done: each pack now has four collections - the placeholder relabelled (Contracting Standards, Claims Handling Standards, Supplier Quality Manual) plus three real ones - and every one carries an optional one-line `description` in the pack schema. Demo cases and demo-mode intake pin their pack's compiled version instead of the literal 1.0.0, which on a fresh database would have tied the legal, insurance and manufacturing cases to a version never installed there.
+
+   The pharmacy pack is unchanged at 1.0.0: its four collections are real already, and giving them descriptions is a version bump that touches its demo cases and fixture summary. It belongs with step 4, where classification is what reads descriptions. The policy-lab fixtures still file into each placeholder collection; step 8 decides whether their expected collection should become one of the new ones.
+
 3. **Contract and schema.** Collection optional at upload; nullable `collection_id`, `awaiting_collection`, `collection_suggestion`; migration with tenant RLS unchanged.
 4. **Classification in the worker**, with a deterministic provider for demo and tests, the quotation check, the near-duplicate check, and the decision table above.
 5. **Notifications**: the two event types, the paused job, and action-required rendering with a link.
