@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@caselens/config": "0.1.0",
+    "@caselens/contracts": "0.1.0",
     "@caselens/document-pipeline": "0.1.0",
     "@caselens/domain": "0.1.0",
     "@caselens/persistence": "0.1.0",

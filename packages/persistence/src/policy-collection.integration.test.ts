@@ -146,6 +146,46 @@ describe.skipIf(!databaseUrl || !adminDatabaseUrl)('policies awaiting a collecti
         status: 'processing',
         collectionId: 'term-termination',
       });
+
+      // The worker's path: updateStatus writes the collection and the suggestion.
+      const current = (await policies.get(scope, firstId))!;
+      const cleared = await policies.updateStatus({
+        tenantId,
+        id: firstId,
+        expectedVersion: current.version,
+        status: 'processing',
+        collectionSuggestion: null,
+      });
+      expect(cleared).toMatchObject({
+        collectionId: 'term-termination',
+        collectionSuggestion: null,
+      });
+      // SQL NULL, not the JSON value null - which the object CHECK would refuse.
+      const stored = await sql<Array<{ is_sql_null: boolean }>>`
+        select collection_suggestion is null as is_sql_null from policy_documents
+        where id = ${firstId}`;
+      expect(stored[0]?.is_sql_null).toBe(true);
+      await expect(
+        policies.updateStatus({
+          tenantId,
+          id: firstId,
+          expectedVersion: cleared.version,
+          status: 'processing',
+          collectionSuggestion: { decision: 'existing' } as never,
+        }),
+      ).rejects.toThrow();
+      const refiled = await policies.updateStatus({
+        tenantId,
+        id: firstId,
+        expectedVersion: cleared.version,
+        status: 'processing',
+        collectionId: 'liability-indemnity',
+        collectionSuggestion: suggestion as never,
+      });
+      expect(refiled).toMatchObject({
+        collectionId: 'liability-indemnity',
+        collectionSuggestion: suggestion,
+      });
     } finally {
       try {
         await asAdmin(async (tx) => {

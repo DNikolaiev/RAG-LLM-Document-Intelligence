@@ -53,7 +53,7 @@ The browser never talks directly to PostgreSQL, Redis, MinIO, or Ollama. Next.js
 
 Case and policy uploads follow the same delivery rule: write durable business state and a PostgreSQL job record before placing the small work reference in BullMQ. Redis coordinates claims, locks, retries, and backoff; it is not the job-history database. The worker appends progress to `job_events`, and the header feed filters those rows to the exact enqueueing user. Only the platform administrator receives an aggregate view.
 
-Policy processing is a separate worker route: immutable PDF → page extraction/OCR → clause chunks → embeddings → pgvector → cited rule proposals. Proposals cannot execute until an administrator reviews their original clause, validation result, and four deterministic fixture classes. Activation writes immutable `policy_rules`; future case runs load the active rules for the tenant/domain/date and pin their identifiers and versions in `rule_runs.input_snapshot`.
+Policy processing is a separate worker route: immutable PDF → page extraction/OCR → collection classification, when none was chosen at upload → clause chunks → embeddings → pgvector → cited rule proposals. Classification files a policy only into one of the tenant's existing collections, only on a quotation verified in the document and a confidence at or above `WORKER_COLLECTION_AUTO_FILE_CONFIDENCE`; anything else leaves the policy `awaiting_collection` and its job `paused` for an administrator, announced as `policy.collection_decision_required`. Proposals cannot execute until an administrator reviews their original clause, validation result, and four deterministic fixture classes. Activation writes immutable `policy_rules`; future case runs load the active rules for the tenant/domain/date and pin their identifiers and versions in `rule_runs.input_snapshot`.
 
 Case review is evidence-first. The original PDF is the primary surface. Facts and findings carry a document, page, and quotation; selecting one creates a deep link and navigates to the matching source/page/highlight. Extracted text is explicitly labelled as a secondary aid.
 
@@ -635,6 +635,7 @@ browser <── console /auth/callback <────┘
 - Document text is always treated as untrusted data; it cannot introduce executable rules or tool instructions.
 - Material facts and findings retain source evidence references.
 - Long documents are extracted in bounded page-aware chunks, and model-produced citations are accepted only when their normalized quote is present on the claimed page.
+- A policy's collection can be suggested by a model reading that policy. It chooses only among the tenant's existing collections, its quotation must be in the document, and only a confident match files without an administrator; a model never creates a collection, because that would let a document name its own category.
 - Structured model responses are validated against application-owned schemas before entering workflow state.
 - Deterministic rules own thresholds and approval gates; model output remains advisory.
 - Tenant scope is enforced in contracts, retrieval filters, repository design, and PostgreSQL RLS.

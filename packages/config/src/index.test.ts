@@ -23,6 +23,27 @@ describe('loadConfig', () => {
     );
   });
 
+  it('classifies unfiled policies with the model by default, within bounded thresholds', () => {
+    expect(loadConfig({})).toMatchObject({
+      WORKER_COLLECTION_CLASSIFIER: 'model',
+      WORKER_COLLECTION_AUTO_FILE_CONFIDENCE: 0.8,
+      WORKER_COLLECTION_NEAR_DUPLICATE_SIMILARITY: 0.8,
+    });
+    expect(
+      loadConfig({
+        WORKER_COLLECTION_CLASSIFIER: 'lexical',
+        WORKER_COLLECTION_AUTO_FILE_CONFIDENCE: '0.9',
+      }),
+    ).toMatchObject({
+      WORKER_COLLECTION_CLASSIFIER: 'lexical',
+      WORKER_COLLECTION_AUTO_FILE_CONFIDENCE: 0.9,
+    });
+    expect(() => loadConfig({ WORKER_COLLECTION_CLASSIFIER: 'guess' })).toThrow(ConfigurationError);
+    expect(() => loadConfig({ WORKER_COLLECTION_AUTO_FILE_CONFIDENCE: '1.5' })).toThrow(
+      ConfigurationError,
+    );
+  });
+
   it('rejects an incomplete provider switch at startup', () => {
     expect(() => loadConfig({ MODEL_PROVIDER: 'openai-compatible' })).toThrow(ConfigurationError);
   });

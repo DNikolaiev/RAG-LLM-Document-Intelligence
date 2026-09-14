@@ -407,3 +407,22 @@ function scalarAllowed(fieldType: FieldType, value: unknown): boolean {
   if (fieldType === 'list') return Array.isArray(value);
   return typeof value === 'string';
 }
+
+/**
+ * The collection id derived from a label: lowercased, every run of non-alphanumeric characters
+ * folded to a single hyphen, leading and trailing hyphens trimmed. Only shrinks or preserves
+ * length, so a label within the request-schema bound yields an id within the same bound. Returns
+ * `''` for a label with no ASCII alphanumerics at all, which callers refuse rather than invent an
+ * id for.
+ *
+ * Shared by the API, which mints collections, and the worker, which flags a proposed collection
+ * that would slug to one the tenant already has - so the two can never disagree about what
+ * "the same collection" means.
+ */
+export function toPolicyCollectionId(label: string): string {
+  return label
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/g, '-')
+    .replaceAll(/^-+|-+$/g, '');
+}

@@ -343,11 +343,29 @@ export class PostgresPolicyStore implements FieldDictionaryStore {
     status: string;
     processingError?: Record<string, unknown> | null;
     extractionMetadata?: Record<string, unknown>;
+    /** Set when classification files the policy or an administrator decides; omit to keep. */
+    collectionId?: string | null;
+    /** What classification suggested; omit to keep, null to clear. */
+    collectionSuggestion?: CollectionSuggestion | null;
   }): Promise<StoredPolicyDocument> {
+    // Validated on the way in as well as on the way out: a malformed suggestion is refused here
+    // rather than discovered by the next reader.
+    const suggestion = input.collectionSuggestion
+      ? CollectionSuggestionSchema.parse(input.collectionSuggestion)
+      : null;
     return this.withScope({ tenantIds: [input.tenantId], platformAdmin: false }, async (tx) => {
+      // "None" is SQL NULL, never the JSON value null, which the object CHECK refuses. And the
+      // object goes through tx.json: postgres.js serializes by the server-inferred parameter type,
+      // so a pre-stringified value bound to ::jsonb is stored as a JSON *string*.
       const rows = await tx<Array<Record<string, unknown>>>`
         update policy_documents
         set status = ${input.status}, processing_error = ${tx.json(asJson(input.processingError ?? null))}::jsonb,
+          collection_id = case when ${input.collectionId === undefined}
+            then collection_id else ${input.collectionId ?? null}::text end,
+          collection_suggestion = case
+            when ${input.collectionSuggestion === undefined} then collection_suggestion
+            when ${suggestion === null} then null
+            else ${tx.json(asJson(suggestion ?? {}))}::jsonb end,
           extraction_metadata = case when ${input.extractionMetadata === undefined}
             then extraction_metadata else ${tx.json(asJson(input.extractionMetadata ?? {}))}::jsonb end,
           updated_at = now(), version = version + 1

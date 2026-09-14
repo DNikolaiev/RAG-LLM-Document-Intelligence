@@ -8,6 +8,8 @@ Document content is delimited as evidence in prompts. It cannot redefine system 
 
 Policy PDFs have the same untrusted status. Generated proposals are restricted to an allowlisted condition DSL and installed fact paths, require exact page quotations, and must pass match, no-match, missing-value, and boundary fixtures. They are stored as proposals, never activated by the model. Local test-profile mode may permit proposer self-approval so the portfolio stack is testable; the review reason records that exception, and public deployments must disable the identity switcher.
 
+A policy's collection can be suggested by a model reading that policy, which makes the document an input to its own filing. The worker contains that: the model chooses only among the tenant's existing collections, its supporting quotation must be found in the document, the document is quoted as data with its enclosing tag stripped from its text, and only a confident match files without an administrator. A model cannot create a collection. What remains is a document written to steer the model into the wrong existing collection; the uploader is notified where every classified policy was filed.
+
 ## Tenant isolation and authorization
 
 Every application command carries tenant, user, role, and correlation context. The service layer checks role invariants. PostgreSQL enables and forces RLS on tenant tables, with indexed tenant columns and least-privilege runtime/auditor roles. Production deployments must use a non-owner, non-superuser runtime account and set `app.tenant_id` on every checked-out transaction.

@@ -24,6 +24,7 @@ import {
   parseDomainPack,
   resolveCompiledDomainPack,
   resolvePersistedDomainPack,
+  toPolicyCollectionId,
   validateRuleProposal,
   type DomainPack,
   type PolicyRuleProposal,
@@ -421,20 +422,8 @@ function translateFieldDictionaryError(error: unknown): unknown {
 export const NEW_POLICY_COLLECTION_CHUNK_SIZE = 700;
 export const NEW_POLICY_COLLECTION_OVERLAP = 90;
 
-/**
- * The collection id derived from an administrator-typed label: lowercased, every run of
- * non-alphanumeric characters folded to a single hyphen, leading and trailing hyphens trimmed.
- * Only shrinks or preserves length, so a label within the request-schema bound yields an id
- * within the same bound. Returns `''` for a label with no ASCII alphanumerics at all, which the
- * caller refuses rather than inventing an id for.
- */
-export function toPolicyCollectionId(label: string): string {
-  return label
-    .trim()
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/g, '-')
-    .replaceAll(/^-+|-+$/g, '');
-}
+/** Lives in `@caselens/domain` now, shared with the worker's duplicate check. */
+export { toPolicyCollectionId };
 
 /**
  * Builds the next pack definition with one collection appended, then re-validates the WHOLE pack

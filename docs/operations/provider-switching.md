@@ -24,6 +24,10 @@ Use PostgreSQL/pgvector, BullMQ/Redis, and S3 in a production profile. The memor
 
 Startup fails when a selected provider is missing a required URL, credential, or capability. Runtime failures are normalized into retryable, terminal, rate-limited, or invalid-output errors. The workflow applies bounded retries, preserves its checkpoint, and routes to human review rather than silently selecting a different model. Any configured fallback is explicit and recorded in provenance.
 
+## Policy collection classifier
+
+A policy uploaded without a collection is classified by the worker. `WORKER_COLLECTION_CLASSIFIER=model`, the default, asks the configured chat model; `lexical` scores each collection by the words its label and description share with the document, with no model at all - deterministic, for tests and model-free environments. Both answers pass the same checks: only an existing collection, a quotation found in the document, and confidence at or above `WORKER_COLLECTION_AUTO_FILE_CONFIDENCE` (default 0.8) file automatically. `WORKER_COLLECTION_NEAR_DUPLICATE_SIMILARITY` (default 0.8) is the embedding similarity above which a proposed new collection is flagged as close to an existing one. It only annotates the suggestion, because a new collection always waits for an administrator.
+
 ## Identity provider
 
 Verified identity is standard OpenID Connect, so changing provider is configuration rather than code. The console needs `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` and its redirect URIs; the API and analytics need `OIDC_ISSUER`, `OIDC_AUDIENCE` and `OIDC_JWKS_URL`. The provider must issue RS256-signed access tokens carrying the service audiences, a `roles` claim (or `realm_access.roles`) with the CaseLens role names, and a `tenants` claim listing tenant ids. Set `OIDC_INTERNAL_ISSUER` only when the console reaches the provider at a different address from the one printed in its tokens. Every subject must exist as `users.external_subject`.

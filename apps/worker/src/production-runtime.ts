@@ -6,6 +6,12 @@ import {
   resolveActivePolicyPack,
   resolvePinnedCasePack,
 } from './policy/policy-pack.js';
+import {
+  createCollectionClassifier,
+  settleCollectionClassification,
+  type ClassifiablePage,
+} from './policy/collection-classification.js';
+import type { CollectionSuggestion } from '@caselens/contracts';
 import { Worker, type Job } from 'bullmq';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -16,6 +22,7 @@ import {
   PostgresCaseStore,
   PostgresPolicyStore,
   type PendingDomainEvent,
+  type StoredPolicyDocument,
 } from '@caselens/persistence';
 import {
   HttpDocumentTextProvider,
@@ -852,12 +859,11 @@ async function processPolicyJob(
     // approved from a proposal exist only there. Both the collection lookup and rule proposals below
     // read it - see policy/policy-pack.ts for what compiled-only resolution silently broke.
     const pack = await resolveActivePolicyPack(policies, tenantId, policy.domainPackId);
-    if (policy.collectionId === null) {
-      // Uploads still name their collection. Until classification exists to file one that does
-      // not, reaching this point without a collection is a defect, and it fails loudly.
-      throw new Error(`POLICY_COLLECTION_UNDECIDED:${policy.id}`);
-    }
-    const collection = findPolicyCollection(pack, policy.collectionId);
+    // An administrator's choice at upload is final. A policy without one is classified below, once
+    // its text has been read: chunk size belongs to the collection, so nothing is chunked until the
+    // collection is settled.
+    let collection =
+      policy.collectionId === null ? null : findPolicyCollection(pack, policy.collectionId);
 
     await jobs.updateJob(databaseJobId, tenantId, {
       status: 'processing',
@@ -885,6 +891,25 @@ async function processPolicyJob(
     });
     if (!pages.some((page) => page.text.trim()))
       throw new Error('The policy contains no extractable text');
+
+    if (!collection) {
+      const settled = await fileUnfiledPolicy({
+        policy,
+        pack,
+        pages,
+        config,
+        model,
+        embeddings,
+        policies,
+        jobs,
+        databaseJobId,
+        tenantId,
+      });
+      // Paused for an administrator: the policy is `awaiting_collection`, the job `paused`.
+      if (!settled) return;
+      policy = settled.policy;
+      collection = settled.collection;
+    }
 
     const chunkDrafts = chunkPolicyPages(policy.id, pages, {
       chunkSize: collection.chunkSize,
@@ -1024,6 +1049,142 @@ async function processPolicyJob(
     });
     throw error;
   }
+}
+
+type PolicyCollection = DomainPack['policyCollections'][number];
+
+/**
+ * Files a policy uploaded without a collection, or pauses it for an administrator. The decision is
+ * `settleCollectionClassification`'s; this records it on the policy and tells the uploader through
+ * the same job-event feed every other stage uses. Returns null when the policy waits.
+ */
+async function fileUnfiledPolicy(input: {
+  policy: StoredPolicyDocument;
+  pack: DomainPack;
+  pages: readonly ClassifiablePage[];
+  config: AppConfig;
+  model: ModelProvider;
+  embeddings: ModelProvider;
+  policies: PostgresPolicyStore;
+  jobs: PostgresCaseStore;
+  databaseJobId: string;
+  tenantId: string;
+}): Promise<{ policy: StoredPolicyDocument; collection: PolicyCollection } | null> {
+  const { policy, pack, pages, config, policies, jobs, databaseJobId, tenantId } = input;
+  await jobs.updateJob(databaseJobId, tenantId, {
+    status: 'processing',
+    progress: 30,
+    eventType: 'job.progress',
+    stage: 'collection_classification',
+    message:
+      "No collection was chosen at upload; the policy is being classified against this workspace's collections.",
+  });
+  const pause = (message: string, metadata: Record<string, unknown>) =>
+    jobs.updateJob(databaseJobId, tenantId, {
+      status: 'paused',
+      progress: 30,
+      errorCode: null,
+      eventType: 'policy.collection_decision_required',
+      stage: 'collection_classification',
+      message: message.slice(0, 500),
+      metadata: { policyDocumentId: policy.id, ...metadata },
+    });
+
+  const classifier = createCollectionClassifier(config, input.model);
+  const classified = await classifier.classify({ pages, collections: pack.policyCollections });
+  if (!classified.ok) {
+    // No answer is still an answer an administrator can act on; the failure is kept for them.
+    await policies.updateStatus({
+      tenantId,
+      id: policy.id,
+      expectedVersion: policy.version,
+      status: 'awaiting_collection',
+      processingError: null,
+      collectionSuggestion: null,
+      extractionMetadata: {
+        ...policy.extractionMetadata,
+        collectionClassification: {
+          status: 'unavailable',
+          providerId: classifier.providerId,
+          message: classified.message.slice(0, 500),
+        },
+      },
+    });
+    await pause(
+      'CaseLens could not classify this policy. Choose or create its collection to continue.',
+      { classification: 'unavailable' },
+    );
+    return null;
+  }
+
+  const { suggestion, filedCollectionId } = await settleCollectionClassification({
+    raw: classified.value,
+    pages,
+    collections: pack.policyCollections,
+    classifier,
+    packVersion: pack.version,
+    thresholds: {
+      autoFileConfidence: config.WORKER_COLLECTION_AUTO_FILE_CONFIDENCE,
+      nearDuplicateSimilarity: config.WORKER_COLLECTION_NEAR_DUPLICATE_SIMILARITY,
+    },
+    embeddings: input.embeddings,
+  });
+  if (filedCollectionId === null) {
+    await policies.updateStatus({
+      tenantId,
+      id: policy.id,
+      expectedVersion: policy.version,
+      status: 'awaiting_collection',
+      processingError: null,
+      collectionSuggestion: suggestion,
+    });
+    await pause(describeDecisionRequired(suggestion, pack), { suggestion });
+    return null;
+  }
+
+  const collection = findPolicyCollection(pack, filedCollectionId);
+  const filed = await policies.updateStatus({
+    tenantId,
+    id: policy.id,
+    expectedVersion: policy.version,
+    status: 'processing',
+    processingError: null,
+    collectionId: filedCollectionId,
+    collectionSuggestion: suggestion,
+  });
+  await jobs.updateJob(databaseJobId, tenantId, {
+    status: 'processing',
+    progress: 32,
+    eventType: 'policy.collection_assigned',
+    stage: 'collection_classification',
+    message: `Filed into ${collection.label} at ${Math.round(suggestion.confidence * 100)}% confidence.`,
+    metadata: { policyDocumentId: policy.id, collectionId: filedCollectionId, suggestion },
+  });
+  return { policy: filed, collection };
+}
+
+function describeDecisionRequired(suggestion: CollectionSuggestion, pack: DomainPack): string {
+  const labelOf = (id: string | null) =>
+    pack.policyCollections.find((collection) => collection.id === id)?.label;
+  if (suggestion.decision === 'new') {
+    const nearest = labelOf(suggestion.nearestCollectionId);
+    return (
+      `CaseLens suggests a new collection, "${suggestion.label}"` +
+      (nearest ? `, close to the existing ${nearest}` : '') +
+      '. Accept it, rename it, or choose an existing collection to continue.'
+    );
+  }
+  const best = labelOf(suggestion.collectionId);
+  const why = suggestion.reasons.includes('quote_not_found')
+    ? 'its supporting quotation is not in the document'
+    : suggestion.reasons.includes('no_match')
+      ? 'it did not match a collection in this workspace'
+      : `it is only ${Math.round(suggestion.confidence * 100)}% confident`;
+  return (
+    'CaseLens could not file this policy on its own' +
+    (best ? ` (best match: ${best})` : '') +
+    `: ${why}. Choose or create its collection to continue.`
+  );
 }
 
 type ExtractionField = DomainPack['documentTypes'][number]['extractionFields'][number];

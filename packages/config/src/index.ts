@@ -100,6 +100,16 @@ export const appConfigSchema = z
     // A recall guard, not a decision boundary: measured synonym and unrelated-field similarity
     // bands overlap, so the model decides. Above ~0.5 real duplicates stop reaching it.
     WORKER_FIELD_DEDUP_SIMILARITY_FLOOR: z.coerce.number().min(0).max(1).default(0.4),
+    // How a policy uploaded without a collection is classified. `model` asks the configured chat
+    // model; `lexical` matches the document against collection labels and descriptions with no
+    // model at all - deterministic, for tests and model-free environments.
+    WORKER_COLLECTION_CLASSIFIER: z.enum(['model', 'lexical']).default('model'),
+    // A match to an existing collection at or above this confidence, with a quotation verified in
+    // the document, is filed without asking; anything less waits for an administrator.
+    WORKER_COLLECTION_AUTO_FILE_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.8),
+    // A proposed collection name at or above this embedding similarity to an existing one is
+    // flagged as a likely duplicate. Informational: a new collection always waits for a person.
+    WORKER_COLLECTION_NEAR_DUPLICATE_SIMILARITY: z.coerce.number().min(0).max(1).default(0.8),
   })
   .superRefine((config, context) => {
     const required = (condition: boolean, value: unknown, path: string, message: string) => {

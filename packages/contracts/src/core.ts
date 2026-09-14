@@ -191,6 +191,10 @@ export const JobEventTypeSchema = z.enum([
   'job.cancel_requested',
   'job.cancelled',
   'queue.record_removed',
+  // A policy uploaded without a collection was filed by classification, or is waiting for an
+  // administrator to decide.
+  'policy.collection_assigned',
+  'policy.collection_decision_required',
 ]);
 
 export const JobLifecycleEventSchema = z.object({
@@ -291,6 +295,8 @@ export const RegistryRuleSchema = z.object({
  */
 const CollectionSuggestionBaseSchema = z.object({
   confidence: z.number().min(0).max(1),
+  /** One sentence on why, shown to the administrator beside the quotation. */
+  rationale: z.string().min(1).max(500),
   evidence: z.object({
     quote: z.string().min(1).max(500),
     page: z.number().int().positive(),
@@ -318,7 +324,6 @@ export const CollectionSuggestionSchema = z.discriminatedUnion('decision', [
   CollectionSuggestionBaseSchema.extend({
     decision: z.literal('new'),
     label: z.string().min(1).max(80),
-    rationale: z.string().min(1).max(500),
     /** The closest existing collection by the near-duplicate check, if any came close. */
     nearestCollectionId: z.string().min(1).nullable(),
   }),
