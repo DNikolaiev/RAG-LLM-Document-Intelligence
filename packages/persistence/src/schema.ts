@@ -256,7 +256,13 @@ export const policyDocuments = pgTable(
       .references(() => domainPacks.id),
     title: text('title').notNull(),
     policyVersion: text('policy_version').notNull(),
-    collectionId: text('collection_id').notNull(),
+    /**
+     * NULL only while a policy waits for its collection - uploaded, processing,
+     * awaiting_collection or failed. Migration 0008 enforces that with CHECK constraints and
+     * rebuilds the unique index below as NULLS NOT DISTINCT, which Drizzle cannot express on an
+     * index, so at most one unfiled copy of a title and version exists.
+     */
+    collectionId: text('collection_id'),
     storageKey: text('storage_key').notNull(),
     originalName: text('original_name').notNull(),
     mediaType: text('media_type').notNull(),
@@ -277,6 +283,8 @@ export const policyDocuments = pgTable(
     activatedAt: timestamp('activated_at', { withTimezone: true }),
     processingError: jsonb('processing_error'),
     extractionMetadata: jsonb('extraction_metadata').notNull().default({}),
+    /** What classification suggested and why; `CollectionSuggestionSchema` in contracts. */
+    collectionSuggestion: jsonb('collection_suggestion'),
     ...auditColumns,
   },
   (table) => [

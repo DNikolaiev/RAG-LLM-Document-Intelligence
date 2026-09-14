@@ -1239,6 +1239,11 @@
   background: #e6f7f1;
   color: #15795d;
 }
+/* Waiting on an administrator to settle the collection: an action to take, not progress. */
+.policy-status-awaiting_collection {
+  background: #fff4e0;
+  color: #8a5300;
+}
 .policy-status-under_review,
 .policy-status-processing,
 .policy-status-proposed {

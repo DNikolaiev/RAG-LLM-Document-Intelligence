@@ -189,6 +189,12 @@ describe('policy rule proposal governance', () => {
   it('enforces explicit policy-version and rule-proposal transition graphs', () => {
     expect(() => assertPolicyTransition('uploaded', 'processing')).not.toThrow();
     expect(() => assertPolicyTransition('failed', 'processing')).not.toThrow();
+    // Waiting for a collection is a pause in processing, never a shortcut into governance.
+    expect(() => assertPolicyTransition('processing', 'awaiting_collection')).not.toThrow();
+    expect(() => assertPolicyTransition('awaiting_collection', 'processing')).not.toThrow();
+    expect(() => assertPolicyTransition('awaiting_collection', 'approved')).toThrow(
+      /awaiting_collection.*approved/i,
+    );
     expect(() => assertPolicyTransition('active', 'draft')).toThrow(/active.*draft/i);
     expect(() => assertProposalTransition('proposed', 'under_review')).not.toThrow();
     expect(() => assertProposalTransition('invalid', 'rejected')).not.toThrow();

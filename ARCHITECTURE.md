@@ -61,7 +61,7 @@ Production adapters are defined for PostgreSQL/pgvector, Redis/BullMQ, S3-compat
 
 The production-local worker consumes BullMQ jobs and runs the LangGraph state machine with PostgreSQL checkpoints, MinIO sources, PyMuPDF/Tesseract extraction, Ollama models, and pgvector retrieval. Demo mode retains the deterministic progress simulator; see [`docs/architecture/langgraph-workflow.md`](docs/architecture/langgraph-workflow.md).
 
-The production-local Compose profile also runs idempotent forward migrations after PostgreSQL provisioning and before API/worker startup, so an existing Docker volume receives job-event and policy-governance schema additions without being deleted.
+The production-local Compose profile also applies forward migrations after PostgreSQL provisioning and before API/worker startup, through `infra/postgres/migrate.sh`: each numbered file runs once, in one transaction with the `schema_migrations` row that records it. An existing Docker volume receives new schema without being deleted, and an old migration's backfill is never replayed over newer data.
 
 ## Event backbone
 
@@ -447,8 +447,10 @@ erDiagram
     text domain_pack_id FK
     text uploaded_by_user_id FK
     text approved_by_user_id FK
-    text collection_id
+    text collection_id "NULL while awaiting a collection"
     text policy_version
+    text status
+    jsonb collection_suggestion
     boolean revoked
   }
   policy_chunks {
@@ -511,6 +513,8 @@ erDiagram
 ```
 
 `field_proposals` and `field_embeddings` are deliberately separate tables. The first is the governance record of what a policy proposed and how it was reviewed. The second is the search index over the vocabulary the active pack actually holds, including fields that came from the compiled pack and were never proposed. Deduplication recalls from the index, never from the record — recalling from the record would leave a fresh tenant with an empty corpus, so every candidate would read as distinct and duplicates would be minted freely.
+
+A policy can exist before its collection is decided. `policy_documents.collection_id` is NULL while the policy is uploaded, processing, `awaiting_collection` or failed, and CHECK constraints refuse it for any governed state, because rules derived from a policy are keyed by its collection. `collection_suggestion` keeps what classification proposed and why: the decision, the collection or proposed label, confidence, the verbatim quotation, and which model at which pack version said so. The unique index on title and version per collection is `NULLS NOT DISTINCT`, so at most one unfiled copy of a policy version can exist.
 
 ### Operations
 
@@ -588,11 +592,12 @@ quarantine a row that can never be delivered. The grants deliberately omit `DELE
 | `job_events`                     | `id`                              | `job_id`, `recipient_user_id`, `actor_user_id`                               |
 | `audit_events`                   | `id`                              | `case_id`                                                                    |
 | `domain_events`                  | `id`                              | — (`aggregate_id` is an unconstrained reference)                             |
+| `schema_migrations`              | `name`                            | — (the migration ledger; not tenant data)                                    |
 | `workflow_checkpoints`           | `tenant_id, checkpoint_key`       | —                                                                            |
 | `field_proposals`                | `id`                              | `domain_pack_id`, `policy_document_id`, `reviewed_by_user_id`                |
 | `field_embeddings`               | `tenant_id, domain_pack_id, path` | `domain_pack_id`                                                             |
 
-Migrations live in [`packages/persistence/migrations/`](packages/persistence/migrations/). The numbered files carry every change since the initial schema and are applied after [`infra/postgres/init`](infra/postgres/init) provisions a fresh database — the production-local compose profile and CI both apply them in that order.
+Migrations live in [`packages/persistence/migrations/`](packages/persistence/migrations/). The numbered files carry every change since the initial schema and are applied after [`infra/postgres/init`](infra/postgres/init) provisions a fresh database — the production-local compose profile and CI both apply them in that order, through the same ledger script, `infra/postgres/migrate.sh`. Replaying every file on every start - what the compose profile did until migration 0008 - only works while every migration is safe to repeat forever, and 0002's backfill of `collection_id` is not.
 
 ## Identity
 

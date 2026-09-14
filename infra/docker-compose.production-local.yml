@@ -118,12 +118,9 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     volumes:
       - ../packages/persistence/migrations:/migrations:ro
-    command:
-      [
-        'sh',
-        '-c',
-        'psql -v ON_ERROR_STOP=1 -f /migrations/0001_job_lifecycle_events.sql -f /migrations/0002_policy_library.sql -f /migrations/0003_tenant_field_dictionary.sql -f /migrations/0004_field_embedding_index.sql -f /migrations/0005_domain_event_outbox.sql -f /migrations/0006_outbox_claiming.sql -f /migrations/0007_domain_pack_origin.sql',
-      ]
+      - ./postgres/migrate.sh:/usr/local/bin/caselens-migrate.sh:ro
+    # Each numbered migration runs once and is recorded in schema_migrations - see the script.
+    command: ['sh', '/usr/local/bin/caselens-migrate.sh', '/migrations']
     depends_on:
       postgres-provision: { condition: service_completed_successfully }
     restart: 'no'

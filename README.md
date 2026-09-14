@@ -190,7 +190,7 @@ pgvector is not a second database: `vector(768)` columns and their HNSW indexes 
 
 ## Database schema map
 
-The canonical TypeScript definition is [`packages/persistence/src/schema.ts`](packages/persistence/src/schema.ts). SQL bootstrap and forward migrations live under [`infra/postgres/init`](infra/postgres/init) and [`packages/persistence/migrations`](packages/persistence/migrations).
+The canonical TypeScript definition is [`packages/persistence/src/schema.ts`](packages/persistence/src/schema.ts). SQL bootstrap and forward migrations live under [`infra/postgres/init`](infra/postgres/init) and [`packages/persistence/migrations`](packages/persistence/migrations). The production-local profile and CI apply the numbered migrations with [`infra/postgres/migrate.sh`](infra/postgres/migrate.sh), which runs each one once and records it in `schema_migrations`.
 
 | Schema group             | Main tables                                                                                             | Responsibility                                                                                                  |
 | ------------------------ | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |

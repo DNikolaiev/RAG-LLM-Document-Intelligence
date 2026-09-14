@@ -6,6 +6,7 @@ export type PolicyVersionStatus =
   | 'draft'
   | 'uploaded'
   | 'processing'
+  | 'awaiting_collection'
   | 'under_review'
   | 'approved'
   | 'active'
@@ -84,7 +85,10 @@ export interface ProposalApprovalContext {
 const policyTransitions: Readonly<Record<PolicyVersionStatus, readonly PolicyVersionStatus[]>> = {
   draft: ['uploaded'],
   uploaded: ['processing', 'failed'],
-  processing: ['under_review', 'failed'],
+  processing: ['awaiting_collection', 'under_review', 'failed'],
+  // Processed far enough to classify, and waiting for an administrator to settle the collection;
+  // the decision re-enqueues processing from chunking.
+  awaiting_collection: ['processing'],
   under_review: ['approved', 'failed'],
   approved: ['active'],
   active: ['superseded', 'revoked'],

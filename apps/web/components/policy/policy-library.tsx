@@ -28,7 +28,8 @@ interface PolicySummary {
   tenantId: string;
   title: string;
   policyVersion: string;
-  collectionId: string;
+  /** NULL while the policy waits for an administrator to settle its collection. */
+  collectionId: string | null;
   status: string;
   pageCount: number | null;
   updatedAt: string;
@@ -940,7 +941,7 @@ export function PolicyLibrary({
                   </span>
                   <strong>{policy.title}</strong>
                   <span>
-                    {policy.policyVersion} · {policy.collectionId}
+                    {policy.policyVersion} · {policy.collectionId ?? 'Awaiting collection'}
                   </span>
                   <small>
                     {policy.tenantId} · {policy.pageCount ?? '—'} pages

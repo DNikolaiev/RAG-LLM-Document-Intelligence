@@ -852,6 +852,11 @@ async function processPolicyJob(
     // approved from a proposal exist only there. Both the collection lookup and rule proposals below
     // read it - see policy/policy-pack.ts for what compiled-only resolution silently broke.
     const pack = await resolveActivePolicyPack(policies, tenantId, policy.domainPackId);
+    if (policy.collectionId === null) {
+      // Uploads still name their collection. Until classification exists to file one that does
+      // not, reaching this point without a collection is a defect, and it fails loudly.
+      throw new Error(`POLICY_COLLECTION_UNDECIDED:${policy.id}`);
+    }
     const collection = findPolicyCollection(pack, policy.collectionId);
 
     await jobs.updateJob(databaseJobId, tenantId, {

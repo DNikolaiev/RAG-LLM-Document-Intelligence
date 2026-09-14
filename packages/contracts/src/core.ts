@@ -283,6 +283,49 @@ export const RegistryRuleSchema = z.object({
   origin: RuleOriginSchema,
 });
 
+/**
+ * What classification suggested for a policy's collection, and why. A model reads an untrusted
+ * document and proposes; nothing here is authoritative until it is filed or an administrator
+ * decides. `evidence.quote` must be verbatim text of the document - the worker checks it before
+ * trusting a suggestion, as it does for every other model citation.
+ */
+const CollectionSuggestionBaseSchema = z.object({
+  confidence: z.number().min(0).max(1),
+  evidence: z.object({
+    quote: z.string().min(1).max(500),
+    page: z.number().int().positive(),
+  }),
+  /**
+   * `filed`: matched an existing collection confidently and was filed. `decision_required`: an
+   * administrator must choose, create or accept - see `reasons`.
+   */
+  disposition: z.enum(['filed', 'decision_required']),
+  reasons: z.array(
+    z.enum(['low_confidence', 'quote_not_found', 'no_match', 'new_collection', 'near_duplicate']),
+  ),
+  providerId: z.string().min(1),
+  model: z.string().min(1),
+  /** The pack version whose collections the document was classified against. */
+  packVersion: z.string().min(1),
+  classifiedAt: IsoTimestampSchema,
+});
+
+export const CollectionSuggestionSchema = z.discriminatedUnion('decision', [
+  CollectionSuggestionBaseSchema.extend({
+    decision: z.literal('existing'),
+    collectionId: z.string().min(1),
+  }),
+  CollectionSuggestionBaseSchema.extend({
+    decision: z.literal('new'),
+    label: z.string().min(1).max(80),
+    rationale: z.string().min(1).max(500),
+    /** The closest existing collection by the near-duplicate check, if any came close. */
+    nearestCollectionId: z.string().min(1).nullable(),
+  }),
+]);
+
+export type CollectionSuggestion = z.infer<typeof CollectionSuggestionSchema>;
+
 export const DomainPackRequiredDocumentSchema = z.object({
   id: z.string().min(1),
   documentType: z.string().min(1),

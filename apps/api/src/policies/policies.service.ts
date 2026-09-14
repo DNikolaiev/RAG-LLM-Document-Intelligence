@@ -756,7 +756,9 @@ export class PoliciesService implements OnModuleDestroy {
     const documentTypes = new Map(
       pack.documentTypes.map((documentType) => [documentType.id, documentType]),
     );
-    const registry = buildRuleRegistry(pack, activePolicies, activePolicyRules);
+    // An active policy always has a collection - the database refuses one without - but the
+    // stored type allows NULL, so the registry is handed only filed policies, never a guess.
+    const registry = buildRuleRegistry(pack, activePolicies.filter(isFiled), activePolicyRules);
 
     return {
       tenantId,
@@ -1177,6 +1179,15 @@ export class PoliciesService implements OnModuleDestroy {
         message: 'Approve at least one valid rule proposal before activating this policy.',
       });
     }
+    // Rule keys are derived from the collection, and the database refuses a governed policy
+    // without one; saying so here gives a precise problem instead of a constraint violation.
+    const collectionId = policy.collectionId;
+    if (collectionId === null) {
+      throw new ConflictException({
+        code: 'POLICY_COLLECTION_UNDECIDED',
+        message: 'File this policy into a collection before activating it.',
+      });
+    }
     return store.activate({
       tenantId: policy.tenantId,
       policyDocumentId: policy.id,
@@ -1185,7 +1196,7 @@ export class PoliciesService implements OnModuleDestroy {
       rules: approved.map((proposal) => ({
         id: stableId('policy_rule', `${policy.id}:${proposal.id}`),
         proposalId: proposal.id,
-        ruleKey: stableRuleKey(policy.collectionId, proposal.title),
+        ruleKey: stableRuleKey(collectionId, proposal.title),
         priority: input.priority,
       })),
     });
@@ -1288,6 +1299,12 @@ function parseDate(value: string, field: string): Date {
 
 function stableId(prefix: string, value: string): string {
   return `${prefix}_${createHash('sha256').update(value).digest('hex').slice(0, 24)}`;
+}
+
+function isFiled<T extends { collectionId: string | null }>(
+  policy: T,
+): policy is T & { collectionId: string } {
+  return policy.collectionId !== null;
 }
 
 function stableRuleKey(collectionId: string, title: string): string {

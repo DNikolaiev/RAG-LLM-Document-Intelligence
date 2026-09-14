@@ -9,3 +9,5 @@
 # Binary, and hash-pinned by `scripts/verify-fixtures.py`: never converted.
 *.pdf binary
 *.png binary
+# Shell scripts run inside Linux containers; a CRLF checkout breaks /bin/sh.
+*.sh text eol=lf

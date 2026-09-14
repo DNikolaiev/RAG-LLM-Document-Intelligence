@@ -1,3 +1,4 @@
+import { CollectionSuggestionSchema, type CollectionSuggestion } from '@caselens/contracts';
 import type { DomainPack } from '@caselens/domain';
 import postgres from 'postgres';
 import type { AccessScope } from './case-store.js';
@@ -28,7 +29,8 @@ export interface StoredPolicyDocument {
   domainPackId: string;
   title: string;
   policyVersion: string;
-  collectionId: string;
+  /** NULL only while the policy waits for its collection; see migration 0008. */
+  collectionId: string | null;
   storageKey: string;
   originalName: string;
   mediaType: string;
@@ -44,6 +46,8 @@ export interface StoredPolicyDocument {
   approvedByUserId: string | null;
   processingError: Record<string, unknown> | null;
   extractionMetadata: Record<string, unknown>;
+  /** What classification suggested; null until the policy has been classified. */
+  collectionSuggestion: CollectionSuggestion | null;
   createdAt: string;
   updatedAt: string;
   version: number;
@@ -55,7 +59,8 @@ export interface PolicyDocumentCreate {
   domainPackId: string;
   title: string;
   policyVersion: string;
-  collectionId: string;
+  /** NULL only while the policy waits for its collection; see migration 0008. */
+  collectionId: string | null;
   storageKey: string;
   originalName: string;
   mediaType: string;
@@ -519,6 +524,11 @@ export class PostgresPolicyStore implements FieldDictionaryStore {
           and test.passed is not true limit 1`;
       if (failedTests.length) throw new Error(`RULE_TESTS_FAILED:${input.policyDocumentId}`);
 
+      // The database refuses an approved policy without a collection (migration 0008); this keeps
+      // the supersede below from ever comparing collection_id with the string 'null'.
+      if (policy.collection_id === null) {
+        throw new Error(`POLICY_COLLECTION_UNDECIDED:${input.policyDocumentId}`);
+      }
       await tx`update policy_documents set status = 'superseded', updated_at = now(),
         version = version + 1 where tenant_id = ${input.tenantId}
         and domain_pack_id = ${String(policy.domain_pack_id)}
@@ -685,6 +695,17 @@ function asJson(value: unknown): postgres.JSONValue {
   return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }
 
+/**
+ * Written only by the worker, after validation against the same schema. A stored value that no
+ * longer parses is a defect to surface, not a suggestion to put in front of an administrator.
+ */
+function parseCollectionSuggestion(row: Record<string, unknown>): CollectionSuggestion | null {
+  if (row.collection_suggestion === null || row.collection_suggestion === undefined) return null;
+  const parsed = CollectionSuggestionSchema.safeParse(row.collection_suggestion);
+  if (!parsed.success) throw new Error(`POLICY_COLLECTION_SUGGESTION_INVALID:${String(row.id)}`);
+  return parsed.data;
+}
+
 function mapPolicy(row: Record<string, unknown>): StoredPolicyDocument {
   return {
     id: String(row.id),
@@ -692,7 +713,7 @@ function mapPolicy(row: Record<string, unknown>): StoredPolicyDocument {
     domainPackId: String(row.domain_pack_id),
     title: String(row.title),
     policyVersion: String(row.policy_version),
-    collectionId: String(row.collection_id),
+    collectionId: row.collection_id === null ? null : String(row.collection_id),
     storageKey: String(row.storage_key),
     originalName: String(row.original_name),
     mediaType: String(row.media_type),
@@ -714,6 +735,7 @@ function mapPolicy(row: Record<string, unknown>): StoredPolicyDocument {
       row.extraction_metadata && typeof row.extraction_metadata === 'object'
         ? (row.extraction_metadata as Record<string, unknown>)
         : {},
+    collectionSuggestion: parseCollectionSuggestion(row),
     createdAt: new Date(row.created_at as string | Date).toISOString(),
     updatedAt: new Date(row.updated_at as string | Date).toISOString(),
     version: Number(row.version),
