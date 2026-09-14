@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { EVENT_EXCHANGE } from '@caselens/events';
 import { createEventRelay, startEventRelay } from './events/relay.js';
+import { findPolicyCollection, resolveActivePolicyPack } from './policy/policy-pack.js';
 import { Worker, type Job } from 'bullmq';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -834,11 +835,11 @@ async function processPolicyJob(
       status: 'processing',
       processingError: null,
     });
-    const pack = resolvePolicyPack(policy.domainPackId);
-    const collection = pack.policyCollections.find(
-      (candidate) => candidate.id === policy.collectionId,
-    );
-    if (!collection) throw new Error(`No policy collection exists in ${pack.id}`);
+    // The tenant's active pack, not the compiled catalog: a collection created at upload and a field
+    // approved from a proposal exist only there. Both the collection lookup and rule proposals below
+    // read it - see policy/policy-pack.ts for what compiled-only resolution silently broke.
+    const pack = await resolveActivePolicyPack(policies, tenantId, policy.domainPackId);
+    const collection = findPolicyCollection(pack, policy.collectionId);
 
     await jobs.updateJob(databaseJobId, tenantId, {
       status: 'processing',
@@ -1005,26 +1006,6 @@ async function processPolicyJob(
     });
     throw error;
   }
-}
-
-function resolvePolicyPack(domainPackId: string): DomainPack {
-  const direct = resolvePersistedDomainPack(domainPackId);
-  if (direct) return direct;
-  const key = domainPackId.startsWith('pack_tenant_')
-    ? domainPackId.replace(/^pack_tenant_/, '').replaceAll('_', '-')
-    : domainPackId
-        .replace(/^pack_/, '')
-        .replace(/_\d+_\d+_\d+$/, '')
-        .replaceAll('_', '-');
-  const aliases: Record<string, string> = {
-    demo: 'pharmacy-supplier',
-    legal: 'commercial-contract-review',
-    insurance: 'insurance-claims-assessment',
-    manufacturing: 'supplier-quality-assurance',
-  };
-  const pack = resolvePersistedDomainPack(aliases[key] ?? key);
-  if (!pack) throw new Error(`No installed domain pack matches ${domainPackId}`);
-  return pack;
 }
 
 type ExtractionField = DomainPack['documentTypes'][number]['extractionFields'][number];
