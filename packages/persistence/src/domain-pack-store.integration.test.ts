@@ -149,6 +149,17 @@ describe.skipIf(!databaseUrl || !adminDatabaseUrl)('tenant field dictionary inte
       // Reading through the original pack id follows the lineage to the active version.
       expect(await policies.getActivePackDefinition(tenantId, domainPackId)).toEqual(widened);
 
+      // A case pinned to a version reads exactly that version, superseded or not, through the same
+      // lineage - and nothing it is not entitled to.
+      expect(await policies.getPackDefinitionVersion(tenantId, domainPackId, '1.0.0')).toEqual(
+        parseDomainPack(legalContractPack),
+      );
+      expect(await policies.getPackDefinitionVersion(tenantId, domainPackId, next)).toEqual(
+        widened,
+      );
+      expect(await policies.getPackDefinitionVersion(tenantId, domainPackId, '9.9.9')).toBeNull();
+      expect(await policies.getPackDefinitionVersion(otherTenantId, domainPackId, next)).toBeNull();
+
       const policy = await policies.create({
         id: policyId,
         tenantId,

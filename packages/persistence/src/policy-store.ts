@@ -3,6 +3,7 @@ import postgres from 'postgres';
 import type { AccessScope } from './case-store.js';
 import {
   getActivePackDefinitionInTransaction,
+  getPackDefinitionVersionInTransaction,
   getFieldProposalInTransaction,
   listFieldEmbeddingFingerprintsInTransaction,
   listFieldProposalsInTransaction,
@@ -564,6 +565,17 @@ export class PostgresPolicyStore implements FieldDictionaryStore {
   ): Promise<DomainPack | null> {
     return this.withScope({ tenantIds: [tenantId], platformAdmin: false }, (tx) =>
       getActivePackDefinitionInTransaction(tx, tenantId, domainPackId),
+    );
+  }
+
+  /** One specific version of the tenant's pack - what a case pinned to it is extracted against. */
+  async getPackDefinitionVersion(
+    tenantId: string,
+    domainPackId: string,
+    semanticVersion: string,
+  ): Promise<DomainPack | null> {
+    return this.withScope({ tenantIds: [tenantId], platformAdmin: false }, (tx) =>
+      getPackDefinitionVersionInTransaction(tx, tenantId, domainPackId, semanticVersion),
     );
   }
 

@@ -253,6 +253,32 @@ export async function getActivePackDefinitionInTransaction(
   return resolvePackDefinition(domainPackId, rows[0]?.definition ?? null);
 }
 
+/**
+ * One specific version of a tenant's pack, whatever its status now.
+ *
+ * A case is extracted against the version it is pinned to, not whichever version happens to be
+ * active when a worker picks it up. That is what keeps a case's facts reproducible: a later field
+ * approval changes new cases and explicit reprocesses, never an existing result behind its back.
+ */
+export async function getPackDefinitionVersionInTransaction(
+  tx: postgres.TransactionSql,
+  tenantId: string,
+  domainPackId: string,
+  semanticVersion: string,
+): Promise<DomainPack | null> {
+  const rows = await tx<Array<Record<string, unknown>>>`
+    select definition from domain_packs
+    where tenant_id = ${tenantId}
+      and domain_key = (
+        select domain_key from domain_packs
+        where id = ${domainPackId} and tenant_id = ${tenantId} limit 1
+      )
+      and semantic_version = ${semanticVersion}
+    limit 1`;
+  if (!rows.length) return null;
+  return resolvePackDefinition(domainPackId, rows[0]!.definition);
+}
+
 export async function savePackVersionInTransaction(
   tx: postgres.TransactionSql,
   input: SavePackVersionInput,

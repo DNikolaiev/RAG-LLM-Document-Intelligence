@@ -13,6 +13,7 @@ import { ulid } from 'ulid';
 import { loadConfig } from '@caselens/config';
 import { TEST_PROFILES, TEST_TENANTS, resolveTestTenant } from '@caselens/contracts';
 import { validateFile } from '@caselens/document-pipeline';
+import { resolveCompiledDomainPack } from '@caselens/domain';
 import {
   PostgresCaseStore,
   PostgresPolicyStore,
@@ -203,6 +204,28 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * The pack version a new case is pinned to: the tenant's active version when it is created.
+   *
+   * This was the literal '1.0.0', so once a tenant approved a field every new case still claimed
+   * the old vocabulary, and the worker - which now extracts with exactly the pinned version - would
+   * never have extracted the field. The case row always references `pack_<tenant>` whatever pack
+   * the caller named, so that lineage is the one whose version is pinned.
+   */
+  private async pinnedPackVersion(tenantId: string): Promise<string> {
+    const domainPackId = `pack_${tenantId}`;
+    const pack =
+      (await this.#policies.getActivePackDefinition(tenantId, domainPackId)) ??
+      resolveCompiledDomainPack(domainPackId);
+    if (!pack) {
+      throw new NotFoundException({
+        code: 'DOMAIN_PACK_NOT_FOUND',
+        message: `No domain pack is installed for ${tenantId}.`,
+      });
+    }
+    return pack.version;
+  }
+
+  /**
    * The application user an identity provider subject was provisioned as. Consulted by the request
    * middleware under verified identity; null is a refusal there, never a pass-through.
    */
@@ -255,13 +278,14 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     const id = stableId('case', `${tenantId}:create:${idempotencyKey}`);
     const existing = await this.#store.get(this.scope(context), id);
     if (existing) return this.summary(existing);
+    const domainPackVersion = await this.pinnedPackVersion(tenantId);
     const item: PersistedCaseProjection = {
       id,
       tenantId,
       reference: input.reference ?? `CASE-${ulid().slice(-8)}`,
       subjectName: input.subjectName,
       domain: input.domainPackId,
-      domainPackVersion: '1.0.0',
+      domainPackVersion,
       status: 'processing',
       recommendation: null,
       progress: 0,
@@ -341,6 +365,7 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
     }
 
     const domainPackId = input.domainPackId?.trim() || `pack_${tenantId}`;
+    const domainPackVersion = await this.pinnedPackVersion(tenantId);
     const timestamp = new Date().toISOString();
     const item: PersistedCaseProjection = {
       id: caseId,
@@ -348,7 +373,7 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
       reference: `CASE-${ulid().slice(-8)}`,
       subjectName: input.subjectName,
       domain: domainPackId,
-      domainPackVersion: '1.0.0',
+      domainPackVersion,
       status: 'processing',
       recommendation: null,
       progress: 0,

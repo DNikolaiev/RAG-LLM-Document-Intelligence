@@ -1,17 +1,16 @@
 import { Logger } from '@nestjs/common';
 import { EVENT_EXCHANGE } from '@caselens/events';
 import { createEventRelay, startEventRelay } from './events/relay.js';
-import { findPolicyCollection, resolveActivePolicyPack } from './policy/policy-pack.js';
+import {
+  findPolicyCollection,
+  resolveActivePolicyPack,
+  resolvePinnedCasePack,
+} from './policy/policy-pack.js';
 import { Worker, type Job } from 'bullmq';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { AppConfig } from '@caselens/config';
-import {
-  parseDomainPack,
-  reconcileFacts,
-  resolvePersistedDomainPack,
-  type DomainPack,
-} from '@caselens/domain';
+import { parseDomainPack, reconcileFacts, type DomainPack } from '@caselens/domain';
 import {
   domainEventId,
   PostgresCaseStore,
@@ -43,6 +42,11 @@ interface QueuePayload {
   policyDocumentId?: string;
   targetType?: 'case' | 'case_document' | 'policy_version';
   targetId?: string;
+  /**
+   * The pack version to extract with. Sent by a reprocess, which exists to apply a newly approved
+   * field; before this was declared, the worker dropped it and extracted with the compiled pack.
+   */
+  domainPackVersion?: string;
   idempotencyKey: string;
 }
 
@@ -228,9 +232,18 @@ async function processJob(
   const startingVersion = item.version;
   const checkpoint = new PostgresWorkflowCheckpointStore(config.DATABASE_URL!, tenantId);
   try {
-    const installedPack = item.domainPackId ? resolvePersistedDomainPack(item.domainPackId) : null;
+    // The version this case is pinned to - or, on a reprocess, the version the reprocess asked for -
+    // read from the tenant's pack history rather than the compiled catalog, which knows nothing of
+    // approved fields. See policy/policy-pack.ts.
+    const packVersion = queueJob.data.domainPackVersion ?? item.domainPackVersion;
+    const installedPack = item.domainPackId
+      ? await resolvePinnedCasePack(policyStore, tenantId, item.domainPackId, packVersion)
+      : null;
     if (!installedPack)
       throw new Error(`No installed domain pack matches ${item.domainPackId ?? 'none'}`);
+    // Provenance: the case records the vocabulary its facts were actually extracted with, which after
+    // a reprocess is the newer version, not the one it was created under.
+    item.domainPackVersion = installedPack.version;
     const activePolicyRules = await policyStore.listActiveRules(
       tenantId,
       item.domainPackId!,

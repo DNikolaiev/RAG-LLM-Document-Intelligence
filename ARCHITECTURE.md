@@ -297,6 +297,8 @@ Two rules hold across every diagram below, so they are stated once rather than d
 
 `domain_packs` is the versioned per-tenant pack: `definition` holds the whole `DomainPack` as JSONB, and approving a proposed field or a new collection mints a new row rather than mutating one.
 
+The worker reads packs from here, never from the compiled catalog, which knows nothing an administrator has approved. A case is extracted against the exact version it is pinned to - the tenant's active version at intake, or the version a reprocess names - and a missing pinned version fails the job instead of being replaced by another. A policy is processed against the active version. The compiled catalog is only the fallback for a tenant that has never minted a version.
+
 ```mermaid
 erDiagram
   tenants ||--o{ memberships : "tenant_id"

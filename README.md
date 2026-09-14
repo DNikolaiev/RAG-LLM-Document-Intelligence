@@ -258,6 +258,8 @@ Proposed fields are deduplicated by meaning, not wording. The candidate is embed
 
 Neither a newly approved field nor rule reaches an existing case automatically; `POST /v1/cases/:id/reprocess` explicitly re-runs one against the widened pack.
 
+Every case is pinned to a pack version: a new case to the tenant's active version when it is created, a reprocessed one to the version the reprocess asked for. The worker extracts with exactly that version's vocabulary, read from `domain_packs`, and refuses rather than substitute another when it is missing - so a case's facts are reproducible, and the version its rule run records is the one it was actually extracted with. Policy processing reads the tenant's active version, where a collection created at upload lives.
+
 ## How it works
 
 ![CaseLens end-to-end pipeline: a versioned domain pack feeds policy upload, model proposal, governance, and case evaluation, with approval looping a new pack version back into the dictionary](docs/assets/pipeline.svg)

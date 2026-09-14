@@ -22,6 +22,8 @@ import { expectMatchesSchema } from './support/contract.js';
  * assertions immune to that unrelated startup activity instead of having to reset counters
  * between tests.
  */
+const { ACTIVE_PACK_VERSION } = vi.hoisted(() => ({ ACTIVE_PACK_VERSION: '1.4.0' }));
+
 const seed = vi.hoisted(() => ({
   cases: new Map<string, Record<string, unknown>>(),
   documents: new Map<string, Array<Record<string, unknown>>>(),
@@ -91,8 +93,14 @@ vi.mock('@caselens/persistence', async (importOriginal) => {
     async updateJob() {}
   }
 
-  /** Intake never touches the policy store; only `close()` (called from `onModuleDestroy`) matters. */
+  /**
+   * Intake reads one thing from the policy store: the tenant's active pack version, which the new
+   * case is pinned to. It is deliberately not the compiled 1.0.0, so a test can tell the two apart.
+   */
   class InertPolicyStore {
+    async getActivePackDefinition() {
+      return { version: ACTIVE_PACK_VERSION };
+    }
     async close() {}
   }
 
@@ -202,6 +210,9 @@ describe('POST /v1/cases/intake (durable)', () => {
     expect(response.body.jobIds).toHaveLength(1);
 
     const caseId = response.body.caseId as string;
+    // Pinned to the tenant's active version, not a literal: this was hard-coded '1.0.0', so a field
+    // approved into a later version was never extracted from a new case.
+    expect(seed.cases.get(caseId)?.domainPackVersion).toBe(ACTIVE_PACK_VERSION);
     expect(seed.recordDocumentCalls.filter((call) => call.caseId === caseId)).toHaveLength(2);
     expect(
       seed.storagePutCalls.filter((call) => call.key.startsWith(`tenant_demo/${caseId}/`)),
