@@ -101,6 +101,8 @@ Tenant columns and foreign keys are indexed. Partial indexes cover active jobs a
 - `PATCH /v1/cases/:id/findings/:findingId`
 - `POST /v1/cases/:id/decisions`, `GET /v1/cases/:id/export`
 - `GET /v1/cases/:id/audit`, `GET /v1/jobs/:id`
+- `GET /v1/policies`, `POST /v1/policies`, `GET /v1/policies/:id`, `POST /v1/policies/:id/reprocess`
+- `POST /v1/policies/:id/collection`, `PATCH /v1/policies/:id/proposals/:proposalId`, `POST /v1/policies/:id/activate`
 
 Mutation endpoints accept an idempotency key. Validation uses shared schemas. Errors follow RFC 9457-style problem details with a stable code, correlation ID, safe message, and optional field issues. List endpoints use opaque cursor pagination.
 

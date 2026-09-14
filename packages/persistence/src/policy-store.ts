@@ -376,6 +376,43 @@ export class PostgresPolicyStore implements FieldDictionaryStore {
     });
   }
 
+  /**
+   * Settles the collection of a policy waiting for one, and records who decided. Only from
+   * `awaiting_collection` and at the version the administrator was shown; the audit event is
+   * written in the same transaction, so a decision without its record cannot exist.
+   */
+  async fileCollection(input: {
+    tenantId: string;
+    id: string;
+    expectedVersion: number;
+    collectionId: string;
+    actorUserId: string;
+    correlationId: string;
+    details: Record<string, unknown>;
+  }): Promise<StoredPolicyDocument> {
+    return this.withScope({ tenantIds: [input.tenantId], platformAdmin: false }, async (tx) => {
+      const rows = await tx<Array<Record<string, unknown>>>`
+        update policy_documents
+        set collection_id = ${input.collectionId}, status = 'processing', processing_error = null,
+          updated_at = now(), version = version + 1
+        where id = ${input.id} and tenant_id = ${input.tenantId}
+          and status = 'awaiting_collection' and version = ${input.expectedVersion}
+        returning *`;
+      const filed = rows[0];
+      if (!filed) throw new Error(`POLICY_COLLECTION_STATE_CONFLICT:${input.id}`);
+      await tx`
+        insert into audit_events (
+          id, tenant_id, case_id, actor_type, actor_id, action, resource_type, resource_id,
+          correlation_id, details
+        ) values (
+          ${`audit_${input.id}_collection_${String(filed.version)}`}, ${input.tenantId}, null, 'user',
+          ${input.actorUserId}, 'policy.collection_decided', 'policy_document', ${input.id},
+          ${input.correlationId}, ${tx.json(asJson(input.details))}::jsonb
+        )`;
+      return mapPolicy(filed);
+    });
+  }
+
   async replaceExtractedContent(input: {
     tenantId: string;
     policyDocumentId: string;

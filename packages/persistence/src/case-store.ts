@@ -393,6 +393,29 @@ export class PostgresCaseStore {
     });
   }
 
+  /**
+   * The paused job waiting on a target, if any - what a person's decision resumes. Read as the
+   * system actor: the administrator deciding is not necessarily the person who enqueued it.
+   */
+  async findPausedJob(
+    tenantId: string,
+    targetType: string,
+    targetId: string,
+  ): Promise<StoredJob | null> {
+    return this.withScope(
+      { tenantIds: [tenantId], platformAdmin: false, systemActor: true },
+      async (tx) => {
+        const rows = await tx<
+          Array<Record<string, unknown>>
+        >`select id, tenant_id, case_id, target_type, target_id, enqueued_by_user_id, correlation_id, queue_job_id, status, progress, attempts, error, kind, idempotency_key, created_at, updated_at
+          from jobs where tenant_id = ${tenantId} and target_type = ${targetType}
+            and target_id = ${targetId} and status = 'paused'
+          order by updated_at desc limit 1`;
+        return rows[0] ? mapJob(rows[0]) : null;
+      },
+    );
+  }
+
   async listJobs(scope: AccessScope, limit = 30): Promise<StoredJob[]> {
     return this.withScope(scope, async (tx) => {
       const rows = await tx<Array<Record<string, unknown>>>`

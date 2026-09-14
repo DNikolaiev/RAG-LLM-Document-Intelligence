@@ -653,10 +653,21 @@ describe('resolveUploadCollection', () => {
     );
   });
 
-  it('refuses an empty name, without writing anything', async () => {
-    await expectRefusal(setup(), { newCollectionLabel: '' }, 'POLICY_COLLECTION_REQUIRED', 400);
-    await expectRefusal(setup(), { newCollectionLabel: '   ' }, 'POLICY_COLLECTION_REQUIRED', 400);
-    await expectRefusal(setup(), {}, 'POLICY_COLLECTION_REQUIRED', 400);
+  it('leaves an upload that names no collection to classification, writing nothing', async () => {
+    // This was a refusal until the worker could classify and an administrator could decide.
+    for (const input of [{}, { newCollectionLabel: '' }, { newCollectionLabel: '   ' }]) {
+      const store = setup();
+      const resolved = await resolveUploadCollection(
+        store,
+        adminContext,
+        tenantId,
+        domainPackId,
+        input,
+      );
+      expect(resolved.collectionId, JSON.stringify(input)).toBeNull();
+      expect(resolved.createdVersion).toBeNull();
+      expect(store.savedVersions).toHaveLength(0);
+    }
   });
 
   it('refuses a name that carries no letters or digits, without writing anything', async () => {

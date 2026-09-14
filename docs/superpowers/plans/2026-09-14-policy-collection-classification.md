@@ -89,7 +89,10 @@ Notifying every administrator of the tenant, not only the uploader, is a later e
 
    Still only the uploader is notified; telling every administrator of the tenant needs the membership table consulted per event, as planned.
 
-6. **The decision endpoint** and resumption.
+6. **The decision endpoint** and resumption. Done. `POST /v1/policies/:id/collection` takes exactly one of `collectionId` or `newCollectionLabel` and the `version` the administrator was shown. A new name is minted through `resolveUploadCollection`, as at upload. `fileCollection` moves the policy from `awaiting_collection` to `processing` and writes `policy.collection_decided` in the same transaction, with the suggestion and whether it was followed. The paused job is resumed rather than replaced (`findPausedJob`), so its timeline reads paused, decided, queued, processed, and it leaves the pin; its queue id is new, because the paused run completed and BullMQ refuses `:` in custom ids. Idempotent by state: repeating an applied decision returns it; a different decision for a policy no longer waiting is `POLICY_COLLECTION_ALREADY_SETTLED`. Uploads may now omit a collection, which step 3 had deferred to here.
+
+   If the queue is down after the decision is recorded, the policy is marked failed rather than returned to waiting - the collection may already be minted - and a reprocess continues it. A decision that mints a collection and then loses a race to a duplicate title and version leaves that collection behind, exactly as an upload would.
+
 7. **Console**: "Let CaseLens classify" as the upload default, and the decision panel on the policy page showing the suggestion, its quotation, and accept / choose / create.
 8. **Evaluation**: every policy-lab fixture classifies to its expected collection under the deterministic provider; a separate script runs the same set against the local model and reports agreement, without gating CI on a non-deterministic model.
 9. **Documentation**: README, ARCHITECTURE, the product spec, and the security guide's untrusted-input section.

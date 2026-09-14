@@ -43,6 +43,12 @@ const activateSchema = z.object({
   version: z.number().int().positive(),
   priority: z.number().int().min(0).max(10_000).default(0),
 });
+const collectionDecisionSchema = z.object({
+  // Exactly one carries a value; the service decides that with a precise problem code.
+  collectionId: z.string().trim().max(80).optional(),
+  newCollectionLabel: z.string().trim().max(80).optional(),
+  version: z.number().int().positive(),
+});
 const fieldProposalStatusSchema = z.enum(['proposed', 'invalid', 'approved', 'rejected']);
 const fieldProposalActionSchema = z.object({
   tenantId: z.string().min(1).optional(),
@@ -166,6 +172,15 @@ export class PoliciesController {
       version: input.version,
       ...(input.severity ? { severity: input.severity } : {}),
     });
+  }
+
+  @Post(':id/collection')
+  decideCollection(
+    @Context() context: RequestContext,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.policies.decideCollection(context, id, parseBody(collectionDecisionSchema, body));
   }
 
   @Post(':id/activate')

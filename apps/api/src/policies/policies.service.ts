@@ -38,6 +38,7 @@ import {
   type SavePackVersionInput,
   type StoredFieldProposal,
   type StoredPolicyProposalDetail,
+  type StoredPolicyDocument,
 } from '@caselens/persistence';
 import {
   BullMqQueueProvider,
@@ -526,8 +527,9 @@ export async function createPolicyCollection(
 
 /**
  * Resolves the collection one upload lands in, and is the only place that decides between the
- * two ways an administrator may name it. Exactly one of `collectionId` and `newCollectionLabel`
- * must be supplied.
+ * two ways an administrator may name it. At most one of `collectionId` and `newCollectionLabel`
+ * may be supplied; neither leaves the policy to classification, which files it once its text is
+ * read or pauses it for an administrator (`decideCollection`).
  *
  * Sequencing matters and is deliberate: a named collection is minted FIRST, and the membership
  * check runs against the freshly minted definition, so the collection this returns is always one
@@ -546,7 +548,7 @@ export async function resolveUploadCollection(
   tenantId: string,
   domainPackId: string,
   input: { collectionId?: string | undefined; newCollectionLabel?: string | undefined },
-): Promise<{ collectionId: string; pack: DomainPack; createdVersion: string | null }> {
+): Promise<{ collectionId: string | null; pack: DomainPack; createdVersion: string | null }> {
   requireAdministrator(context);
   const collectionId = input.collectionId?.trim() ?? '';
   const newCollectionLabel = input.newCollectionLabel?.trim() ?? '';
@@ -557,10 +559,12 @@ export async function resolveUploadCollection(
     });
   }
   if (!collectionId && !newCollectionLabel) {
-    throw new BadRequestException({
-      code: 'POLICY_COLLECTION_REQUIRED',
-      message: 'Choose an existing policy collection or name a new one.',
-    });
+    // Neither: the worker classifies the policy once its text is read.
+    return {
+      collectionId: null,
+      pack: await resolveActivePack(store, tenantId, domainPackId),
+      createdVersion: null,
+    };
   }
   if (newCollectionLabel) {
     const created = await createPolicyCollection(
@@ -971,7 +975,9 @@ export class PoliciesService implements OnModuleDestroy {
       stage: 'queue',
       message: enqueued.value.duplicate
         ? 'This policy-processing request was already queued.'
-        : 'Policy queued and waiting for a worker.',
+        : collection.collectionId
+          ? 'Policy queued and waiting for a worker.'
+          : 'Policy queued. CaseLens will file it into a collection once its text is read.',
       actorUserId: context.userId,
     });
     return { ...policy, jobId: job.id };
@@ -1068,6 +1074,204 @@ export class PoliciesService implements OnModuleDestroy {
       actorUserId: context.userId,
     });
     return { policyId: policy.id, jobId: job.id };
+  }
+
+  /**
+   * Settles the collection of a policy waiting for one: an existing collection, or a new one the
+   * administrator names, minted the way an upload mints one. The decision is recorded in the audit
+   * trail with the suggestion it followed or overrode, and the paused job resumes.
+   *
+   * Idempotent by state rather than by key: repeating a decision that has already been applied
+   * returns it, and a different decision for a policy no longer waiting is refused.
+   */
+  async decideCollection(
+    context: RequestContext,
+    policyId: string,
+    input: {
+      collectionId?: string | undefined;
+      newCollectionLabel?: string | undefined;
+      version: number;
+    },
+  ) {
+    this.requireAdministrator(context);
+    const { store } = this.runtime();
+    const policy = await store.get(this.scope(context), policyId);
+    if (!policy)
+      throw new NotFoundException({ code: 'POLICY_NOT_FOUND', message: 'Policy not found.' });
+    const chosen = input.collectionId?.trim() ?? '';
+    const named = input.newCollectionLabel?.trim() ?? '';
+    if (Boolean(chosen) === Boolean(named)) {
+      throw new BadRequestException({
+        code: 'POLICY_COLLECTION_DECISION_REQUIRED',
+        message: 'Choose an existing collection or name a new one - exactly one of the two.',
+      });
+    }
+    const intended = chosen || toPolicyCollectionId(named);
+    if (policy.status !== 'awaiting_collection') {
+      if (policy.collectionId !== null && policy.collectionId === intended) {
+        return { policy, jobId: null, alreadyDecided: true };
+      }
+      throw new ConflictException({
+        code: 'POLICY_COLLECTION_ALREADY_SETTLED',
+        message: 'This policy is no longer waiting for a collection.',
+      });
+    }
+    if (policy.version !== input.version) {
+      throw new ConflictException({
+        code: 'VERSION_CONFLICT',
+        message: `The policy changed. Refresh and decide again with version ${policy.version}.`,
+      });
+    }
+
+    const resolved = await resolveUploadCollection(
+      store,
+      context,
+      policy.tenantId,
+      policy.domainPackId,
+      chosen ? { collectionId: chosen } : { newCollectionLabel: named },
+    );
+    const collectionId = resolved.collectionId;
+    if (!collectionId) throw new Error('A collection decision always names a collection');
+    const suggestion = policy.collectionSuggestion;
+    const suggestedId =
+      suggestion === null
+        ? null
+        : suggestion.decision === 'existing'
+          ? suggestion.collectionId
+          : toPolicyCollectionId(suggestion.label);
+    let filed: StoredPolicyDocument;
+    try {
+      filed = await store.fileCollection({
+        tenantId: policy.tenantId,
+        id: policy.id,
+        expectedVersion: policy.version,
+        collectionId,
+        actorUserId: context.userId,
+        correlationId: context.correlationId,
+        details: {
+          collectionId,
+          createdCollection: resolved.createdVersion !== null,
+          packVersion: resolved.pack.version,
+          suggestion: suggestion
+            ? {
+                decision: suggestion.decision,
+                collectionId: suggestedId,
+                disposition: suggestion.disposition,
+                reasons: suggestion.reasons,
+              }
+            : null,
+          followedSuggestion: suggestedId === null ? null : suggestedId === collectionId,
+        },
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictException({
+          code: 'POLICY_VERSION_EXISTS',
+          message: 'This policy title and version already exists in that collection.',
+        });
+      }
+      if (error instanceof Error && error.message.startsWith('POLICY_COLLECTION_STATE_CONFLICT:')) {
+        throw new ConflictException({
+          code: 'VERSION_CONFLICT',
+          message: 'The policy changed while you were deciding. Refresh and decide again.',
+        });
+      }
+      throw error;
+    }
+    const label =
+      resolved.pack.policyCollections.find((collection) => collection.id === collectionId)?.label ??
+      collectionId;
+    const jobId = await this.resumePolicyJob(context, filed, collectionId, label);
+    return { policy: filed, jobId, alreadyDecided: false };
+  }
+
+  /**
+   * Resumes the job that paused for a collection decision, so its timeline reads straight through
+   * and it leaves the uploader's "Needs your decision" pin. A policy whose paused job is gone gets
+   * a fresh one, as a reprocess would. The queue id is new - the paused run completed - and has no
+   * ':', which BullMQ refuses in custom ids.
+   */
+  private async resumePolicyJob(
+    context: RequestContext,
+    policy: StoredPolicyDocument,
+    collectionId: string,
+    collectionLabel: string,
+  ): Promise<string> {
+    const { store, jobs, queue } = this.runtime();
+    const durableKey = `${policy.tenantId}:${policy.id}:collection:${collectionId}`;
+    const now = new Date().toISOString();
+    const job =
+      (await jobs.findPausedJob(policy.tenantId, 'policy_version', policy.id)) ??
+      (await jobs.createJob({
+        id: stableId('job', durableKey),
+        tenantId: policy.tenantId,
+        caseId: null,
+        targetType: 'policy_version',
+        targetId: policy.id,
+        enqueuedByUserId: context.userId,
+        correlationId: context.correlationId,
+        queueJobId: null,
+        status: 'queued',
+        progress: 0,
+        attempts: 0,
+        errorCode: null,
+        kind: 'process_policy',
+        idempotencyKey: durableKey,
+        createdAt: now,
+        updatedAt: now,
+      }));
+    const queueKey = `${job.id}-collection-${collectionId}`;
+    const enqueued = await queue.enqueue(
+      'process_policy',
+      {
+        databaseJobId: job.id,
+        tenantId: policy.tenantId,
+        targetType: 'policy_version',
+        targetId: policy.id,
+        policyDocumentId: policy.id,
+        idempotencyKey: queueKey,
+      },
+      { idempotencyKey: queueKey, maxAttempts: 3 },
+    );
+    if (!enqueued.ok) {
+      // The decision stands - it is recorded and the collection may have been minted - so the
+      // policy cannot go back to waiting. It fails visibly instead, and a reprocess continues it.
+      await store.updateStatus({
+        tenantId: policy.tenantId,
+        id: policy.id,
+        expectedVersion: policy.version,
+        status: 'failed',
+        processingError: {
+          code: 'QUEUE_UNAVAILABLE',
+          message:
+            'The collection was recorded, but processing could not be queued. Regenerate the policy to continue.',
+        },
+      });
+      await jobs.updateJob(job.id, policy.tenantId, {
+        status: 'failed',
+        progress: 30,
+        errorCode: 'QUEUE_UNAVAILABLE',
+        eventType: 'job.failed',
+        stage: 'queue',
+        message: 'The collection was recorded, but processing could not be queued.',
+        actorUserId: context.userId,
+      });
+      throw new ServiceUnavailableException({
+        code: 'QUEUE_UNAVAILABLE',
+        message: enqueued.error.message,
+      });
+    }
+    await jobs.updateJob(job.id, policy.tenantId, {
+      status: 'queued',
+      progress: 30,
+      errorCode: null,
+      queueJobId: enqueued.value.jobId,
+      eventType: 'queue.enqueued',
+      stage: 'queue',
+      message: `Filed into ${collectionLabel} by an administrator; processing resumes.`,
+      actorUserId: context.userId,
+    });
+    return job.id;
   }
 
   async reviewProposal(
