@@ -307,7 +307,14 @@ const CollectionSuggestionBaseSchema = z.object({
    */
   disposition: z.enum(['filed', 'decision_required']),
   reasons: z.array(
-    z.enum(['low_confidence', 'quote_not_found', 'no_match', 'new_collection', 'near_duplicate']),
+    z.enum([
+      'low_confidence',
+      'quote_not_found',
+      'no_match',
+      'new_collection',
+      'near_duplicate',
+      'not_corroborated',
+    ]),
   ),
   providerId: z.string().min(1),
   model: z.string().min(1),

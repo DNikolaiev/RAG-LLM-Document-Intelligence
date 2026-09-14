@@ -8,6 +8,7 @@ import {
 } from './policy/policy-pack.js';
 import {
   createCollectionClassifier,
+  independentReading,
   settleCollectionClassification,
   type ClassifiablePage,
 } from './policy/collection-classification.js';
@@ -1128,6 +1129,7 @@ async function fileUnfiledPolicy(input: {
       nearDuplicateSimilarity: config.WORKER_COLLECTION_NEAR_DUPLICATE_SIMILARITY,
     },
     embeddings: input.embeddings,
+    corroboratingCollectionId: independentReading(classifier, pages, pack.policyCollections),
   });
   if (filedCollectionId === null) {
     await policies.updateStatus({
@@ -1179,7 +1181,9 @@ function describeDecisionRequired(suggestion: CollectionSuggestion, pack: Domain
     ? 'its supporting quotation is not in the document'
     : suggestion.reasons.includes('no_match')
       ? 'it did not match a collection in this workspace'
-      : `it is only ${Math.round(suggestion.confidence * 100)}% confident`;
+      : suggestion.reasons.includes('not_corroborated')
+        ? 'an independent reading of the document did not reach the same collection'
+        : `it is only ${Math.round(suggestion.confidence * 100)}% confident`;
   return (
     'CaseLens could not file this policy on its own' +
     (best ? ` (best match: ${best})` : '') +

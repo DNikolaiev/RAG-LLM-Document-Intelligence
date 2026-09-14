@@ -7,6 +7,8 @@ import {
   createCollectionClassifier,
   createLexicalCollectionClassifier,
   createModelCollectionClassifier,
+  independentReading,
+  lexicalCorroboration,
   settleCollectionClassification,
   type RawCollectionClassification,
 } from '../src/policy/collection-classification.js';
@@ -284,5 +286,51 @@ describe('choosing a classifier', () => {
       createCollectionClassifier({ ...base, WORKER_COLLECTION_CLASSIFIER: 'lexical' }, model)
         .providerId,
     ).toBe('lexical-collection-classifier');
+  });
+});
+
+describe('corroboration', () => {
+  const antiBribery = [
+    {
+      page: 1,
+      text: 'Anti-Bribery and Gifts Policy\nNo employee may offer, promise or accept any payment, gift or hospitality intended to influence a business decision. Gifts to public officials are prohibited regardless of value.',
+    },
+  ];
+  const settleWith = (corroboratingCollectionId: string | null) =>
+    settleCollectionClassification({
+      raw: raw(),
+      pages,
+      collections,
+      classifier,
+      packVersion: legalContractPack.version,
+      thresholds,
+      corroboratingCollectionId,
+      now,
+    });
+
+  it('files a model answer only when an independent reading reaches the same collection', async () => {
+    expect((await settleWith('term-termination')).filedCollectionId).toBe('term-termination');
+    // Measured on qwen3:4b: an anti-bribery policy was filed into Contracting Standards at 0.95,
+    // quoting only its title. Self-reported confidence cannot be the gate on its own.
+    for (const reading of ['data-protection-terms', null]) {
+      const { suggestion, filedCollectionId } = await settleWith(reading);
+      expect(filedCollectionId, String(reading)).toBeNull();
+      expect(suggestion.reasons, String(reading)).toEqual(['not_corroborated']);
+    }
+  });
+
+  it('reads a document lexically only when the words give a clear winner', () => {
+    expect(lexicalCorroboration(pages, collections)).toBe('term-termination');
+    // The probe's anti-bribery policy shares no word with any legal collection.
+    expect(lexicalCorroboration(antiBribery, collections)).toBeNull();
+  });
+
+  it('asks for corroboration of a model, not of the lexical classifier itself', () => {
+    expect(
+      independentReading(createLexicalCollectionClassifier(), pages, collections),
+    ).toBeUndefined();
+    expect(independentReading({ providerId: 'configured-openai-chat' }, pages, collections)).toBe(
+      'term-termination',
+    );
   });
 });

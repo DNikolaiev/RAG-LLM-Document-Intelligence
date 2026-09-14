@@ -171,6 +171,10 @@ const LEXICAL_STOPWORDS = new Set([
   'with',
 ]);
 
+const LEXICAL_CLASSIFIER_ID = 'lexical-collection-classifier';
+/** Fewest shared words for the lexical reading to count as corroboration at all. */
+const MIN_CORROBORATING_TERMS = 2;
+
 /**
  * A classifier with no model: it scores each collection by the distinct content words its label
  * and description share with the document. Deterministic, so tests and model-free environments
@@ -180,22 +184,13 @@ const LEXICAL_STOPWORDS = new Set([
  */
 export function createLexicalCollectionClassifier(): CollectionClassifier {
   return {
-    providerId: 'lexical-collection-classifier',
+    providerId: LEXICAL_CLASSIFIER_ID,
     model: 'lexical-v1',
     async classify({ pages, collections }) {
       if (!collections.length) {
         return { ok: false, message: 'The workspace has no policy collections to file into.' };
       }
-      const documentTerms = new Set(pages.flatMap((page) => contentTerms(page.text)));
-      const scored = collections
-        .map((collection) => {
-          const terms = [
-            ...new Set(contentTerms(`${collection.label} ${collection.description ?? ''}`)),
-          ];
-          return { collection, hits: terms.filter((term) => documentTerms.has(term)) };
-        })
-        // A stable sort, so a tie keeps catalog order and the answer stays deterministic.
-        .sort((left, right) => right.hits.length - left.hits.length);
+      const scored = scoreCollectionsLexically(pages, collections);
       const best = scored[0]!;
       const margin = best.hits.length - (scored[1]?.hits.length ?? 0);
       // Four shared words with a clear lead is strong evidence; a tie is no evidence at all.
@@ -221,6 +216,53 @@ export function createLexicalCollectionClassifier(): CollectionClassifier {
   };
 }
 
+function scoreCollectionsLexically(
+  pages: readonly ClassifiablePage[],
+  collections: readonly PolicyCollection[],
+): Array<{ collection: PolicyCollection; hits: string[] }> {
+  const documentTerms = new Set(pages.flatMap((page) => contentTerms(page.text)));
+  return (
+    collections
+      .map((collection) => {
+        const terms = [
+          ...new Set(contentTerms(`${collection.label} ${collection.description ?? ''}`)),
+        ];
+        return { collection, hits: terms.filter((term) => documentTerms.has(term)) };
+      })
+      // A stable sort, so a tie keeps catalog order and the answer stays deterministic.
+      .sort((left, right) => right.hits.length - left.hits.length)
+  );
+}
+
+/**
+ * The collection a deterministic word-matching reading reaches on its own, or null when it has no
+ * clear winner. A model's self-reported confidence is not evidence - measured on qwen3:4b it was
+ * 0.95 whether the answer was right or wrong - so a model's pick is filed only when this
+ * independent reading agrees with it.
+ */
+export function lexicalCorroboration(
+  pages: readonly ClassifiablePage[],
+  collections: readonly PolicyCollection[],
+): string | null {
+  const [best, runnerUp] = scoreCollectionsLexically(pages, collections);
+  if (!best || best.hits.length < MIN_CORROBORATING_TERMS) return null;
+  return best.hits.length > (runnerUp?.hits.length ?? 0) ? best.collection.id : null;
+}
+
+/**
+ * What a classifier's answer must agree with before it is filed: the lexical reading for a model,
+ * and nothing for the lexical classifier, which is that reading.
+ */
+export function independentReading(
+  classifier: Pick<CollectionClassifier, 'providerId'>,
+  pages: readonly ClassifiablePage[],
+  collections: readonly PolicyCollection[],
+): string | null | undefined {
+  return classifier.providerId === LEXICAL_CLASSIFIER_ID
+    ? undefined
+    : lexicalCorroboration(pages, collections);
+}
+
 export function createCollectionClassifier(
   config: Pick<
     AppConfig,
@@ -241,8 +283,10 @@ export function createCollectionClassifier(
  * Checks a classifier's answer and decides what happens to the policy - the decision table in
  * docs/superpowers/plans/2026-09-14-policy-collection-classification.md:
  *
- * - an existing collection, confidence at or above the threshold, quote verified: filed;
- * - low confidence, an unverified quote, or an id outside the tenant's collections: waits;
+ * - an existing collection, confidence at or above the threshold, a verified quote and - for a
+ *   model's answer - the same collection reached by an independent lexical reading: filed;
+ * - low confidence, an unverified quote, no corroboration, or an id outside the tenant's
+ *   collections: waits;
  * - a new collection: always waits, flagged when its name is close to an existing one.
  */
 export async function settleCollectionClassification(input: {
@@ -253,6 +297,11 @@ export async function settleCollectionClassification(input: {
   packVersion: string;
   thresholds: CollectionThresholds;
   embeddings?: Pick<ModelProvider, 'embed'> | null;
+  /**
+   * The collection an independent reading reached - see `independentReading`. The answer must
+   * agree with it to be filed; undefined when the classifier is itself that reading.
+   */
+  corroboratingCollectionId?: string | null | undefined;
   now?: Date;
 }): Promise<{ suggestion: CollectionSuggestion; filedCollectionId: string | null }> {
   const reasons = new Set<SuggestionReason>();
@@ -272,6 +321,13 @@ export async function settleCollectionClassification(input: {
     const collection = resolveCollection(input.raw.collectionId, input.collections);
     if (!collection) reasons.add('no_match');
     if (input.raw.confidence < input.thresholds.autoFileConfidence) reasons.add('low_confidence');
+    if (
+      collection &&
+      input.corroboratingCollectionId !== undefined &&
+      input.corroboratingCollectionId !== collection.id
+    ) {
+      reasons.add('not_corroborated');
+    }
     const filedCollectionId = collection && reasons.size === 0 ? collection.id : null;
     return {
       suggestion: CollectionSuggestionSchema.parse({
