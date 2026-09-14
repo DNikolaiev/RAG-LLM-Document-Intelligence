@@ -325,11 +325,14 @@ erDiagram
     text domain_key
     text semantic_version
     text status
+    text origin
     jsonb definition
   }
 ```
 
 `memberships` has a composite primary key of `(tenant_id, user_id)`, both of which are also foreign keys. `domain_packs` is unique on `(tenant_id, domain_key, semantic_version)`, which is what lets one lineage hold many versions with a single active row.
+
+`domain_packs.origin` records who wrote a version: `catalog` for the seed, `tenant` for governance. On startup the seed installs a new tenant's pack, and when the compiled catalog ships a newer version it mints that version for every tenant whose active version is still the catalog's - through the same `savePackVersion` path an approval uses, so it supersedes rather than rewrites and leaves an audit event. A tenant whose administrators have minted their own version is left alone, and a catalog version is never written over a tenant row that happens to share its number. Changing a compiled pack without changing its version is refused rather than applied in place; the startup log says which tenants were held back and why.
 
 ### Case pipeline
 

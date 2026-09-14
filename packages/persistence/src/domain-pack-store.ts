@@ -107,6 +107,9 @@ export interface FieldEmbeddingFingerprint {
   fingerprint: string;
 }
 
+/** Who wrote a pack version: the seed, from the compiled catalog, or governance. */
+export type PackOrigin = 'catalog' | 'tenant';
+
 export interface SavePackVersionInput {
   tenantId: string;
   domainPackId: string;
@@ -115,6 +118,8 @@ export interface SavePackVersionInput {
   supersedes: string;
   actorUserId?: string | null;
   correlationId?: string | null;
+  /** Defaults to 'tenant'. Only the seed's catalog upgrade says 'catalog'. */
+  origin?: PackOrigin;
 }
 
 /** The versioned pack surface shared with the worker and the governance API. */
@@ -191,6 +196,84 @@ export function nextMinorVersion(semanticVersion: string): string {
   const parsed = SEMANTIC_VERSION_PATTERN.exec(semanticVersion);
   if (!parsed) throw new Error(`INVALID_SEMANTIC_VERSION:${semanticVersion}`);
   return `${parsed[1]}.${Number(parsed[2]) + 1}.0`;
+}
+
+/** Orders two semantic versions numerically, so 1.10.0 sorts after 1.9.0. */
+export function compareSemanticVersions(left: string, right: string): number {
+  const a = SEMANTIC_VERSION_PATTERN.exec(left);
+  const b = SEMANTIC_VERSION_PATTERN.exec(right);
+  if (!a) throw new Error(`INVALID_SEMANTIC_VERSION:${left}`);
+  if (!b) throw new Error(`INVALID_SEMANTIC_VERSION:${right}`);
+  for (let index = 1; index <= 3; index += 1) {
+    const difference = Number(a[index]) - Number(b[index]);
+    if (difference !== 0) return Math.sign(difference);
+  }
+  return 0;
+}
+
+/** One version in a tenant's pack lineage, as the seed sees it. */
+export interface CatalogLineageRow {
+  id: string;
+  semanticVersion: string;
+  status: string;
+  origin: PackOrigin;
+  /** False for a pre-dictionary `{ name }` stub, which is not a pack definition at all. */
+  persisted: boolean;
+  /** Whether the stored definition is the compiled pack's, compared canonically. */
+  matchesCatalog: boolean;
+}
+
+export type CatalogKeepReason =
+  /** The tenant already has the catalog's version, unchanged. */
+  | 'current'
+  /** The catalog's version exists, but the tenant has since moved past it. */
+  | 'superseded'
+  /** A version the tenant minted already uses the catalog's number. */
+  | 'tenant_owns_version'
+  /** The compiled pack changed but kept its version: an unversioned edit, refused. */
+  | 'changed_without_version'
+  /** The tenant's administrators govern its active version; a newer catalog is not applied. */
+  | 'diverged'
+  | 'catalog_older'
+  | 'no_active_version';
+
+export type CatalogSeedPlan =
+  | { action: 'install' }
+  | { action: 'replace_stub'; rowId: string }
+  | { action: 'upgrade'; supersedes: string }
+  | { action: 'keep'; reason: CatalogKeepReason };
+
+/**
+ * What the seed may do to one tenant's pack, given its lineage and the compiled catalog's version.
+ *
+ * The seed used to upsert on (tenant, domain, version): a catalog release numbered like a version a
+ * tenant had minted replaced that tenant's approved definition, and any other new release collided
+ * on the fixed row id and stopped startup. The rule now is that the catalog only ever moves a tenant
+ * whose active version is the catalog's own, only forward, and only by minting a new version - never
+ * by editing one in place.
+ */
+export function planCatalogSeed(
+  lineage: readonly CatalogLineageRow[],
+  catalogVersion: string,
+): CatalogSeedPlan {
+  if (!lineage.length) return { action: 'install' };
+  const keep = (reason: CatalogKeepReason): CatalogSeedPlan => ({ action: 'keep', reason });
+
+  const same = lineage.find((row) => row.semanticVersion === catalogVersion);
+  if (same) {
+    if (same.origin !== 'catalog') return keep('tenant_owns_version');
+    if (same.status !== 'active') return keep('superseded');
+    if (!same.persisted) return { action: 'replace_stub', rowId: same.id };
+    return keep(same.matchesCatalog ? 'current' : 'changed_without_version');
+  }
+
+  const active = lineage.find((row) => row.status === 'active');
+  if (!active) return keep('no_active_version');
+  if (compareSemanticVersions(catalogVersion, active.semanticVersion) <= 0) {
+    return keep('catalog_older');
+  }
+  if (active.origin !== 'catalog') return keep('diverged');
+  return { action: 'upgrade', supersedes: active.semanticVersion };
 }
 
 /**
@@ -313,10 +396,10 @@ export async function savePackVersionInTransaction(
   } else {
     const inserted = await tx<Array<{ id: string }>>`
       insert into domain_packs (
-        id, tenant_id, domain_key, semantic_version, status, definition, activated_at
+        id, tenant_id, domain_key, semantic_version, status, definition, origin, activated_at
       ) values (
         ${rowId}, ${input.tenantId}, ${domainKey}, ${input.semanticVersion}, 'active',
-        ${tx.json(asJson(definition))}::jsonb, now()
+        ${tx.json(asJson(definition))}::jsonb, ${input.origin ?? 'tenant'}, now()
       )
       on conflict do nothing
       returning id`;

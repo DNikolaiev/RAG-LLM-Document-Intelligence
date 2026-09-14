@@ -46,7 +46,9 @@ vi.mock('@caselens/persistence', async (importOriginal) => {
     async health() {}
     async close() {}
     /** Real seeding is irrelevant to intake; every test creates its own case from scratch. */
-    async seed() {}
+    async seed() {
+      return [];
+    }
     async listDocuments(_scope: unknown, caseId: string) {
       return seed.documents.get(caseId) ?? [];
     }

@@ -260,6 +260,8 @@ Neither a newly approved field nor rule reaches an existing case automatically; 
 
 Every case is pinned to a pack version: a new case to the tenant's active version when it is created, a reprocessed one to the version the reprocess asked for. The worker extracts with exactly that version's vocabulary, read from `domain_packs`, and refuses rather than substitute another when it is missing - so a case's facts are reproducible, and the version its rule run records is the one it was actually extracted with. Policy processing reads the tenant's active version, where a collection created at upload lives.
 
+The compiled catalog reaches a tenant's pack only through the seed at API startup, and only forward. A tenant still on the catalog's own version is upgraded when the catalog ships a newer one, by minting a new version exactly as an approval does. A tenant whose administrators have minted their own version is left alone, and the startup log says so. `domain_packs.origin` is what tells the two apart.
+
 ## How it works
 
 ![CaseLens end-to-end pipeline: a versioned domain pack feeds policy upload, model proposal, governance, and case evaluation, with approval looping a new pack version back into the dictionary](docs/assets/pipeline.svg)

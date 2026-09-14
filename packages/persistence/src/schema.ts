@@ -74,6 +74,12 @@ export const domainPacks = pgTable(
     semanticVersion: text('semantic_version').notNull(),
     status: text('status').notNull(),
     definition: jsonb('definition').notNull(),
+    /**
+     * 'catalog' when the seed installed this version from the compiled catalog, 'tenant' when
+     * governance minted it. The seed upgrades only a tenant whose active version is the catalog's,
+     * and never writes over a tenant row.
+     */
+    origin: text('origin').notNull().default('tenant'),
     activatedAt: timestamp('activated_at', { withTimezone: true }),
     ...auditColumns,
   },

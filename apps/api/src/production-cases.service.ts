@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -48,6 +49,7 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
   readonly #policies: PostgresPolicyStore;
   readonly #storage: S3CompatibleStorageProvider;
   readonly #queue: BullMqQueueProvider;
+  readonly #logger = new Logger('ProductionCasesService');
   readonly #maxDocuments: number;
 
   constructor() {
@@ -78,7 +80,7 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit(): Promise<void> {
     const seededCases = createDemoCases();
-    await this.#store.seed(
+    const packs = await this.#store.seed(
       TEST_TENANTS,
       TEST_PROFILES.map((profile) => ({
         id: profile.id,
@@ -89,7 +91,34 @@ export class ProductionCasesService implements OnModuleInit, OnModuleDestroy {
       })),
       seededCases,
     );
+    this.reportCatalogSeed(packs);
     await this.materializeSeedDocuments(seededCases);
+  }
+
+  /**
+   * The startup log for catalog packs. Silent for the ordinary outcomes - a fresh install, a tenant
+   * already current - so it speaks only when a catalog release was applied or held back.
+   */
+  private reportCatalogSeed(outcomes: Awaited<ReturnType<PostgresCaseStore['seed']>>): void {
+    for (const { tenantId, catalogVersion, plan } of outcomes) {
+      if (plan.action === 'upgrade') {
+        this.#logger.log(
+          `${tenantId}: pack upgraded from ${plan.supersedes} to catalog ${catalogVersion}.`,
+        );
+      } else if (plan.action === 'keep' && plan.reason === 'diverged') {
+        this.#logger.warn(
+          `${tenantId}: catalog ${catalogVersion} not applied; administrators govern this pack's versions.`,
+        );
+      } else if (plan.action === 'keep' && plan.reason === 'tenant_owns_version') {
+        this.#logger.warn(
+          `${tenantId}: catalog ${catalogVersion} not applied; the tenant already minted its own ${catalogVersion}.`,
+        );
+      } else if (plan.action === 'keep' && plan.reason === 'changed_without_version') {
+        this.#logger.warn(
+          `${tenantId}: the compiled pack changed but is still ${catalogVersion}; release it under a new version.`,
+        );
+      }
+    }
   }
 
   private async materializeSeedDocuments(cases: readonly DemoCase[]): Promise<void> {

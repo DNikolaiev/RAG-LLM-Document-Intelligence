@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto';
 import { resolveDomainPack } from '@caselens/domain';
+import {
+  canonicalPackDefinition,
+  isPersistedPackDefinition,
+  planCatalogSeed,
+  savePackVersionInTransaction,
+  type CatalogLineageRow,
+  type CatalogSeedPlan,
+} from './domain-pack-store.js';
 import postgres from 'postgres';
 
 export interface AccessScope {
@@ -148,19 +156,14 @@ export class PostgresCaseStore {
     tenants: readonly SeedTenant[],
     users: readonly SeedUser[],
     cases: readonly PersistedCaseProjection[],
-  ): Promise<void> {
-    await this.withScope(
+  ): Promise<CatalogSeedOutcome[]> {
+    return this.withScope(
       { tenantIds: tenants.map((tenant) => tenant.id), platformAdmin: true },
       async (tx) => {
+        const outcomes: CatalogSeedOutcome[] = [];
         for (const tenant of tenants) {
           await tx`insert into tenants (id, name) values (${tenant.id}, ${tenant.name}) on conflict (id) do update set name = excluded.name, updated_at = now()`;
-          const pack = resolveDomainPack(tenant.domain);
-          await tx`insert into domain_packs (id, tenant_id, domain_key, semantic_version, status, definition, activated_at)
-          values (${`pack_${tenant.id}`}, ${tenant.id}, ${tenant.domain.toLocaleLowerCase().replaceAll(/[^a-z0-9]+/g, '-')}, ${pack.version}, 'active', ${tx.json(asJson(pack))}::jsonb, now())
-          on conflict (tenant_id, domain_key, semantic_version) do update set
-            status = case when domain_packs.status = 'superseded' then 'superseded' else 'active' end,
-            definition = case when domain_packs.status = 'superseded' then domain_packs.definition else excluded.definition end,
-            updated_at = now()`;
+          outcomes.push(await seedCatalogPack(tx, tenant));
         }
         for (const user of users) {
           await tx`insert into users (id, external_subject, display_name, email) values (${user.id}, ${user.id}, ${user.displayName}, ${user.email})
@@ -183,6 +186,7 @@ export class PostgresCaseStore {
           }
           await this.syncAuditEvents(tx, item);
         }
+        return outcomes;
       },
     );
   }
@@ -761,6 +765,87 @@ export interface StoredDomainEvent {
   aggregateId: string;
   payload: unknown;
   occurredAt: string;
+}
+
+/** What the seed did to one tenant's pack, for the startup log. */
+export interface CatalogSeedOutcome {
+  tenantId: string;
+  catalogVersion: string;
+  plan: CatalogSeedPlan;
+}
+
+/**
+ * Installs or upgrades one tenant's pack from the compiled catalog, and never writes over
+ * governance. The decision is `planCatalogSeed`; this only reads the lineage and carries it out.
+ * The lineage is locked, so two API instances starting together cannot both upgrade it.
+ */
+async function seedCatalogPack(
+  tx: postgres.TransactionSql,
+  tenant: SeedTenant,
+): Promise<CatalogSeedOutcome> {
+  const catalog = resolveDomainPack(tenant.domain);
+  const rootId = `pack_${tenant.id}`;
+  const domainKey = tenant.domain.toLocaleLowerCase().replaceAll(/[^a-z0-9]+/g, '-');
+  const rows = await tx<Array<Record<string, unknown>>>`
+    select id, semantic_version, status, origin, definition from domain_packs
+    where tenant_id = ${tenant.id} and domain_key = ${domainKey}
+    order by created_at, id
+    for update`;
+  const canonical = canonicalPackDefinition(catalog);
+  const lineage = rows.map((row): CatalogLineageRow => {
+    const semanticVersion = String(row.semantic_version);
+    const persisted = isPersistedPackDefinition(row.definition);
+    return {
+      id: String(row.id),
+      semanticVersion,
+      status: String(row.status),
+      origin: row.origin === 'catalog' ? 'catalog' : 'tenant',
+      persisted,
+      matchesCatalog:
+        persisted &&
+        semanticVersion === catalog.version &&
+        sameCanonicalDefinition(row.definition, canonical),
+    };
+  });
+
+  const plan = planCatalogSeed(lineage, catalog.version);
+  switch (plan.action) {
+    case 'install':
+      // `do nothing`: a second instance seeding at the same moment found no row to lock either.
+      await tx`insert into domain_packs (id, tenant_id, domain_key, semantic_version, status, definition, origin, activated_at)
+        values (${rootId}, ${tenant.id}, ${domainKey}, ${catalog.version}, 'active', ${tx.json(asJson(catalog))}::jsonb, 'catalog', now())
+        on conflict do nothing`;
+      break;
+    case 'replace_stub':
+      await tx`update domain_packs set definition = ${tx.json(asJson(catalog))}::jsonb, updated_at = now(), version = version + 1
+        where id = ${plan.rowId}`;
+      break;
+    case 'upgrade':
+      // The same path an approval takes: a new row, the old one superseded, an audit event.
+      await savePackVersionInTransaction(tx, {
+        tenantId: tenant.id,
+        domainPackId: rootId,
+        definition: catalog,
+        semanticVersion: catalog.version,
+        supersedes: plan.supersedes,
+        actorUserId: null,
+        correlationId: `catalog-upgrade:${tenant.id}:${catalog.version}`,
+        origin: 'catalog',
+      });
+      break;
+    case 'keep':
+      break;
+  }
+  return { tenantId: tenant.id, catalogVersion: catalog.version, plan };
+}
+
+function sameCanonicalDefinition(stored: unknown, canonical: string): boolean {
+  try {
+    return canonicalPackDefinition(stored as never) === canonical;
+  } catch {
+    // A stored definition that no longer parses is certainly not the compiled one.
+    return false;
+  }
 }
 
 function asJson(value: unknown): postgres.JSONValue {
