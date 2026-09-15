@@ -305,7 +305,7 @@ This draws the two pipelines above as one loop: a domain pack supplies fields, b
 
 One real path through the seeded pharmacy tenant, Düsseldorf Health Operations (`tenant_demo`, administered by Lena Vogt), captured on the local production stack:
 
-**1. Upload into a collection.** An administrator names or picks a collection and attaches the PDF. Here "Supplier Insurance Requirements" version `portfolio-2026.08.31` goes into the **Insurance Requirements** collection. The workspace switcher in the header re-scopes the whole page; only the platform administrator owns every workspace, everyone else sees a static label for their one.
+**1. Upload into a collection.** An administrator attaches the PDF and either leaves the collection to CaseLens, the default, or names or picks one. Here the administrator picked one: "Supplier Insurance Requirements" version `portfolio-2026.08.31` goes into the **Insurance Requirements** collection. The workspace switcher in the header re-scopes the whole page; only the platform administrator owns every workspace, everyone else sees a static label for their one. The screenshot predates the classify option.
 
 ![Policy library page: upload form, workspace switcher, and policy register](docs/assets/screenshots/policy-library.png)
 

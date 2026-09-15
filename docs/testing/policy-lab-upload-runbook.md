@@ -57,7 +57,7 @@ proposals cannot be approved at all.
    - **Workspace** — the workspace named in the file's row below.
    - **Policy title** — the suggested title in the file's row below.
    - **Version** — `1.0` (use `1.1`, `1.2`, … if you re-upload the same title).
-   - **Collection** — the collection named in the file's row below.
+   - **Collection** — the collection named in the file's row below. Choose it explicitly: the form's default, _Let CaseLens classify it_, sends the policy through classification, which this runbook does not exercise - classification has [its own evaluation](strategy.md#classification-evaluation).
    - **Valid from** — leave today's date.
    - **Language** — `English`.
    - **Original PDF** — the file from `fixtures/documents/policy-lab/…`.

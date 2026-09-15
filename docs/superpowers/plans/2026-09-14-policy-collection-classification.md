@@ -112,7 +112,21 @@ Notifying every administrator of the tenant, not only the uploader, is a later e
 
    The CI test records every lexical outcome exactly, so a change to a description, the matcher or a threshold is a visible diff; disabling the confidence threshold fails it on three cases, filing the jurisdiction policy into Data Protection Terms and both no-fit cases into whichever collection is listed first. Next, if anything: the model never using "new" suggests the prompt should ask for that option more explicitly, and ten cases is too few to tune thresholds on - the right next step is more real policies, not a better score on these.
 
-9. **Documentation**: README, ARCHITECTURE, the product spec, and the security guide's untrusted-input section.
+9. **Documentation**: README, ARCHITECTURE, the product spec, and the security guide's untrusted-input section. Done. README, ARCHITECTURE, the security guide, provider switching, the testing strategy and the domain-pack authoring guide were updated in the step that changed them; this step added the product spec's policy-library section, its policy-filing edge case and collection descriptions, told the policy-lab runbook's reader to choose collections explicitly, and recorded the work in the production backlog.
+
+## Open items
+
+Collected from the steps above, in rough order of value:
+
+- **Moving a policy that was filed automatically.** The decision endpoint settles only a waiting policy. Re-filing needs its own audited endpoint and a rule for rules already derived under the first collection.
+- **Notifying every administrator of the tenant**, not only the uploader: the membership table consulted per event.
+- **A prompt that lets the model propose a new collection.** In evaluation it never did; both cases that fit nothing were given an existing collection.
+- **More real policies in the evaluation** before any threshold is tuned. Ten cases measure behaviour; they cannot calibrate it.
+- **Catalog releases for tenants whose packs have diverged**, offered as a proposal with an action-required notification.
+- **Collection descriptions for the pharmacy pack**, which is still at 1.0.0 and classifies against labels only.
+- **The `pack_version` label retrieval scopes by** is the lineage root's version on both sides - consistent, but not the governed version.
+- **The analytics database's three migrations** still replay on every start rather than going through the ledger.
+- **Keyword stuffing.** The lexical reading cannot be instructed, but a document repeating a collection's words could steer it; the model reading must still agree before anything is filed.
 
 ## Rejected
 
