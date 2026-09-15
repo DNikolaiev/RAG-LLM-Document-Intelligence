@@ -85,7 +85,7 @@ The seed command uses the public API: it uploads each policy, extracts and index
 
 ### Policy lab fixtures
 
-[`fixtures/documents/policy-lab/`](fixtures/documents/policy-lab) holds 13 synthetic PDFs for the legal, insurance, and manufacturing tenants, engineered so each reviewable outcome is provoked on purpose: an approvable rule, a rule blocked as ungrounded, a rule blocked as too weak, a new field proposal, and a field proposal that merges into an existing field by dedup, plus matching satisfying/violating case evidence. [`docs/testing/policy-lab-upload-runbook.md`](docs/testing/policy-lab-upload-runbook.md) drives the whole pipeline by hand, one upload at a time.
+[`fixtures/documents/policy-lab/`](fixtures/documents/policy-lab) holds 13 synthetic PDFs for the legal, insurance, and manufacturing tenants, engineered so each reviewable outcome is provoked on purpose: an approvable rule, a rule blocked as ungrounded, a rule blocked as too weak, a new field proposal, and a field proposal that merges into an existing field by dedup, plus matching satisfying/violating case evidence. [`docs/testing/policy-lab-upload-runbook.md`](docs/testing/policy-lab-upload-runbook.md) drives the whole pipeline by hand, one upload at a time. The same policies, plus adversarial cases that fit no collection, form the collection-classification evaluation described in [`docs/testing/strategy.md`](docs/testing/strategy.md#classification-evaluation): the deterministic classifier is gated in CI, the local model is measured and reported.
 
 ## Components and why they exist
 

@@ -280,9 +280,36 @@ def verify_corpus(corpus: Corpus, pdftoppm: str) -> dict[str, object]:
     return section
 
 
+COLLECTION_EVALUATION = ROOT / "fixtures" / "evaluation" / "policy-collection-classification.json"
+
+
+def verify_collection_evaluation() -> dict[str, object]:
+    """The classification evaluation classifies copies of fixture text, so that CI needs no PDF
+    extraction service. A copy that drifted from its PDF would evaluate a document nobody uploads;
+    the same extractor the corpus checks use must still produce it."""
+    dataset = json.loads(COLLECTION_EVALUATION.read_text(encoding="utf-8"))
+    checked = 0
+    for case in dataset["cases"]:
+        if case["source"]["kind"] != "fixture_pdf":
+            continue
+        pdf_path = ROOT / "fixtures" / "documents" / case["source"]["filename"]
+        with pdfplumber.open(pdf_path) as pdf:
+            actual = [(page.extract_text() or "") for page in pdf.pages]
+        assert len(actual) == len(case["pages"]), f"Page count differs for evaluation case {case['id']}"
+        for stored in case["pages"]:
+            extracted = " ".join(actual[stored["page"] - 1].split())
+            assert " ".join(stored["text"].split()) == extracted, (
+                f"Evaluation text for {case['id']} page {stored['page']} no longer matches {pdf_path.name}"
+            )
+        checked += 1
+    print(f"PASS collection evaluation: the page text of {checked} policy PDFs matches its fixture")
+    return {"name": "collection-evaluation", "policiesChecked": checked}
+
+
 def main() -> int:
     pdftoppm = find_pdftoppm()
     report: dict[str, object] = {"status": "pass", "corpora": [verify_corpus(corpus, pdftoppm) for corpus in CORPORA]}
+    report["collectionEvaluation"] = verify_collection_evaluation()
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     total = sum(int(section["documentCount"]) for section in report["corpora"])

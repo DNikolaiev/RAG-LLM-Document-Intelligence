@@ -15,3 +15,16 @@ databases that can be emptied. Most integration suites clean up only the rows th
 analytics rebuild test exercises `AnalyticsStore.reset`, whose entire purpose is to truncate the
 projection so a replay can rebuild it. Aimed at a running local stack it will empty that stack's
 read model. Replaying the outbox restores it.
+
+## Classification evaluation
+
+[`fixtures/evaluation/policy-collection-classification.json`](../../fixtures/evaluation/policy-collection-classification.json) holds every policy-lab policy plus adversarial text-only cases: policies that fit no collection, and one carrying an injected filing instruction. Each case names the collection a careful administrator would choose and any others that would be defensible. Filing anywhere else is a misclassification; asking an administrator is always allowed.
+
+The page text of each PDF case is copied into the file so CI needs no extraction service, and `scripts/verify-fixtures.py` checks the copy still matches the PDF with the same `pdfplumber` extraction the corpus checks use.
+
+- **Deterministic, gated in CI:** `apps/worker/test/collection-classification.eval.test.ts` runs the lexical classifier. It asserts that nothing is filed outside the acceptable set, and the exact recorded outcome of every case, so a change to the classifier, a collection description or a threshold appears as a diff to that table.
+- **Model, reported only:** `apps/worker/scripts/evaluate-collection-classification.mjs` runs the configured model inside the worker container and prints each pick, its confidence, the lexical reading and the outcome. A local model is not deterministic, so its accuracy is measured, not gated; the script exits non-zero only if a case was filed wrongly.
+
+```bash
+docker compose -f infra/docker-compose.production-local.yml --env-file infra/.env.production-local exec worker node scripts/evaluate-collection-classification.mjs
+```

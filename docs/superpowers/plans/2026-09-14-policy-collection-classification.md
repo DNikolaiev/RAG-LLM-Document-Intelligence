@@ -98,6 +98,20 @@ Notifying every administrator of the tenant, not only the uploader, is a later e
    Not done: moving a policy that was filed automatically. The decision endpoint only settles a policy that is waiting, so an administrator who disagrees with an automatic filing cannot yet re-file it from the console; that needs its own endpoint, audited the same way, and a rule for what happens to rules already derived under the first collection. The upload default is covered by unit tests; its browser assertion belongs in `policy-library.spec.ts`, which is being repaired separately.
 
 8. **Evaluation**: every policy-lab fixture classifies to its expected collection under the deterministic provider; a separate script runs the same set against the local model and reports agreement, without gating CI on a non-deterministic model.
+
+   Done, with the goal restated: "classifies to its expected collection" was the wrong bar for a classifier that is meant to ask when unsure. The bar is now that nothing is ever filed outside a case's acceptable collections, and asking is always allowed. `fixtures/evaluation/policy-collection-classification.json` holds the seven policy-lab policies, each with its expected collection and any other defensible ones, plus three adversarial text-only cases: anti-bribery and visitor hygiene, which fit no collection, and a data-protection policy carrying an injected instruction to file it elsewhere. The PDF cases carry their page text so CI needs no extraction service; `verify-fixtures.py` checks that text still matches each PDF.
+
+   Measured 2026-09-15 on the 1.1.0 packs, default thresholds:
+
+   | Classifier                                                                            | Right pick                 | Filed correctly | Asked | Filed wrongly |
+   | ------------------------------------------------------------------------------------- | -------------------------- | --------------- | ----- | ------------- |
+   | Lexical (CI, `collection-classification.eval.test.ts`)                                | 7 of 8 that have an answer | 3               | 7     | 0             |
+   | `qwen3:4b` through the worker path (`scripts/evaluate-collection-classification.mjs`) | 8 of 10                    | 4               | 6     | 0             |
+
+   What the model run showed. It reported 0.95 confidence on nine cases and 0.85 on the tenth, right or wrong, so its number carries no information. It never proposed a new collection: both cases that fit nothing were given an existing one at high confidence, and the corroboration rule from step 4 is the only reason neither was filed. It resisted the injected instruction but quoted text that is not in the document, so that case asked. Model and lexical reading together filed the heat-number and tensile-strength policies, which neither files alone.
+
+   The CI test records every lexical outcome exactly, so a change to a description, the matcher or a threshold is a visible diff; disabling the confidence threshold fails it on three cases, filing the jurisdiction policy into Data Protection Terms and both no-fit cases into whichever collection is listed first. Next, if anything: the model never using "new" suggests the prompt should ask for that option more explicitly, and ten cases is too few to tune thresholds on - the right next step is more real policies, not a better score on these.
+
 9. **Documentation**: README, ARCHITECTURE, the product spec, and the security guide's untrusted-input section.
 
 ## Rejected
