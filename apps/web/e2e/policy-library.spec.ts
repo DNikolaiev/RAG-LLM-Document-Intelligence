@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 import {
   expectHealthyLayout,
@@ -35,6 +35,20 @@ const registryFixture = {
       },
     ],
     documentTypes: [
+      {
+        id: 'supplier_questionnaire',
+        label: 'Supplier questionnaire',
+        description: 'Supplier-provided capabilities and identity',
+        fields: [
+          {
+            path: 'supplier.legalName',
+            label: 'Legal name',
+            type: 'string',
+            required: true,
+            aliases: ['company name'],
+          },
+        ],
+      },
       {
         id: 'insurance_certificate',
         label: 'Liability insurance',
@@ -92,7 +106,9 @@ const registryFixture = {
   },
 };
 
-const legalRegistryFixture = {
+type DomainPackFixture = typeof registryFixture;
+
+const legalRegistryFixture: DomainPackFixture = {
   tenantId: 'tenant_legal',
   domainPack: {
     id: 'pack_tenant_legal',
@@ -153,7 +169,7 @@ const legalRegistryFixture = {
  * that declare no collection have somewhere to be shown, and it is not in the pack's
  * `policyCollections` - so uploading into it would always be refused.
  */
-const syntheticCollectionFixture = {
+const syntheticCollectionFixture: DomainPackFixture = {
   ...registryFixture,
   domainPack: {
     ...registryFixture.domainPack,
@@ -219,8 +235,51 @@ const fieldProposalsFixture = {
   ],
 };
 
+/**
+ * Serves the two reads every render of the library makes that the demo API cannot answer. Both
+ * the domain pack and the field-proposal queue need the durable store, so outside the
+ * production-local profile the API refuses them with 503 POLICY_LIBRARY_REQUIRES_PRODUCTION_LOCAL:
+ * an unrouted domain pack leaves the panel on its error state, and an unrouted queue is a server
+ * fault `expectNoRuntimeFailures` rightly reports. The policy list needs no route - demo mode
+ * answers it with an empty register. Pass `domainPack` as a function of the requested tenant for
+ * a test that switches workspace.
+ */
+async function mockPolicyLibrary(
+  page: Page,
+  {
+    domainPack = registryFixture,
+    fieldProposals = { items: [] },
+  }: {
+    domainPack?: DomainPackFixture | ((tenantId: string | null) => DomainPackFixture);
+    fieldProposals?: { items: readonly unknown[] };
+  } = {},
+): Promise<void> {
+  await page.route(
+    (url) => url.pathname === '/api/policies/domain-pack',
+    async (route) => {
+      const tenantId = new URL(route.request().url()).searchParams.get('tenantId');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(typeof domainPack === 'function' ? domainPack(tenantId) : domainPack),
+      });
+    },
+  );
+  await page.route(
+    (url) => url.pathname === '/api/policies/field-proposals',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(fieldProposals),
+      });
+    },
+  );
+}
+
 test('policy library explains what conditions can become governed rules', async ({ page }) => {
   const failures = monitorRuntimeFailures(page);
+  await mockPolicyLibrary(page);
   const response = await page.goto('/policies');
 
   expect(response?.ok()).toBe(true);
@@ -267,16 +326,7 @@ test('policy library explains what conditions can become governed rules', async 
 
 test('rule registry groups rules by collection and names each origin', async ({ page }) => {
   const failures = monitorRuntimeFailures(page);
-  await page.route(
-    (url) => url.pathname === '/api/policies/domain-pack',
-    async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(registryFixture),
-      });
-    },
-  );
+  await mockPolicyLibrary(page);
 
   const response = await page.goto('/policies');
   expect(response?.ok()).toBe(true);
@@ -324,26 +374,7 @@ test('field proposal queue names an alias match and approving removes it from vi
   page,
 }) => {
   const failures = monitorRuntimeFailures(page);
-  await page.route(
-    (url) => url.pathname === '/api/policies/domain-pack',
-    async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(registryFixture),
-      });
-    },
-  );
-  await page.route(
-    (url) => url.pathname === '/api/policies/field-proposals',
-    async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(fieldProposalsFixture),
-      });
-    },
-  );
+  await mockPolicyLibrary(page, { fieldProposals: fieldProposalsFixture });
   await page.route(
     (url) => url.pathname === '/api/policies/field-proposals/fp_alias/approve',
     async (route) => {
@@ -401,16 +432,7 @@ test('a single-workspace profile reads its workspace as a label, not a dropdown'
   page,
 }) => {
   const failures = monitorRuntimeFailures(page);
-  await page.route(
-    (url) => url.pathname === '/api/policies/domain-pack',
-    async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(registryFixture),
-      });
-    },
-  );
+  await mockPolicyLibrary(page);
 
   const response = await page.goto('/policies');
   expect(response?.ok()).toBe(true);
@@ -446,27 +468,10 @@ test('a multi-workspace profile re-scopes the library from the panel switcher', 
   });
   expect(profileResponse.ok()).toBe(true);
 
-  await page.route(
-    (url) => url.pathname === '/api/policies/domain-pack',
-    async (route) => {
-      const tenantId = new URL(route.request().url()).searchParams.get('tenantId');
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(tenantId === 'tenant_legal' ? legalRegistryFixture : registryFixture),
-      });
-    },
-  );
-  await page.route(
-    (url) => url.pathname === '/api/policies/field-proposals',
-    async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ items: [] }),
-      });
-    },
-  );
+  await mockPolicyLibrary(page, {
+    domainPack: (tenantId) =>
+      tenantId === 'tenant_legal' ? legalRegistryFixture : registryFixture,
+  });
 
   const response = await page.goto('/policies');
   expect(response?.ok()).toBe(true);
@@ -510,16 +515,7 @@ test('the upload form offers the workspace collections and never the synthetic o
   page,
 }) => {
   const failures = monitorRuntimeFailures(page);
-  await page.route(
-    (url) => url.pathname === '/api/policies/domain-pack',
-    async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(syntheticCollectionFixture),
-      });
-    },
-  );
+  await mockPolicyLibrary(page, { domainPack: syntheticCollectionFixture });
 
   const response = await page.goto('/policies');
   expect(response?.ok()).toBe(true);
@@ -528,14 +524,16 @@ test('the upload form offers the workspace collections and never the synthetic o
   const collection = uploadCard.getByLabel('Collection', { exact: true });
   await expect(collection).toBeEnabled();
 
-  // Exactly the pack's own collections, in pack order, plus the one explicit create action.
+  // The classification default, exactly the pack's own collections in pack order, and the one
+  // explicit create action.
   await expect(collection.locator('option')).toHaveText([
+    'Let CaseLens classify it',
     'Insurance Requirements',
     'Data Protection Policy',
     'Pharmaceutical Distribution Policy',
     'Create a new collection…',
   ]);
-  await expect(collection).toHaveValue('insurance');
+  await expect(collection).toHaveValue('__classify__');
 
   // `general-controls` heads a group in the registry above, and must still not be offered here.
   await expect(
@@ -553,16 +551,7 @@ test('naming a new collection is an explicit choice that reveals a labelled fiel
   page,
 }) => {
   const failures = monitorRuntimeFailures(page);
-  await page.route(
-    (url) => url.pathname === '/api/policies/domain-pack',
-    async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(registryFixture),
-      });
-    },
-  );
+  await mockPolicyLibrary(page);
 
   const response = await page.goto('/policies');
   expect(response?.ok()).toBe(true);
