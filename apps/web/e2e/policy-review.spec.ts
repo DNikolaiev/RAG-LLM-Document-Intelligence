@@ -194,3 +194,97 @@ test('policy review explains blocked rules, highlights citations, and allows dis
   await expectHealthyLayout(page);
   expectNoRuntimeFailures(failures);
 });
+
+test('a policy waiting for its collection is decided from its page, first on screen', async ({
+  page,
+}) => {
+  const failures = monitorRuntimeFailures(page);
+  let decisionBody: unknown;
+  const waiting = {
+    ...policy,
+    id: 'policy-waiting',
+    tenantId: 'tenant_demo',
+    status: 'awaiting_collection',
+    version: 4,
+    collectionId: null,
+    proposals: [],
+    collectionSuggestion: {
+      decision: 'new',
+      label: 'Anti-Bribery',
+      rationale: 'The policy governs gifts and payments to officials; no collection covers that.',
+      nearestCollectionId: null,
+      confidence: 0.64,
+      evidence: {
+        quote: 'A critical product supplier must maintain product liability cover',
+        page: 1,
+      },
+      disposition: 'decision_required',
+      reasons: ['new_collection'],
+      providerId: 'test-model',
+      model: 'test-model-v1',
+      packVersion: '1.0.0',
+      classifiedAt: '2026-09-14T10:00:00.000Z',
+    },
+  };
+  await page.route('**/api/policies/policy-waiting/content', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/pdf', body: policyPdf });
+  });
+  await page.route(
+    (url) => url.pathname === '/api/policies/domain-pack',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          tenantId: 'tenant_demo',
+          domainPack: {
+            uploadableCollections: [
+              { id: 'insurance', label: 'Insurance Requirements' },
+              { id: 'data-protection', label: 'Data Protection Policy' },
+            ],
+          },
+        }),
+      });
+    },
+  );
+  await page.route('**/api/policies/policy-waiting/collection', async (route) => {
+    decisionBody = route.request().postDataJSON();
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        policy: { collectionId: 'anti-bribery' },
+        jobId: 'job_resumed',
+        alreadyDecided: false,
+      }),
+    });
+  });
+  await page.route('**/api/policies/policy-waiting', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(
+        decisionBody
+          ? { ...waiting, status: 'processing', collectionId: 'anti-bribery', version: 5 }
+          : waiting,
+      ),
+    });
+  });
+
+  // The address the "Needs your decision" notification links to.
+  await page.goto('/policies/policy-waiting#collection-decision');
+  const panel = page.getByRole('region', { name: /Choose this policy.s collection/ });
+  await expect(panel).toBeVisible();
+  await expect(panel).toBeInViewport();
+  await expect(
+    panel.getByText('No existing collection fits, so it proposes a new one.'),
+  ).toBeVisible();
+  await expect(panel.getByLabel('File into an existing collection')).toHaveValue('insurance');
+  await expectHealthyLayout(page);
+
+  await panel.getByRole('button', { name: 'Create “Anti-Bribery” and file it' }).click();
+  await expect(page.locator('.policy-message')).toContainText('Filed into Anti-Bribery');
+  expect(decisionBody).toEqual({ newCollectionLabel: 'Anti-Bribery', version: 4 });
+  await expect(panel).toBeHidden();
+  expectNoRuntimeFailures(failures);
+});

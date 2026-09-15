@@ -1,13 +1,15 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   CheckCircle2,
+  CircleAlert,
   CircleDashed,
   ExternalLink,
   FlaskConical,
+  Folder,
   Quote,
   ShieldAlert,
   XCircle,
@@ -15,6 +17,7 @@ import {
 
 import { DocumentSurfaceLoader } from '@/components/document-surface-loader';
 import type { CaseDocument, EvidenceAnchor } from '@/lib/demo-data';
+import type { CollectionSuggestion } from '@caselens/contracts';
 
 interface ValidationIssue {
   code: string;
@@ -24,6 +27,10 @@ interface ValidationIssue {
 
 interface PolicyDetail {
   id: string;
+  tenantId: string;
+  /** NULL while the policy waits for an administrator to settle its collection. */
+  collectionId: string | null;
+  collectionSuggestion: CollectionSuggestion | null;
   title: string;
   policyVersion: string;
   status: string;
@@ -62,6 +69,12 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
   const [severityEdits, setSeverityEdits] = useState<Record<string, string>>({});
   const [page, setPage] = useState(1);
   const [selectedCitationId, setSelectedCitationId] = useState<string>();
+  const [collections, setCollections] = useState<Array<{ id: string; label: string }>>([]);
+  const [deciding, setDeciding] = useState(false);
+  const [chosenCollection, setChosenCollection] = useState('');
+  // null until edited, so the field starts from the suggested name rather than blank.
+  const [newCollectionName, setNewCollectionName] = useState<string | null>(null);
+  const decisionRef = useRef<HTMLElement>(null);
   const load = useCallback(async () => {
     const response = await fetch(`/api/policies/${policyId}`, { cache: 'no-store' });
     const body = await response.json();
@@ -75,6 +88,42 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
     }, 0);
     return () => clearTimeout(timer);
   }, [load]);
+  const policyTenantId = policy?.tenantId ?? '';
+  const awaitingCollection = policy?.status === 'awaiting_collection';
+  // Only when the page needs them: to choose one, or to name the collection a suggestion points at.
+  const needsCollections = Boolean(
+    policyTenantId && (awaitingCollection || policy?.collectionSuggestion),
+  );
+  useEffect(() => {
+    if (!needsCollections) return;
+    let cancelled = false;
+    void fetch(`/api/policies/domain-pack?tenantId=${encodeURIComponent(policyTenantId)}`, {
+      cache: 'no-store',
+    })
+      .then((response) => (response.ok ? response.json() : null))
+      .then(
+        (
+          body: {
+            domainPack?: { uploadableCollections?: Array<{ id: string; label: string }> };
+          } | null,
+        ) => {
+          if (!cancelled && body?.domainPack?.uploadableCollections) {
+            setCollections(body.domainPack.uploadableCollections);
+          }
+        },
+      )
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [needsCollections, policyTenantId]);
+  // The "Needs your decision" link lands here. The panel only exists once the policy has loaded,
+  // after the browser has already looked for the anchor, so the page scrolls to it itself.
+  useEffect(() => {
+    if (!awaitingCollection || window.location.hash !== '#collection-decision') return;
+    decisionRef.current?.scrollIntoView?.({ block: 'start' });
+    decisionRef.current?.focus();
+  }, [awaitingCollection]);
   const citations = useMemo(
     () =>
       (policy?.proposals ?? []).flatMap((proposal) =>
@@ -167,12 +216,59 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
     if (response.ok) await load();
     setRegenerating(false);
   }
+  async function decide(choice: { collectionId: string } | { newCollectionLabel: string }) {
+    if (!policy || deciding) return;
+    setDeciding(true);
+    const target =
+      'collectionId' in choice
+        ? (collections.find((collection) => collection.id === choice.collectionId)?.label ??
+          choice.collectionId)
+        : choice.newCollectionLabel;
+    const response = await fetch(`/api/policies/${policyId}/collection`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...choice, version: policy.version }),
+    });
+    const body = await response.json().catch(() => ({}));
+    setMessage(
+      response.ok
+        ? `Filed into ${target}. Processing resumes; its timeline is in your notifications.`
+        : (body.detail ?? body.message ?? 'The collection could not be saved.'),
+    );
+    setDeciding(false);
+    // A conflict means the policy moved on under this screen; show where it is now.
+    if (response.ok || response.status === 409) {
+      await load().catch((error: Error) => setMessage(error.message));
+    }
+  }
   if (!policy || !sourceDocument)
     return (
       <main id="main-content" className="policy-shell">
         <p className="policy-empty">{message || 'Loading policy evidence…'}</p>
       </main>
     );
+  const suggestion = policy.collectionSuggestion;
+  const labelOf = (id: string | null) =>
+    collections.find((collection) => collection.id === id)?.label ?? null;
+  const suggestedLabel = !suggestion
+    ? ''
+    : suggestion.decision === 'new'
+      ? suggestion.label
+      : (labelOf(suggestion.collectionId) ?? suggestion.collectionId);
+  let acceptChoice: { collectionId: string } | { newCollectionLabel: string } | null = null;
+  let defaultExisting = collections[0]?.id ?? '';
+  if (suggestion?.decision === 'new') {
+    acceptChoice = { newCollectionLabel: suggestion.label };
+    if (labelOf(suggestion.nearestCollectionId)) defaultExisting = suggestion.nearestCollectionId!;
+  } else if (suggestion && labelOf(suggestion.collectionId)) {
+    acceptChoice = { collectionId: suggestion.collectionId };
+    defaultExisting = suggestion.collectionId;
+  }
+  const existingChoice = labelOf(chosenCollection) ? chosenCollection : defaultExisting;
+  const newName = newCollectionName ?? (suggestion?.decision === 'new' ? suggestion.label : '');
+  const classificationFailure = readClassificationFailure(policy.extractionMetadata);
+  const filedAutomatically =
+    !awaitingCollection && suggestion?.disposition === 'filed' ? suggestion : null;
   return (
     <main id="main-content" className="policy-shell policy-review">
       <div className="policy-review-heading">
@@ -197,6 +293,130 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
           Open original PDF <ExternalLink size={15} />
         </a>
       </div>
+      {awaitingCollection ? (
+        <section
+          ref={decisionRef}
+          id="collection-decision"
+          className="collection-decision"
+          aria-labelledby="collection-decision-title"
+          tabIndex={-1}
+        >
+          <div className="collection-decision-intro">
+            <span className="policy-eyebrow">
+              <CircleAlert aria-hidden="true" size={15} /> Needs your decision
+            </span>
+            <h2 id="collection-decision-title">Choose this policy’s collection</h2>
+            <p>
+              Processing is paused until it has one: how its clauses are split, where they are
+              searched, and which rules they may become all belong to a collection.
+            </p>
+          </div>
+          {suggestion ? (
+            <div className="collection-suggestion">
+              <p className="collection-suggestion-lead">
+                CaseLens suggests <strong>{suggestedLabel}</strong>
+                {suggestion.decision === 'new' ? ' as a new collection' : ''} ·{' '}
+                {Math.round(suggestion.confidence * 100)}% model confidence
+              </p>
+              <p>{suggestion.rationale}</p>
+              <button
+                className="citation-button"
+                type="button"
+                onClick={() => setPage(suggestion.evidence.page)}
+              >
+                <span>“{suggestion.evidence.quote}”</span>
+                <small>Show page {suggestion.evidence.page}</small>
+              </button>
+              {suggestion.reasons.length ? (
+                <ul className="collection-reasons" aria-label="Why it was not filed automatically">
+                  {suggestion.reasons.map((reason) => (
+                    <li key={reason}>{describeReason(reason, suggestion, labelOf)}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {acceptChoice ? (
+                <button
+                  className="policy-primary"
+                  type="button"
+                  disabled={deciding}
+                  onClick={() => void decide(acceptChoice)}
+                >
+                  {suggestion.decision === 'new'
+                    ? `Create “${suggestion.label}” and file it`
+                    : `File into ${suggestedLabel}`}
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <p className="collection-suggestion-missing">
+              CaseLens could not classify this policy
+              {classificationFailure ? `: ${classificationFailure}` : ''}. Choose or create its
+              collection.
+            </p>
+          )}
+          <div className="collection-decision-actions">
+            <div>
+              <label htmlFor="collection-decision-existing">File into an existing collection</label>
+              <div className="collection-decision-row">
+                <select
+                  id="collection-decision-existing"
+                  value={existingChoice}
+                  disabled={!collections.length}
+                  onChange={(event) => setChosenCollection(event.target.value)}
+                >
+                  {collections.length ? (
+                    collections.map((collection) => (
+                      <option key={collection.id} value={collection.id}>
+                        {collection.label}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">Loading collections…</option>
+                  )}
+                </select>
+                <button
+                  className="policy-secondary"
+                  type="button"
+                  disabled={deciding || !existingChoice}
+                  onClick={() => void decide({ collectionId: existingChoice })}
+                >
+                  File here
+                </button>
+              </div>
+            </div>
+            <div>
+              <label htmlFor="collection-decision-new">Or create a new collection</label>
+              <div className="collection-decision-row">
+                <input
+                  id="collection-decision-new"
+                  maxLength={80}
+                  placeholder="Gifts and hospitality"
+                  value={newName}
+                  onChange={(event) => setNewCollectionName(event.target.value)}
+                />
+                <button
+                  className="policy-secondary"
+                  type="button"
+                  disabled={deciding || !newName.trim()}
+                  onClick={() => void decide({ newCollectionLabel: newName.trim() })}
+                >
+                  Create and file
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
+      {filedAutomatically ? (
+        <p className="collection-filed-note">
+          <Folder aria-hidden="true" size={15} />
+          <span>
+            Filed automatically into{' '}
+            <strong>{labelOf(policy.collectionId) ?? policy.collectionId}</strong> by CaseLens, on “
+            {filedAutomatically.evidence.quote}” (page {filedAutomatically.evidence.page}).
+          </span>
+        </p>
+      ) : null}
       <div className="policy-review-grid">
         <section className="policy-source" aria-label="Original policy document">
           <DocumentSurfaceLoader
@@ -433,6 +653,40 @@ export function PolicyReviewWorkspace({ policyId }: { policyId: string }) {
       </div>
     </main>
   );
+}
+
+/** Each reason a suggestion was not filed on its own, in the words an administrator needs. */
+function describeReason(
+  reason: CollectionSuggestion['reasons'][number],
+  suggestion: CollectionSuggestion,
+  labelOf: (id: string | null) => string | null,
+): string {
+  switch (reason) {
+    case 'low_confidence':
+      return 'The model was not confident enough to file it on its own.';
+    case 'quote_not_found':
+      return 'Its supporting quotation is not in the document, so the suggestion is not trusted.';
+    case 'no_match':
+      return 'It did not match a collection in this workspace.';
+    case 'new_collection':
+      return 'No existing collection fits, so it proposes a new one.';
+    case 'near_duplicate': {
+      const nearest =
+        suggestion.decision === 'new' ? labelOf(suggestion.nearestCollectionId) : null;
+      return nearest
+        ? `The proposed name is close to the existing ${nearest}.`
+        : 'The proposed name is close to an existing collection.';
+    }
+    case 'not_corroborated':
+      return 'An independent word-matching reading of the document did not reach the same collection.';
+  }
+}
+
+function readClassificationFailure(metadata: Record<string, unknown>): string | null {
+  const record = metadata.collectionClassification;
+  if (!record || typeof record !== 'object') return null;
+  const message = (record as Record<string, unknown>).message;
+  return typeof message === 'string' && message ? message : null;
 }
 
 function humanize(value: string): string {

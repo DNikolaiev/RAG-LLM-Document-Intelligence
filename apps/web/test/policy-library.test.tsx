@@ -205,8 +205,13 @@ describe('policy library collection selection', () => {
       within(select as HTMLSelectElement)
         .getAllByRole('option')
         .map((option) => option.textContent),
-    ).toEqual(['Insurance Requirements', 'Data Protection Policy', 'Create a new collection…']);
-    expect(select).toHaveValue('insurance');
+    ).toEqual([
+      'Let CaseLens classify it',
+      'Insurance Requirements',
+      'Data Protection Policy',
+      'Create a new collection…',
+    ]);
+    expect(select).toHaveValue('__classify__');
     // The registry shows `general-controls`; the upload form must never offer it.
     expect(
       within(select as HTMLSelectElement).queryByRole('option', { name: 'General controls' }),
@@ -218,20 +223,30 @@ describe('policy library collection selection', () => {
     stubFetch();
     render(<PolicyLibrary tenants={TEST_TENANTS} administrator />);
 
-    await waitFor(() => expect(screen.getByLabelText('Collection')).toHaveValue('insurance'));
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText('Collection')).getByRole('option', {
+          name: 'Insurance Requirements',
+        }),
+      ).toBeInTheDocument(),
+    );
 
     fireEvent.change(screen.getByRole('combobox', { name: /select the workspace/i }), {
       target: { value: 'tenant_legal' },
     });
 
     await waitFor(() =>
-      expect(screen.getByLabelText('Collection')).toHaveValue('commercial-contract-review-policy'),
+      expect(
+        within(screen.getByLabelText('Collection'))
+          .getAllByRole('option')
+          .map((option) => option.textContent),
+      ).toEqual([
+        'Let CaseLens classify it',
+        'Commercial contract policy',
+        'Create a new collection…',
+      ]),
     );
-    expect(
-      within(screen.getByLabelText('Collection'))
-        .getAllByRole('option')
-        .map((option) => option.textContent),
-    ).toEqual(['Commercial contract policy', 'Create a new collection…']);
+    expect(screen.getByLabelText('Collection')).toHaveValue('__classify__');
   });
 
   it('reveals a name field when the administrator chooses to create a collection', async () => {
@@ -446,6 +461,25 @@ describe('policy library collection selection', () => {
     );
     // The optimistic removal is rolled back, so the proposal is still reviewable after the refusal.
     expect(screen.getByRole('button', { name: 'Approve field' })).toBeEnabled();
+  });
+
+  it('lets CaseLens classify by default, sending neither a collection nor a name', async () => {
+    const fetchMock = stubFetch();
+    const { container } = render(<PolicyLibrary tenants={[TEST_TENANTS[0]]} administrator />);
+
+    const select = await screen.findByLabelText('Collection');
+    await waitFor(() => expect(select).toBeEnabled());
+    expect(select).toHaveValue('__classify__');
+    expect(
+      screen.getByText(/files it into one of these collections when it is sure/),
+    ).toBeVisible();
+    fillRequiredFields();
+    fireEvent.submit(uploadForm(container));
+
+    await waitFor(() => expect(postCalls(fetchMock)).toHaveLength(1));
+    const body = postCalls(fetchMock)[0]![1]!.body as FormData;
+    expect(body.get('collectionId')).toBeNull();
+    expect(body.get('newCollectionLabel')).toBeNull();
   });
 
   it('sends an existing collection as an id, with no name to create', async () => {

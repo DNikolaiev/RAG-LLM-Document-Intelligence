@@ -1703,3 +1703,135 @@
     min-height: 420px;
   }
 }
+
+/* The collection decision: work waiting on a person, first on the page. */
+.collection-decision {
+  max-width: 1500px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 16px 28px;
+  margin: 0 auto 22px;
+  padding: 20px 22px;
+  border: 1px solid #f1d9a8;
+  border-radius: 16px;
+  background: #fff8ea;
+}
+
+.collection-decision:focus-visible {
+  outline: 2px solid #9a5b00;
+  outline-offset: 3px;
+}
+
+.collection-decision-intro .policy-eyebrow {
+  color: #8a5300;
+}
+
+.collection-decision-intro h2 {
+  margin: 8px 0 6px;
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.collection-decision-intro p,
+.collection-suggestion p,
+.collection-suggestion-missing {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.collection-suggestion {
+  grid-row: span 2;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.collection-suggestion .collection-suggestion-lead {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.collection-suggestion .citation-button {
+  margin: 0;
+}
+
+.collection-reasons {
+  margin: 0;
+  padding-left: 18px;
+  color: #8a5300;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.collection-suggestion .policy-primary {
+  justify-self: start;
+}
+
+.collection-decision-actions {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.collection-decision-actions label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.collection-decision-row {
+  display: flex;
+  gap: 8px;
+}
+
+.collection-decision-row select,
+.collection-decision-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 42px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 11px;
+  background: white;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.collection-filed-note {
+  max-width: 1500px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 auto 18px;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (max-width: 980px) {
+  .collection-decision {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .collection-suggestion {
+    grid-row: auto;
+  }
+}
+
+@media (max-width: 620px) {
+  .collection-decision {
+    padding: 16px;
+  }
+
+  .collection-decision-row {
+    flex-direction: column;
+  }
+}

@@ -87,6 +87,12 @@ function groupRulesByCollection(
  */
 const CREATE_COLLECTION = '__create__';
 
+/**
+ * The default: name no collection and let the worker classify the policy once its text is read. Like
+ * `CREATE_COLLECTION` it never leaves the browser - `upload()` then sends neither collection field.
+ */
+const CLASSIFY_COLLECTION = '__classify__';
+
 export function PolicyLibrary({
   tenants,
   administrator,
@@ -141,17 +147,18 @@ export function PolicyLibrary({
   const uploadableCollections = domainPack?.domainPack.uploadableCollections ?? [];
   const collectionsReady = domainPackState === 'ready' && Boolean(domainPack);
   // Derived during render and keyed by tenant, the way `domainPackLoad` and `fieldProposalsLoad`
-  // are, so switching workspace falls back to that workspace's own first collection instead of
-  // carrying over a selection that does not exist there. A stored id the pack no longer declares
-  // falls back the same way.
+  // are, so switching workspace falls back to classification instead of carrying over a selection
+  // that does not exist there. A stored id the pack no longer declares falls back the same way.
   const chosenCollection =
     collectionSelection?.tenantId === tenantId ? collectionSelection.value : '';
   const selectedCollection =
     chosenCollection === CREATE_COLLECTION ||
+    chosenCollection === CLASSIFY_COLLECTION ||
     uploadableCollections.some((collection) => collection.id === chosenCollection)
       ? chosenCollection
-      : (uploadableCollections[0]?.id ?? CREATE_COLLECTION);
+      : CLASSIFY_COLLECTION;
   const creatingCollection = selectedCollection === CREATE_COLLECTION;
+  const classifyingCollection = selectedCollection === CLASSIFY_COLLECTION;
   const load = useCallback(async () => {
     const response = await fetch('/api/policies', { cache: 'no-store' });
     const body = await response.json().catch(() => ({ items: [] }));
@@ -302,10 +309,14 @@ export function PolicyLibrary({
     // The page-level workspace switcher owns the tenant; the form no longer asks for it.
     form.set('tenantId', tenantId);
     form.set('domainPackId', `pack_${tenantId}`);
-    // Exactly one of the two reaches the API: an existing collection id, or a name to create.
+    // At most one reaches the API: an existing collection id, a name to create, or - to let
+    // CaseLens classify the policy - neither.
     if (creatingCollection) {
       form.delete('collectionId');
       form.set('newCollectionLabel', newCollectionLabel);
+    } else if (classifyingCollection) {
+      form.delete('collectionId');
+      form.delete('newCollectionLabel');
     } else {
       form.set('collectionId', selectedCollection);
       form.delete('newCollectionLabel');
@@ -332,7 +343,9 @@ export function PolicyLibrary({
     setMessage(
       creatingCollection
         ? `Collection “${newCollectionLabel}” created and the policy accepted. Its private processing timeline is available in notifications.`
-        : 'Policy accepted. Its private processing timeline is available in notifications.',
+        : classifyingCollection
+          ? 'Policy accepted. CaseLens will file it into a collection once its text is read, and ask you in notifications if it cannot.'
+          : 'Policy accepted. Its private processing timeline is available in notifications.',
     );
     formElement.reset();
     setFileName('');
@@ -824,6 +837,9 @@ export function PolicyLibrary({
                 >
                   {collectionsReady ? (
                     [
+                      <option key={CLASSIFY_COLLECTION} value={CLASSIFY_COLLECTION}>
+                        Let CaseLens classify it
+                      </option>,
                       ...uploadableCollections.map((collection) => (
                         <option key={collection.id} value={collection.id}>
                           {collection.label}
@@ -870,6 +886,12 @@ export function PolicyLibrary({
                   </p>
                 )}
               </div>
+            ) : null}
+            {collectionsReady && classifyingCollection ? (
+              <p className="policy-collection-hint">
+                CaseLens reads the policy and files it into one of these collections when it is
+                sure; otherwise it asks you in notifications.
+              </p>
             ) : null}
             <div className="policy-form-row">
               <label>
